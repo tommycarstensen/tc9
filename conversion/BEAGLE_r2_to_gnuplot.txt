@@ -1,0 +1,1 @@
+more BeagleOutput.22.bgl.ProduceBeagleInput.22.bgl.r2 | awk -F : '{print $2, $3}' > 22.gnuplotdata
