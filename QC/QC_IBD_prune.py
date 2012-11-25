@@ -11,30 +11,56 @@ def main():
     ## but which one is removed is random
     ## i.e. the first occurence among sorted samples is removed
 
-    bfile, d_IID2IIDs = parse_genome()
+    d_IID2IIDs = parse_genome()
 
     d_count2IIDs = count_relations(d_IID2IIDs)
 
-    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,bfile=bfile,)
+    d_imiss = parse_imiss()
+
+    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,d_imiss=d_imiss,)
 
     write_exclusion_list(l_exclude)
 
     return
 
 
+def parse_imiss():
+
+    imiss = sys.argv[sys.argv.index('--imiss')+1]
+
+    d_imiss = {}
+
+    fd = open('%s.imiss' %(imiss),'r')
+    ## skip header
+    for line in fd: break
+    ## loop lines
+    for line in fd:
+        l = line.split()
+        IID = l[1]
+        F_MISS = float(l[5])
+        d_imiss[IID] = F_MISS
+    fd.close()
+
+    return d_imiss
+
+
 def write_exclusion_list(l_exclude,):
 
     pi_hat_max = float(sys.argv[sys.argv.index('--pi_hat_max')+1])
-    bfile = sys.argv[sys.argv.index('--bfile')+1]
+    out = sys.argv[sys.argv.index('--out')+1]
 
-    fd = open('%s.genome%.2f.samples' %(bfile,pi_hat_max,),'w')
-    fd.write('\n'.join(['%s\t%s' %(IIDa,IIDa,) for IIDa in l_exclude]))
+    s = '\n'.join(['%s %s' %(IIDa,IIDa,) for IIDa in l_exclude])+'\n'
+
+    fd = open('%s.genome.%.2f.samples' %(out,pi_hat_max,),'w')
+    fd.write(s)
     fd.close()
 
     return
 
 
-def generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=False,bfile=None,):
+def generate_exclusion(
+    d_IID2IIDs,d_count2IIDs,d_imiss=None,verbose=False,
+    ):
 
     l_exclude = []
     while d_count2IIDs != {}:
@@ -43,10 +69,16 @@ def generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=False,bfile=None,):
             stop
             break
         l_IIDas = list(d_count2IIDs[count_max])
-        ## sort so first occurence(s) are deleted first
-        l_IIDas.sort()
+        ## sort so IID with largest F_MISS is deleted first
+        if d_imiss:
+            l = [(d_imiss[IIDa],IIDa,) for IIDa in l_IIDas]
+            l.sort()
+            l.reverse()
+            l_IIDas = [t[1] for t in l]
+        else:
+            ## sort so first occurence(s) are deleted first
+            l_IIDas.sort()
         for IIDa in l_IIDas:
-##            print IIDa, count_max
             l_IIDbs = list(d_IID2IIDs[IIDa])
             if verbose == True:
                 print count_max, IIDa, l_IIDbs
@@ -98,10 +130,10 @@ def count_relations(d_IID2IIDs):
 
 def parse_genome():
 
-    bfile = sys.argv[sys.argv.index('--bfile')+1]
+    genome = sys.argv[sys.argv.index('--genome')+1]
     pi_hat_max = float(sys.argv[sys.argv.index('--pi_hat_max')+1])
 
-    fp_genome = '%s.genome' %(bfile)
+    fp_genome = '%s.genome' %(genome)
     fd = open(fp_genome,'r')
     d_IID2IIDs = {}
     ## skip header
@@ -111,12 +143,9 @@ def parse_genome():
         l = line.split()
         IID1 = l[1]
         IID2 = l[3]
-        try:
-            PI_HAT = float(l[9])
-        except:
-            print line
-            stop
-        if PI_HAT < pi_hat_max:
+        PI_HAT = float(l[9])
+##        if PI_HAT < pi_hat_max:
+        if PI_HAT <= pi_hat_max:
             continue
         for IIDa,IIDb in [
             [IID1,IID2,],
@@ -126,9 +155,11 @@ def parse_genome():
                 d_IID2IIDs[IIDa] = []
                 pass
             d_IID2IIDs[IIDa] += [IIDb]
+            continue
+        continue
     fd.close()
 
-    return bfile, d_IID2IIDs
+    return d_IID2IIDs
 
 
 def unit_test():
