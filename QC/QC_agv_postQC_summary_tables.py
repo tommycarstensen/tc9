@@ -32,10 +32,10 @@ def main():
         'pops/Baganda_octo/Baganda_octo.SNPQC',
         )
 
-    frq_discordant()    
+##    frq_discordant()    
 
-##    MDS_Baganda()
-##    sys.exit(0)
+    MDS()
+    sys.exit(0)
 
 
 ##    tables(l_populations)
@@ -58,23 +58,26 @@ def frq_discordant():
             ['-v','concordant',],
             ]:
 
-            for suffix,column in [
-                ['frq','$5',]
-                ['lmiss','$5',],
+            for suffix,column,x_min,x_max in [
+                ['frq','$5',0,0.5,],
+                ['lmiss','1-$5',0.90,1.00,],
                 ]:
 
-                cmd = 'fgrep %s -w -f disconcordant.SNPs pops/Baganda_%s/Baganda_%s.SNPQC.%s' %(
+                cmd = 'fgrep %s -w -f discordant.SNPs pops/Baganda_%s/Baganda_%s.SNPQC.%s' %(
                     flag,chip,chip,suffix,)
-                cmd += " | awk '{print %s}' > %s_%s.%s" %(
-                    column,prefix,chip,suffix,)
+                cmd += " | awk '{print %s}' > %s.%s.%s" %(
+                    column,suffix,chip,prefix,)
                 execmd(cmd)
 
-                cmd = 'cat %s_%s.%s | wc -l' %(prefix,chip,suffix,)
+                cmd = 'cat %s.%s.%s | wc -l' %(suffix,chip,prefix,)
                 n_SNPs = int(os.popen(cmd).read())
+                if flag == '-v':
+                    n_SNPs -= 1
 
                 gnuplot.histogram2(
-                    '%s_%s.%s' %(prefix,chip,suffix,),
+                    '%s.%s.%s' %(suffix,chip,prefix,),
                     x_step = 0.01,
+                    x_min = x_min, x_max = x_max,
                     xlabel='MAF after sample QC',
                     title='Baganda %s (n_{samples}=%i, n_{SNPs}=%i)' %(
                         chip,n_samples,n_SNPs,
@@ -102,13 +105,39 @@ def execmd(cmd):
     return
 
 
-def MDS_Baganda():
+def MDS():
 
     import gnuplot
 
     prefix = 'Baganda29_quad29_octo200'
-    prefix = 'Baganda29_quad29_octo200_excldisconcordant'
+    prefix = 'Baganda29_quad29_octo200_excldiscordant'
     prefix = 'Baganda29_quad29_octo200_SNPQCtogether'
+##    prefix = 'Ga-Adangbe'
+##    prefix = 'Zulu'
+##    prefix = 'Ga-Adangbeexcldiscordant'
+##    prefix = 'Zuluexcldiscordant'
+
+    bool_exclude_discordant = False
+    if 'excldiscordant' in prefix:
+        bool_exclude_discordant = True
+
+    bool_merge = True
+    if prefix in [
+        'Baganda29_quad29_octo200_SNPQCtogether',
+        'Ga-Adangbe','Zulu',
+        'Ga-Adangbeexcldiscordant','Zuluexcldiscordant',
+        ]:
+        bool_merge = False
+        if prefix == 'Baganda29_quad29_octo200_SNPQCtogether':
+            bfile = 'pops/Baganda_quad29octo200/Baganda_quad29octo200.SNPQC'
+        else:
+            if 'excldiscordant' in prefix:
+                bfile = 'pops/%s/%s.SNPQC' %(
+                    prefix.replace('excldiscordant',''),
+                    prefix.replace('excldiscordant',''),
+                    )
+            else:
+                bfile = 'pops/%s/%s.SNPQC' %(prefix,prefix,)
 
     fn_ld_regions = 'pops/Baganda_octo/Baganda_octo.ldregions.SNPs'
 
@@ -116,8 +145,8 @@ def MDS_Baganda():
     ## find common SNPs post QC
     ##
     if not os.path.isfile('%s.extract' %(prefix)):
-        if prefix == 'Baganda29_quad29_octo200_SNPQCtogether':
-            cmd = 'cat pops/Baganda_quad29octo200/Baganda_quad29octo200.SNPQC.bim > %s.extract' %(prefix)
+        if bool_merge == False:
+            cmd = 'cat %s.bim > %s.extract' %(bfile,prefix)
             execmd(cmd)
         else:
             cmd = "cat pops/Baganda_quad/Baganda_quad.SNPQC.bim | awk '{print $2}' | sort > Baganda_quad.SNPs"
@@ -157,10 +186,10 @@ def MDS_Baganda():
     execmd(cmd)
     cmd = 'cat Baganda29_quad0_octo200.fam Baganda29_quad29_octo0.fam > Baganda29_quad29_octo200.fam'
     execmd(cmd)
-    cmd = 'cat Baganda29_quad0_octo200.fam Baganda29_quad29_octo0.fam > Baganda29_quad29_octo200_excldisconcordant.fam'
+    cmd = 'cat Baganda29_quad0_octo200.fam Baganda29_quad29_octo0.fam > Baganda29_quad29_octo200_excldiscordant.fam'
     execmd(cmd)
-    if prefix == 'Baganda29_quad29_octo200_SNPQCtogether':
-        cmd = 'cat pops/Baganda_quad29octo200/Baganda_quad29octo200.fam > Baganda29_quad29_octo200_SNPQCtogether.fam'
+    if bool_merge == False:
+        cmd = 'cat %s.fam > %s.fam' %(bfile,prefix,)
         execmd(cmd)
 
     ##
@@ -168,8 +197,8 @@ def MDS_Baganda():
     ##
     if not os.path.isfile('%s.bed' %(prefix)):
         cmd = 'plink \\\n'
-        if prefix == 'Baganda29_quad29_octo200_SNPQCtogether':
-            cmd += '--bfile pops/Baganda_quad29octo200/Baganda_quad29octo200.SNPQC \\\n'
+        if bool_merge == False:
+            cmd += '--bfile %s \\\n' %(bfile)
         else:
             cmd += '--bfile pops/Baganda_quad/Baganda_quad.SNPQC \\\n'
             cmd += '--bmerge \\\n'
@@ -179,8 +208,8 @@ def MDS_Baganda():
         cmd += '--keep %s.fam \\\n' %(prefix)
         cmd += '--extract %s.extract \\\n' %(prefix)
 ##        cmd += '--exclude 26diff_and_monomorphic.SNPs \\\n' ## tmp
-        if 'excldisconcordant' in prefix:
-            cmd += '--exclude disconcordant.SNPs \\\n' ## tmp
+        if bool_exclude_discordant == True:
+            cmd += '--exclude discordant.SNPs \\\n' ## tmp
         cmd += '--make-bed --out %s \\\n' %(prefix)
         execmd(cmd)
 
@@ -237,26 +266,27 @@ def MDS_Baganda():
     if not os.path.isfile('%s.mds' %(prefix)):
         sys.exit(0)
 
-    cmd = "cat Baganda29_quad29_octo0.fam | awk '{print $1}' > Baganda29_quad29.samples"
-    execmd(cmd)
-    cmd = "cat Baganda29_quad0_octo29.fam | awk '{print $1}' > Baganda29_octo29.samples"
-    execmd(cmd)
-    for suffix in ['quad','octo',]:
-        cmd = 'fgrep -f Baganda29_%s29.samples %s.mds' %(suffix,prefix,)
-        cmd += " | awk '{print substr($1,12,10),$4,$5}'"
-        cmd += ' | sort -k1,1'
-        cmd += ' > %s_%s29.mds' %(prefix,suffix)
+    if bool_merge == True:
+        cmd = "cat Baganda29_quad29_octo0.fam | awk '{print $1}' > Baganda29_quad29.samples"
         execmd(cmd)
-        if suffix == 'quad':
-            continue
-        cmd = "cat pops/Baganda_%s/Baganda_%s.fam | awk '{print $1}' > Baganda29_%s.samples" %(
-            suffix,suffix,suffix,)
+        cmd = "cat Baganda29_quad0_octo29.fam | awk '{print $1}' > Baganda29_octo29.samples"
         execmd(cmd)
-        cmd = 'fgrep -f Baganda29_%s.samples %s.mds' %(suffix,prefix,)
-        cmd += " | awk '{print substr($1,12,10),$4,$5}'"
-        cmd += ' | sort -k1,1'
-        cmd += ' > %s_%s.mds' %(prefix,suffix)
-        execmd(cmd)
+        for suffix in ['quad','octo',]:
+            cmd = 'fgrep -f Baganda29_%s29.samples %s.mds' %(suffix,prefix,)
+            cmd += " | awk '{print substr($1,12,10),$4,$5}'"
+            cmd += ' | sort -k1,1'
+            cmd += ' > %s_%s29.mds' %(prefix,suffix)
+            execmd(cmd)
+            if suffix == 'quad':
+                continue
+            cmd = "cat pops/Baganda_%s/Baganda_%s.fam | awk '{print $1}' > Baganda29_%s.samples" %(
+                suffix,suffix,suffix,)
+            execmd(cmd)
+            cmd = 'fgrep -f Baganda29_%s.samples %s.mds' %(suffix,prefix,)
+            cmd += " | awk '{print substr($1,12,10),$4,$5}'"
+            cmd += ' | sort -k1,1'
+            cmd += ' > %s_%s.mds' %(prefix,suffix)
+            execmd(cmd)
 
 ##    lines_extra = ['set key out\n']
 ##    fd = open('%s_quad29.mds' %(prefix))
@@ -280,11 +310,21 @@ def MDS_Baganda():
     ## with pruning
     n_SNPs = int(os.popen('cat %s.prune.in | wc -l' %(prefix)).read())
 
-    line_plot = 'plot '
-    line_plot += '"%s_quad29.mds" u 2:3 ps 2 pt 7 lc 1 t "quad",' %(prefix)
-##    line_plot += '"%s_octo29.mds" u 2:3 ps 3 pt 7 lc 3 t "octo",' %(prefix)
-    line_plot += '"%s_octo.mds" u 2:3 ps 2 pt 7 lc rgb "#0000FF" t "octo",' %(prefix)
-    line_plot = line_plot[:-1]
+    if bool_merge == False:
+        execmd("cat omni2.5-4_20120904_agv_gtu.fam | awk '{print $2}' > quad.samples")
+        execmd("cat omni2.5-8_agv_20120910_gtu.fam | awk '{print $2}' > octo.samples")
+        execmd('fgrep -w -f quad.samples %s.mds > %s_quad.mds' %(prefix,prefix,))
+        execmd('fgrep -w -f octo.samples %s.mds > %s_octo.mds' %(prefix,prefix,))
+        line_plot = 'plot '
+        line_plot += '"%s_quad.mds" u 4:5 ps 2 pt 7 lc 1 t "quad",' %(prefix)
+        line_plot += '"%s_octo.mds" u 4:5 ps 2 pt 7 lc rgb "#0000FF" t "octo",' %(prefix)
+        line_plot = line_plot[:-1]
+    else:
+        line_plot = 'plot '
+        line_plot += '"%s_quad29.mds" u 2:3 ps 2 pt 7 lc 1 t "quad",' %(prefix)
+    ##    line_plot += '"%s_octo29.mds" u 2:3 ps 3 pt 7 lc 3 t "octo",' %(prefix)
+        line_plot += '"%s_octo.mds" u 2:3 ps 2 pt 7 lc rgb "#0000FF" t "octo",' %(prefix)
+        line_plot = line_plot[:-1]
 
     gnuplot.scatter_plot_2d(
         '%s.mds' %(prefix),
@@ -297,6 +337,7 @@ def MDS_Baganda():
             ),
         prefix_out='%s.mds' %(prefix),
 ##        lines_extra=lines_extra,
+        bool_remove=False,
         )
 
     return
@@ -384,7 +425,8 @@ def tmp_check_allele_concordance_bim_strand(
             allele_strand[i] = d[allele_strand[i]]
     if len(set(l_set_alleles)-set(allele_strand)) > 0:
         print strand_chr, strand_pos
-        print l_strand, allele_strand, l_set_alleles
+        print l_strand
+        print allele_strand, l_set_alleles
         print l
         stop
 
@@ -483,21 +525,23 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
     count_quad1octo0 = 0
     count_quad0octo0 = 0
     count_quad1octo1 = 0
-    d_diff = {'monomorphic':{},'all':{},'nonmonomorphic':{},}
-    for k in  d_diff.keys():
-        for i in xrange(n_samples+1):
-            d_diff[k][i] = 0
     i_line = 0
-    sum_xy = 0
-    sum_xx = 0
-    sum_yy = 0
-    sum_x = 0
-    sum_y = 0
-    n = 0
+    d_sum = {
+        'sum_xx':{},
+        'sum_xy':{},
+        'sum_yy':{},
+        'sum_x':{},
+        'sum_y':{},
+        'n':{},
+        }
+    for k in d_sum.keys():
+        for k2 in ['all','confirmed','possible',]:
+            d_sum[k][k2] = {}
+            for i in xrange(-1,n_samples+1):
+                d_sum[k][k2][i] = 0
+            d_sum[k][k2]['all'] = 0
 
-    l_monomorphic = []
-    l_26diff_and_monomorphic = []
-    l_disconcordant = []
+    l_discordant = []
 
     fd4 = open('%s.tped' %(basename1),'r')
     fd8 = open('%s.tped' %(basename2),'r')
@@ -519,58 +563,43 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
 
     strand_chr = None
     strand_pos = None
+    print 'loop over lines'
     for line4 in fd4:
         line8 = fd8.readline()
         l4 = line4.split()
         if int(l4[0]) not in range(1,22+1,): continue ## autosomal SNPs only
         l8 = line8.split()
+##        ## rsIDs different?
+##        if l4[1] != l8[1]:
+##            print line4
+##            print line8
+##            stop_tmp
         i_line += 1
         if i_line % 100000 == 0: print i_line
         l_set_alleles = list(set(l4[6:])-set(['0']))
-        ## no calls (only if pre SNP QC data)
-        if len(l_set_alleles) == 0:
-            print l[4]
-            print l[8]
-            stop
-            continue
-        if (
-            (len(set(l4[6:])-set(['0'])) == 0 and len(set(l8[6:])-set(['0'])) != 0)
-            or
-            (len(set(l4[6:])-set(['0'])) != 0 and len(set(l8[6:])-set(['0'])) == 0)
-            ):
-            print l4
-            print l8
-            stop
 
 ##        strand_chr, strand_pos = tmp_check_allele_concordance_bim_strand(
 ##            l4,strand_chr,strand_pos,l_set_alleles,fdstrand8,)
 
-        if len(l_set_alleles) == 2:
-            allele1 = l_set_alleles[0]
-            allele2 = l_set_alleles[1]
+        if len(l_set_alleles) == 0:
+            allele1 = '0'
+            allele2 = '0'
         else:
             allele1 = l_set_alleles[0]
-            allele2 = None
-        if l4[1] != l8[1]:
-            print line4
-            print line8
-            stop
-##        sum_xy = 0
-##        sum_xx = 0
-##        sum_yy = 0
-##        sum_x = 0
-##        sum_y = 0
-##        n = 0
-        count_diff = 0
-        bool_noncall_quad = False
-        bool_noncall_octo = False
-        l_x = []
-        l_y = []
-        l_gt = []
-        if 2*n_samples*[l4[4]]==l4[4:] or 2*n_samples*[l8[4]]==l8[4:]:
-            l_monomorphic += [l4[1]]
+            if len(l_set_alleles) == 2:
+                allele2 = l_set_alleles[1]
+            else:
+                allele2 = allele1
+        count_diff_all = 0
+        count_diff_confirmed = 0
+        count_diff_possible = 0
+        bool_disc_confirmed = False
+        bool_disc_possible = False
+        l_dosages = []
         for i4 in xrange(n_samples):
             sample = l_fam4[i4]
+            ## samples in different order, so...
+            ## identify index of octo sample equivalent to quad sample
             i8 = l_fam8.index(sample)
             genotype4 = l4[4+2*i4:4+2*(i4+1)]
             genotype8 = l8[4+2*i8:4+2*(i8+1)]
@@ -578,50 +607,19 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
             allele4B = genotype4[1]
             allele8A = genotype8[0]
             allele8B = genotype8[1]
-            if (
-                allele4A == '0'# or allele4B == '0'
-                or
-                allele8A == '0'# or allele8B == '0'
-                ):
-                ## octo called, quad not called
-                if (
-                    allele4A == '0' and allele4B == '0'
-                    and
-                    allele8A != '0' and allele8B != '0'
-                    ):
-##                    count_quad0octo1 += 1
-                    bool_noncall_quad = True
-                ## quad called, octo not called
-                elif (
-                    allele4A != '0' and allele4B != '0'
-                    and
-                    allele8A == '0' and allele8B == '0'
-                    ):
-##                    count_quad1octo0 += 1
-                    bool_noncall_octo = True
-                ## quad not called, octo not called
-                elif (
-                    allele4A == '0' and allele4B == '0'
-                    and
-                    allele8A == '0' and allele8B == '0'
-                    ):
-##                    count_quad0octo0 += 1
-                    bool_noncall_quad = True
-                    bool_noncall_octo = True
-                else:
-                    print genotype4, genotype8
-                    print sample
-                    print l4
-                    stop
-                continue
             ## genotype difference
 ##            elif genotype4 != genotype8:
-            elif set(genotype4) != set(genotype8):
-                count_diff += 1
-##                count_quad1octo1 += 1
-##            else:
-##                count_quad1octo1 += 1
-##                pass
+            if set(genotype4) != set(genotype8):
+                count_diff_all += 1
+                if genotype4[0] == '0' or genotype8[0] == '0':
+                    count_diff_possible += 1
+                    bool_disc_possible = True
+                else:
+                    count_diff_confirmed += 1
+                    bool_disc_confirmed = True
+##            elif genotype4 != genotype8:
+##                print i_line, genotype4, genotype8
+##                stop
 
             ##
             ## "dosages"
@@ -637,91 +635,45 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
                 if alleleB == allele1:
                     dosage += 1
                 d[k] = dosage
+            l_dosages += [d]
+
+            ## continue loop over samples/alleles
+            continue
+
+        d_disc_counts = {
+            'all':count_diff_all,
+            'confirmed':count_diff_confirmed,
+            'possible':count_diff_possible,
+            }
+        for d in l_dosages:
             x = d[4]
             y = d[8]
-            sum_xy += x*y
-            sum_xx += x*x
-            sum_yy += y*y
-            sum_x += x
-            sum_y += y
-            n += 1
-            l_x += [x]
-            l_y += [y]
-            l_gt += [[genotype4,genotype8,]]
-            ## continue loop over samples
+            l_k2 = ['all']
+            if bool_disc_confirmed == True:
+                l_k2 += ['confirmed']
+            if bool_disc_possible == True:
+                l_k2 += ['possible']
+            for k2 in l_k2:
+##                for count in [d_disc_counts[k2],'all',]:
+                if d_disc_counts[k2] == 1:
+                    print range(0,d_disc_counts[k2]+1)+['all',]
+                    stop
+                for count in range(0,d_disc_counts[k2]+1)+['all',]:
+                    d_sum['sum_xy'][k2][count] += x*y
+                    d_sum['sum_xx'][k2][count] += x*x
+                    d_sum['sum_yy'][k2][count] += y*y
+                    d_sum['sum_x'][k2][count] += x
+                    d_sum['sum_y'][k2][count] += y
+                    d_sum['n'][k2][count] += 1
+                    if d_disc_counts[k2] > 1:
+                        print count
+                if d_disc_counts[k2] > 1:
+                    print d_disc_counts[k2]
+                    stop
+            ## continue loop over samples/dosages
             continue
-        ##
-        ## count
-        ##
-        if bool_noncall_quad == True and bool_noncall_octo == True:
-            count_quad0octo0 += 1
-        elif bool_noncall_quad == True:
-            count_quad0octo1 += 1
-        elif bool_noncall_octo == True:
-            count_quad1octo0 += 1
-        else:
-            count_quad1octo1 += 1
-        ##
-        ## continue if no call
-        ##
-        if bool_noncall_quad == True or bool_noncall_octo == True:
-            ## tmp
-            if count_diff > 0 or i4 == 0:
-                l_disconcordant += [l4[1]]
-            continue
-##        if n > 1:
-##            denominator = math.sqrt((sum_xx-sum_x**2/n)*(sum_yy-sum_y**2/n))
-##            nominator = (sum_xy-sum_x*sum_y/n)
-##            if denominator == 0:
-##                r = 1.
-##            else:
-##                r = nominator/denominator
-##            r2 = r**2
-##            if r == 1 and count_diff == 29 and l4[1][:2] == 'rs':
-##                for i4 in xrange(n_samples):
-##                    sample = l_fam4[i4]
-##                    i8 = l_fam8.index(sample)
-##                    genotype4 = l4[4+2*i4:4+2*(i4+1)]
-##                    genotype8 = l8[4+2*i8:4+2*(i8+1)]
-##                    print genotype4, genotype8
-##                print l4[:4]
-##                stop
-        d_diff['all'][count_diff] += 1
-        if count_diff > 0:
-            l_disconcordant += [l4[1]]
-
-##        ## all different
-##        if count_diff == n_samples:
-##            if l4[1][:2] == 'rs':
-##                print
-##                print line4
-##                print line8
-
-        ## monomorphic
-        if 2*n_samples*[l4[4]]==l4[4:] or 2*n_samples*[l8[4]]==l8[4:]:
-            if count_diff == n_samples:
-                l_26diff_and_monomorphic += [l4[1]]
-##                if (
-##                    l4[1][:2] == 'rs' and n_samples*l4[4:6]==l4[4:] and n_samples*l8[4:6]==l8[4:]
-##                    and
-##                    2*n_samples*[l4[4]]==l4[4:] and 2*n_samples*[l8[4]]==l8[4:]
-##                    ):
-##                    print line4
-##                    print line8
-##                    stop1_both_monomorphic
-##                if l4[1][:2] == 'rs' and n_samples*l4[4:6]==l4[4:] and n_samples*l8[4:6]!=l8[4:]:
-##                    print line4
-##                    print line8
-##                    stop2_quad_monomorphic
-##                if l4[1][:2] == 'rs' and n_samples*l4[4:6]!=l4[4:] and n_samples*l8[4:6]==l8[4:]:
-##                    print line4
-##                    print line8
-##                    stop3_octo_monomorphic
-                pass
-            d_diff['monomorphic'][count_diff] +=1
-        ## not monomorphic
-        else:
-            d_diff['nonmonomorphic'][count_diff] +=1
+        if count_diff_confirmed > 0:
+            l_discordant += [l4[1]]
 
         ## continue loop over lines
         continue
@@ -729,35 +681,48 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
     fd4.close()
     fd8.close()
 
-    fd = open('26diff_and_monomorphic.SNPs','w')
-    fd.write('\n'.join(l_26diff_and_monomorphic)+'\n')
+    fd = open('discordant.SNPs','w')
+    fd.write('\n'.join(l_discordant)+'\n')
     fd.close()
 
-    fd = open('monomorphic.SNPs','w')
-    fd.write('\n'.join(l_26diff_and_monomorphic)+'\n')
-    fd.close()
-
-    fd = open('disconcordant.SNPs','w')
-    fd.write('\n'.join(l_disconcordant)+'\n')
-    fd.close()
-
-    denominator = math.sqrt((sum_xx-sum_x**2/n)*(sum_yy-sum_y**2/n))
-    nominator = (sum_xy-sum_x*sum_y/n)
-    r = nominator/denominator
-    r2 = r**2
-    print 'n', n, 'r', r, 'r2', r2
-
-    for count_diff in xrange(n_samples+1):
-        print count_diff,
-        for k in ['all','monomorphic','nonmonomorphic',]:
-            print d_diff[k][count_diff],
-        print
-    for k in ['all','monomorphic','nonmonomorphic',]:
-        print k, sum(d_diff[k].values())-d_diff[k][0]
-    print '01,10,00,11', count_quad0octo1, count_quad1octo0, count_quad0octo0, count_quad1octo1
+    s_table = 'column0=ndiscordances\n'
+    s_table += 'column1=nSNPs_given_ndiscordances for confirmed and possible discordances\n'
+    s_table += 'column2=r2_for_nSNPs_given_ndiscordances for confirmed and possible discordances\n'
+    s_table += 'column3=nSNPs_given_ndiscordances for confirmed discordances (e.g. TC!=CC or TT!=CC, TC and CT considered to be equivalent)\n'
+    s_table += 'column4=r2_for_nSNPs_given_ndiscordances for confirmed discordances (e.g. TC!=CC or TT!=CC, TC and CT considered to be equivalent)\n'
+    s_table += 'column5=nSNPs_given_ndiscordances for possible discordances (e.g. TC!=00, 00 and 00 considered to be equivalent)\n'
+    s_table += 'column6=r2_for_nSNPs_given_ndiscordances for possible discordances (e.g. TC!=00, 00 and 00 considered to be equivalent)\n'
+    ## loop over rows
+    for count in ['all']+range(0,n_samples+1):
+        s_table += '%s\t' %(count)
+        ## loop over columns
+        for k2 in ['all','confirmed','possible',]:
+            sum_xx = d_sum['sum_xx'][k2][count]
+            sum_xy = d_sum['sum_xy'][k2][count]
+            sum_yy = d_sum['sum_yy'][k2][count]
+            sum_x = d_sum['sum_x'][k2][count]
+            sum_y = d_sum['sum_y'][k2][count]
+            n = d_sum['n'][k2][count]
+            if n == 0:
+                r2 = 'N/A'
+            else:
+                denominator = math.sqrt((sum_xx-sum_x**2/n)*(sum_yy-sum_y**2/n))
+                nominator = (sum_xy-sum_x*sum_y/n)
+                if denominator == 0:
+                    r2 = 'N/A'
+                else:
+                    r = nominator/denominator
+                    r2 = '%.4f' %(r**2)
+            s_table += '%-7i\t%s\t' %(n/n_samples,r2,)
+            print count, k2, 'n', n, 'r', r, 'r2', r2
+        s_table += '\n'
+    print s_table
     print 'all', i_line
     print 'all', int(os.popen('cat %s.tped | wc -l' %(basename1)).read())
     print 'all', int(os.popen('cat %s.tped | wc -l' %(basename2)).read())
+    fd = open('table.txt','w')
+    fd.write(s_table)
+    fd.close()
     
     return
 
