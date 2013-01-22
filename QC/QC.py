@@ -6,17 +6,22 @@
 ## built-ins
 import os,sys,time,math,inspect,optparse
 ## add-ons
-import numpy,pwd
+import numpy
+import pwd
 ## http://docs.scipy.org/doc/scipy/reference/stats.html
 from scipy import stats
 ## other
-sys.path.append('/nfs/users/nfs_t/tc9/github/tc9/misc')
+sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
+
+## todo 2013-01-18: add option to do --options bfile.options
 
 class main:
 
     ## Essential document describing the order of operations in PLINK:
     ## http://pngu.mgh.harvard.edu/~purcell/plink/flow.shtml
+
+    '''This script assumes that FID and IID are always identical'''
 
     def main(self,bfile,):
 
@@ -82,6 +87,8 @@ class main:
             continue
         l = os.listdir('%s/stdout' %(os.getcwd()))
         for fn in l:
+            if '.genome.out' in fn: continue
+            if '.indep-pairwise.out' in fn: continue
             if fn[-4:] != '.out':
                 continue
 ##            if os.path.isdir(fn):
@@ -109,7 +116,7 @@ class main:
             return
 
         n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
-        cmd = 'cat %s.genome.prehardy.samples | wc -l' %(bfile)
+        cmd = 'cat %s.genome.prehardy.EIGENSOFT.samples | wc -l' %(bfile)
         n_samples -= int(os.popen(cmd).read())
 
         n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
@@ -133,13 +140,46 @@ class main:
             column1 = 1, column2 = 2,
             xlabel = '-log(p_{HWE,observed})',
             ylabel = '-log(p_{HWE,expected})',
-##            xmin=0,xmax=8, ## tmp
+##            xmin=0,xmax=8,
             title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             )
 
-        os.remove('%s.qq.hwe.dat' %(bfile))
+        ##
+        ## 2nd plot...
+        ##
+        line_plot = 'plot '
+        for s_ineq, suffix,color in [
+            ['<','out',1,],
+            ['>','in',0,],
+            ]:
+            cmd = 'cat %s.hwe' %(bfile)
+            cmd += " | awk '"
+            cmd += 'NR>1{if ($9!="NA" && $9 %s %.1e) print}' %(
+                s_ineq,self.hwe_min)
+            cmd += "'"
+            cmd += ' > %s.hwe.%s' %(bfile,suffix)
+            self.execmd(cmd)
+            line_plot += '"%s.hwe.%s" u 7:8 ps 1 pt 7 lc %i t "",' %(
+                bfile,suffix,color,)
+        line_plot = line_plot[:-1]+'\n'
+
+        gnuplot.scatter_plot_2d(
+            '%s.hwe.scatter' %(bfile),
+            column1 = '$7', column2 = '$8',
+            line_plot = line_plot,
+            xlabel = 'O(HET)',
+            ylabel = 'E(HET)',
+##            xmin=0,xmax=8,
+            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
+                ),
+            prefix_out = '%s.hwe.scatter' %(bfile),
+            )
+
+        os.remove('%s.hwe.in' %(bfile))
+        os.remove('%s.hwe.out' %(bfile))
 
         return
 
@@ -161,7 +201,7 @@ class main:
         self.execmd(cmd)
 
         n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
-        cmd = 'cat %s.genome.prehardy.samples | wc -l' %(bfile)
+        cmd = 'cat %s.genome.prehardy.EIGENSOFT.samples | wc -l' %(bfile)
         n_samples -= int(os.popen(cmd).read())
 
         n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
@@ -257,7 +297,6 @@ class main:
             [['imiss'],self.table_imiss,],
             [['het'],self.table_het,],
             [['sexcheck'],self.table_sexcheck,],
-##            [['flipped.bed'],self.table_flip,],
             [['sampleQC.frq'],self.table_frq,],
             [['SNPQC.lmiss'],self.table_lmiss,],
             [['prehardy.genome'],self.table_genome,],
@@ -277,13 +316,9 @@ class main:
                 if not time.time()-os.path.getmtime(fp_in) > 5*60:
                     bool_continue = True
                     break
-##                ## does the table exist and
-##                ## was the table changed within the last few minutes?
-##                if os.path.isfile(fp_out):
-##                    if time.time()-os.path.getmtime(fp_out) < 15*60:
-##                        bool_continue = True
-##                        break
-##                    pass
+                if os.path.isfile(fp_out):
+                    bool_continue = True
+                    break
                 continue
             if bool_continue == True:
                 continue
@@ -316,6 +351,8 @@ class main:
 
 
     def table_flip(self,bfile,):
+
+        '''orphant function'''
 
 ##        cmd = 'sort %s.flip > %s.flip.sorted' %(bfile,bfile,)
 ##        self.execmd(cmd)
@@ -378,6 +415,10 @@ class main:
 
     def table_frq(self,bfile,):
 
+        fn_table = fn = 'frq.sampleQC.table'
+        
+        if os.path.isfile(fn_table): return
+
         cmd = '''awk 'NR>1{print $5}' %s.sampleQC.frq''' %(bfile,)
         if self.verbose == True:
             print cmd
@@ -403,23 +444,28 @@ class main:
             s += '\t%i' %(n)
         s += '\n'
 
-        if not os.path.isfile('frq.sampleQC.table'):
+        if not os.path.isfile(fn):
             l = [str(score) for score in l_scores]
             s_header = '#\t'+'\t'.join(l)+'\n'
-            fd = open('frq.sampleQC.table','w')
+            fd = open(fn,'w')
             fd.write(s_header)
             fd.close()
 
-        fd = open('frq.sampleQC.table','a')
+        fd = open(fn,'a')
         fd.write(s)
         fd.close()
 
-        os.system('sort frq.sampleQC.table -k1,1 -u -o frq.sampleQC.table')
+        os.system('sort %s -k1,1 -u -o %s' %(fn,fn))
 
         return
 
 
     def table_sexcheck(self,bfile,):
+
+        fn_table = fn_out = 'sexcheck.table'
+
+        if os.path.isfile(fn_table):
+            return
 
         cmd = '''awk '{if($5=="PROBLEM") print $3,$4,$6}' %s.sexcheck''' %(
             bfile,
@@ -461,8 +507,6 @@ class main:
         lines = os.popen(cmd).readlines()
         lines = ['%s\t%s\n' %(bfile,'\t'.join(line.split())) for line in lines]
 
-        fn_out = 'sexcheck.table'
-
         if not os.path.isfile(fn_out):
             fd = open(fn_out,'w')
             fd.write('# IID PEDSEX SNPSEX F\n')
@@ -480,7 +524,7 @@ class main:
 
     def table_hwe(self,bfile,):
 
-        l_range = range(10)
+        l_range = range(4,8+1)
 
         for suffix in ['','.X.females',]:
 
@@ -489,7 +533,7 @@ class main:
             for i in l_range:
                 f = 10**-i
                 cmd = 'grep ALL %s%s.hwe' %(bfile,suffix,)
-                cmd += " | awk '{if ($9 < %.9f) print $2}' " %(f,)
+                cmd += " | awk '{if ($9 < %.1e) print $2}' " %(f,)
                 cmd += ' | wc -l'
                 n = int(os.popen(cmd).read())
                 print i, n
@@ -522,6 +566,11 @@ class main:
             if not os.path.isfile('%s.%s.lmiss' %(bfile,suffix,)):
                 continue
 
+            fn_table = 'lmiss.%s.table' %(suffix)
+
+            if os.path.isfile(fn_table):
+                continue
+
             s = ''
             cmd = '''awk 'NR>1{print 1-$5}' %s.%s.lmiss''' %(
                 bfile,suffix,
@@ -543,9 +592,7 @@ class main:
                 print 'binsize', l_cumfreq[2]
                 print 'extrapoints', l_cumfreq[3]
 
-            self.table_header_cumfreq('lmiss.%s' %(suffix),lowerreallimit,binsize,)
-
-            fn_table = 'lmiss.%s.table' %(suffix)
+            self.table_header_cumfreq(fn_table,lowerreallimit,binsize,)
 
             s = self.cumfreq2string(l_cumfreq,)
             line = '%s\t%s\n' %(bfile,s,)
@@ -558,14 +605,14 @@ class main:
         return
 
 
-    def table_header_cumfreq(self,prefix,lowerreallimit,binsize,):
+    def table_header_cumfreq(self,fn_table,lowerreallimit,binsize,):
 
-        if not os.path.isfile('%s.table' %(prefix)):
+        if not os.path.isfile(fn_table):
             l = ['#']
             for i in xrange(int((1-lowerreallimit)/binsize)+1):
                 l += ['%.3f' %(lowerreallimit+i*binsize)]
             s = '\t'.join(l)+'\n'
-            fd = open('%s.table' %(prefix),'w')
+            fd = open(fn_table,'w')
             fd.write(s)
             fd.close()
 
@@ -575,13 +622,32 @@ class main:
     def table_genome(self,bfile,):
 
         if (
-            ## no need to append if project is uganda with only one population
-            self.project == 'uganda_gwas'
-            and
             os.path.isfile('genome.table')
             and
             os.path.isfile('genome_outliers.table')
             ):
+            return
+
+        ##
+        ## define pi hat range
+        ##
+        numbins = 4
+        l_pi_hat_max = []
+        for i in xrange(numbins):
+            pi_hat_max = (i+1)*((.20-0.)/numbins)
+            l_pi_hat_max += [pi_hat_max]
+        l_pi_hat_max += [0.5,0.9,]
+
+        ##
+        ## check that output doesn't already exist
+        ##
+        bool_all = True
+        for pi_hat_max in l_pi_hat_max:
+            fn = '%s.genome.%.2f.samples' %(bfile,pi_hat_max,)
+            if not os.path.isfile(fn):
+                bool_all = False
+                break
+        if bool_all == True:
             return
 
         print '\n\ngenome'
@@ -595,12 +661,6 @@ class main:
 
         l = [bfile]
         l_header = ['#']
-        numbins = 4
-        l_pi_hat_max = []
-        for i in xrange(numbins):
-            pi_hat_max = (i+1)*((.20-0.)/numbins)
-            l_pi_hat_max += [pi_hat_max]
-        l_pi_hat_max += [0.5,0.9,]
         for pi_hat_max in l_pi_hat_max:
             cmd = 'python %s/QC_IBD_prune.py ' %(os.path.dirname(sys.argv[0]))
             cmd += '--pi_hat_max %.02f --genome %s.prehardy --imiss %s --out %s\n\n' %(
@@ -620,21 +680,28 @@ class main:
         s = '\t'.join(l)+'\n'
         s_header = '\t'.join(l_header)+'\n'
 
-        if not os.path.isfile('genome.table'):
-            fd = open('genome.table','w')
+        fn_table = 'genome.table'
+
+        if not os.path.isfile(fn_table):
+            fd = open(fn_table,'w')
             fd.write(s_header)
             fd.close()
 
-        fd = open('genome.table','a')
+        fd = open(fn_table,'a')
         fd.write(s)
         fd.close()
 
-        os.system('sort genome.table -k1,1 -u -o genome.table')
+        os.system('sort %s -k1,1 -u -o %s' %(fn_table,fn_table,))
 
         ##
         ## highly related samples
         ##
-        cmd = '''awk 'NR>1{if($10>0.65) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
+        if self.project == 'uganda_gwas':
+            cmd = '''awk 'NR>1{if($10>0.9) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
+        elif self.project == 'agv':
+            cmd = '''awk 'NR>1{if($10>0.1) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
+        else:
+            stop
         lines = os.popen(cmd).readlines()
         s = ''
         for line in lines:
@@ -648,6 +715,7 @@ class main:
         ##
         ## highly related samples
         ##
+        fn = 'genome.high.table'
         cmd = '''awk 'NR>1{if($10>0.90) print $1,$3,$10}' '''
         cmd += '%s.prehardy.genome > %s.genome.high' %(bfile,bfile,)
         self.execmd(cmd)
@@ -658,18 +726,18 @@ class main:
         cmd = 'sort -k1,1 %s.genome.high > %s.genome.high.sorted' %(bfile,bfile)
         self.execmd(cmd)
         cmd = 'join -1 2 -2 1 -o 0,2.3,1.6 '
-        cmd += '%s.imiss.sorted %s.genome.high.sorted >> genome.high.table' %(
-            bfile,bfile,)
+        cmd += '%s.imiss.sorted %s.genome.high.sorted >> %s' %(
+            bfile,bfile,fn,)
         self.execmd(cmd)
         ## sort and join 2
         cmd = 'sort -k2,2 %s.genome.high > %s.genome.high.sorted' %(bfile,bfile)
         self.execmd(cmd)
         cmd = 'join -1 2 -2 2 -o 0,2.3,1.6 '
-        cmd += '%s.imiss.sorted %s.genome.high.sorted >> genome.high.table' %(
-            bfile,bfile,)
+        cmd += '%s.imiss.sorted %s.genome.high.sorted >> %s' %(
+            bfile,bfile,fn,)
         self.execmd(cmd)
         ## get rid of duplicates
-        cmd = 'sort -u genome.high.table -o genome.high.table'
+        cmd = 'sort -u %s -o %s' %(fn,fn)
         self.execmd(cmd)
         ## clean up
         os.remove('%s.genome.high' %(bfile))
@@ -681,8 +749,9 @@ class main:
 
     def table_imiss(self,bfile,):
 
-        print
-        print 'imiss'
+        fn_table = 'imiss.table'
+        if os.path.isfile(fn_table): return
+
         cmd = '''awk 'NR>1{print 1-$6}' %s.imiss''' %(bfile)
         l_imiss = [float(imiss) for imiss in os.popen(cmd).readlines()]
 ##        ## how many in each bin?
@@ -700,15 +769,15 @@ class main:
             print 'binsize', l_cumfreq[2]
             print 'extrapoints', l_cumfreq[3]
 
-        self.table_header_cumfreq('imiss',lowerreallimit,binsize,)
+        self.table_header_cumfreq(fn_table,lowerreallimit,binsize,)
 
         s = self.cumfreq2string(l_cumfreq,)
         line = '%s\t%s\n' %(bfile,s,)
-        fd = open('imiss.table','a')
+        fd = open(fn_table,'a')
         fd.write(line)
         fd.close()
 
-        os.system('sort imiss.table -k1,1 -u -o imiss.table')
+        os.system('sort %s -k1,1 -u -o %s' %(fn_table,fn_table))
 
         return l_imiss
 
@@ -724,22 +793,24 @@ class main:
 
     def table_het(self,bfile,):
 
-        cmd = 'cat %s.imiss.samples ' %(bfile)
-        cmd += "| awk '{print $1}' > %s.imiss.1column.samples" %(bfile)
-        self.execmd(cmd)
+        fn_table = 'het.table'
 
-        cmd = 'fgrep -w -v -f %s.imiss.1column.samples %s.het' %(bfile,bfile,)
-        cmd += '''| awk 'NR>1{print ($5-$3)/$5}' '''
-        if self.verbose == True:
-            print cmd
-        l_het = os.popen(cmd).readlines()
+        if os.path.isfile(fn_table):
+            return
 
-        ## convert to float        
-        l_het = [float(het) for het in l_het]
-        ## calculate statistics
-        mean = average = numpy.mean(l_het)
-        stddev = numpy.std(l_het)
-        print 'average', average, 'stddev', stddev
+        l_cmds,average,stddev,het_min,het_max = self.het2stddev(
+            bfile,self.threshold_imiss,bool_execute=True,bool_remove=False,)
+
+        ## parse heterozygosities for stats.histogram
+        cmd = 'cat %s.het.joined ' %(bfile,)
+        cmd += " | awk '{het=($5-$3)/$5; print het}'"
+        l_het = [float(line) for line in os.popen(cmd).readlines()]
+        os.remove('%s.het.joined' %(bfile))
+
+        ## write stats to file
+        fd = open('het.stats','w')
+        fd.write('%s %f %f\n' %(bfile,average,3*stddev,))
+        fd.close()
 
         ## histogram
         l_histogram = stats.histogram(
@@ -778,11 +849,11 @@ class main:
         l += [str((cumfreq_extrapoints))]
         s = '\t'.join(l)
         line = '%s\t%s\n' %(bfile,s,)
-        fd = open('het.table','a')
+        fd = open(fn_table,'a')
         fd.write(line)
         fd.close()
 
-        os.system('sort het.table -k1,1 -u -o het.table')
+        os.system('sort %s -k1,1 -u -o %s' %(fn_table,fn_table))
 
         ##
         ## table for appendix
@@ -806,20 +877,22 @@ class main:
 ##        print cmd
 ##        stop
 ##        self.execmd()
-        cmd = 'fgrep -w -v -f %s.imiss.1column.samples ' %(bfile,)
-        cmd += '%s.het ' %(bfile,)
-        cmd += '''| awk 'BEGIN{OFS="\t"} NR>1{'''
-        cmd += 'if(($5-$3)/$5<%f' %(mean-3*stddev)
-        cmd += '||'
-        cmd += '($5-$3)/$5>%f) ' %(mean+3*stddev)
-        cmd += "print $2,($5-$3)/$5,(($5-$3)/$5-%f)/%f}' " %(mean,stddev,)
-        cmd += '>> het.appendix.table'
-        self.execmd(cmd)
 
-        cmd = 'cat het.appendix.table | sort -k1,1 -u -o het.appendix.table'
-        self.execmd(cmd)
-
-        os.remove('%s.imiss.1column.samples' %(bfile))
+##        fn_table = 'het.appendix.table'
+##        cmd = 'fgrep -w -v -f %s.imiss.1column.samples ' %(bfile,)
+##        cmd += '%s.het ' %(bfile,)
+##        cmd += '''| awk 'BEGIN{OFS="\t"} NR>1{'''
+##        cmd += 'if(($5-$3)/$5<%f' %(average-3*stddev)
+##        cmd += '||'
+##        cmd += '($5-$3)/$5>%f) ' %(average+3*stddev)
+##        cmd += "print $2,($5-$3)/$5,(($5-$3)/$5-%f)/%f}' " %(average,stddev,)
+##        cmd += '>> %s' %(fn_table)
+##        self.execmd(cmd)
+##
+##        cmd = 'cat %s | sort -k1,1 -u -o %s' %(fn_table,fn_table)
+##        self.execmd(cmd)
+##
+##        os.remove('%s.imiss.1column.samples' %(bfile))
 
         return l_het
 
@@ -848,7 +921,9 @@ class main:
             [['hwe',],self.histogram_hwe,],
             [['hwe',],self.scatter_hwe,],
 ##            [['SNPQC.lmiss','frq',],self.scatter_lmiss_frq,],
-            [['mds',],self.scatter_mds,],
+##            [['mds',],self.scatter_mds,],
+            [['posthardy.mds',],self.scatter_mds_excl_1000g,],
+            [['%s.mds' %(self.fn1000g),],self.scatter_mds_incl_1000g,],
             ]:
             bool_continue = False
             for in_suffix in l_suffixes_in:
@@ -905,58 +980,107 @@ class main:
         return
 
 
-    def scatter_mds_excl1000g(self,bfile,l_tribes,l_colors,):
+    def scatter_mds_excl_1000g(self,bfile,):
 
-        sys.path.append('/nfs/users/nfs_t/tc9/github/tc9/math')
-        import statistics
-        instance_tests = statistics.tests()
+        if os.path.isfile('%s.posthardy.mds.pc1.pc2.mds.png' %(bfile)):
+            return
+
+        '''this function needs to be rewritten.
+it's ugly and I will not understand it 1 year form now.'''
+
+        l_colors = [
+            [255,0,0,],
+            [255,85,0,],
+            [255,170,0,],
+            [255,255,0,],
+            [170,255,0,],
+            [85,255,0,],
+            [0,255,0,],
+            [0,255,85,],
+            [0,255,170,],
+            [0,255,255,],
+            [0,170,255,],
+            [0,85,255,],
+            [0,0,255,],
+            [85,0,255,],
+            [170,0,255,],
+            [255,0,255,],
+            [255,0,170,],
+            [255,0,85,],
+            ]
+
+        if self.project == 'uganda_gwas':
+            l_tribes = [
+                'Muganda',
+                'Munyarwanda',
+                'Rwandese Ugandan',
+                'Murundi',
+                'Munyankole',
+                'Mukiga',
+                'Unknown',
+                'Other',
+                'Mutanzania',
+                'Musoga',
+                'Mutooro',
+                'Mufumbira',
+##                'Nyanjiro (Tanzania)',
+                'IBO',
+                ]
+        else:
+            l_tribes = [bfile,]
+
+        fn = '%s.posthardy.mds' %(bfile)
 
         if not os.path.isdir('mds'):
             os.mkdir('mds')
+            pass
 
         ##
         ## map samples to their tribe/ethnicity
         ##
-        d_IID2tribe = {}
-        for tribe in l_tribes:
-            fd = open('samples/%s.samples' %(tribe.replace(' ','')),'r')
-            s = fd.read()
-            fd.close()
-            l_IIDs = s.split('\n')
-            for IID in l_IIDs:
-                if IID == 'NA':
+        if self.project == 'uganda_gwas':
+            d_IID2tribe = {}
+            for tribe in l_tribes:
+                fd = open('samples/%s.samples' %(tribe.replace(' ','')),'r')
+                s = fd.read()
+                fd.close()
+                l_IIDs = s.split('\n')
+                for IID in l_IIDs:
+                    if IID == 'NA':
+                        continue
+                    d_IID2tribe[IID] = tribe
                     continue
-                d_IID2tribe[IID] = tribe
+                ## empty files
+                fd = open('mds/%s.mds' %(tribe),'w')
+                fd.close()
                 continue
-            ## empty files
-            fd = open('mds/%s.mds' %(tribe),'w')
+            ##
+            ## write individual mds files for each tribe/ethnicity to be plotted
+            ##
+            fd = open(fn,'r')
+            lines = fd.readlines()
             fd.close()
-            continue
-        ##
-        ## write individual mds files for each tribe/ethnicity to be plotted
-        ##
-        fd = open('%s.mds' %(bfile),'r')
-        lines = fd.readlines()
-        fd.close()
-        for line in lines[1:]:
-            FID = line.split()[0][-10:]
-            if FID in d_IID2tribe.keys():
-                prefix = d_IID2tribe[FID]
-            else:
-                prefix = 'other'
-                print 'no tribe assigned', FID, os.popen('grep %s samples/*' %(FID)).read()
-            if FID == 'APP5339441':
-                print tribe
-                stop
-            fd = open('mds/%s.mds' %(prefix),'a')
-            fd.write(line)
-            fd.close()
-            continue
+            for line in lines[1:]:
+                FID = line.split()[0][-10:]
+                if FID in d_IID2tribe.keys():
+                    prefix = d_IID2tribe[FID]
+                else:
+                    prefix = 'other'
+                    print 'no tribe assigned', FID, os.popen('grep %s samples/*' %(FID)).read()
+                if FID == 'APP5339441':
+                    print tribe
+                    stop
+                fd = open('mds/%s.mds' %(prefix),'a')
+                fd.write(line)
+                fd.close()
+                continue
+        else:
+            os.system('cp %s mds/%s.mds' %(fn,bfile))
 
         ##
         ## count samples and SNPs
         ##
-        cmd = 'cat %s.mds | wc -l' %(bfile)
+        cmd = 'cat %s | wc -l' %(fn)
         n_samples = int(os.popen(cmd).read().strip())-1
         n_SNPs = int(os.popen('cat %s.posthardy.prune.in | wc -l' %(bfile)).read())
 
@@ -968,9 +1092,9 @@ class main:
         ##
         ## parse .mds file for subsequent calculation of MD outliers
         ##
-        cmd = "cat %s.mds | awk 'NR>1{print $2}'" %(bfile,)
+        cmd = "cat %s | awk 'NR>1{print $2}'" %(fn)
         l_IIDs = os.popen(cmd).read().strip().split('\n')
-        cmd = "cat %s.mds | awk 'NR>1{print $4,$5,$6,$7}'" %(bfile,)
+        cmd = "cat %s | awk 'NR>1{print $4,$5,$6,$7}'" %(fn)
         s = os.popen(cmd).read()
         ## http://docs.scipy.org/doc/numpy/reference/generated/numpy.fromstring.html
         array_components = numpy.fromstring(s,sep=' ').reshape(n_samples,4,)
@@ -980,10 +1104,15 @@ class main:
 
         for pc1 in xrange(1,5):
             for pc2 in xrange(1,5):
+                if (
+                    (pc1 != 1 or pc2 != 2)
+                    and
+                    (pc1 != 3 or pc2 != 4)
+                    ):
+                    continue
                 if self.verbose == True:
                     print 'mds', pc1, pc2
                 if pc2 <= pc1: continue
-                if self.verbose == True: print 'mds', pc1, pc2
         
                 line_plot = 'plot '
         ##        line_plot += '"%s.mds" u 4:5 lc 0 ps 2 pt 7 t ""\n' %(bfile)
@@ -1013,23 +1142,25 @@ class main:
         ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
         ##            s_plot = s_plot,
                     line_plot = line_plot,
-                    column1 = 4, column2 = 5,
+##                    column1 = 4, column2 = 5,
                     xlabel = 'C%i' %(pc1),
                     ylabel = 'C%i' %(pc2),
                     title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                         bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                         ),
-                    prefix_out='%s.pc%i.pc%i.mds' %(bfile,pc1,pc2,),
+                    prefix_out='%s.pc%i.pc%i.mds' %(fn,pc1,pc2,),
                     lines_extra=['set key out\n'],
 ##                    bool_remove=False,
                     )
-
-        os.system('cp %s.pc1.pc1.mds.png %s.mds.png' %(bfile,bfile,))
 
         return
 
 
     def add_MD_labels(self,bfile,array_components,l_IIDs,pc1,pc2,line_plot,):
+
+##        sys.path.append('/nfs/users/nfs_t/tc9/github/tc9/math')
+##        import statistics
+##        instance_tests = statistics.tests()
 
         u = array_components[:,pc1-1]
         v = array_components[:,pc2-1]
@@ -1072,10 +1203,87 @@ class main:
         return line_plot
 
 
-    def scatter_mds(self,bfile,):
+    def scatter_mds_incl_1000g(self,bfile,):
 
         '''this function needs to be rewritten.
 it's ugly and I will not understand it 1 year form now.'''
+
+        if os.path.isfile('%s.%s.mds.1.2.mds.png' %(bfile,self.fn1000g,)):
+            return
+
+        if not os.path.isdir('mds'):
+            os.mkdir('mds')
+
+        if self.project != 'uganda_gwas':
+            return
+
+        d_sample2pop = {}
+        d_pops = {}
+        for fn in os.listdir('samples'):
+            ethnicity = fn[:-8]
+            fd = open('samples/%s' %(fn),'r')
+            s = fd.read().strip()
+            fd.close()
+            l = s.split('\n')
+            d_pops[ethnicity] = []
+            for s in l:
+                if s == 'NA':
+                    continue
+                if ethnicity == '':
+                    continue
+                if s in d_sample2pop.keys():
+                    if ethnicity == 'Unknown':
+                        continue
+                    print s, d_sample2pop[s], ethnicity
+                    stop
+                d_sample2pop[s] = ethnicity
+                d_pops[ethnicity] += [s]
+            fd = open('mds/%s_%s.mds' %(bfile,ethnicity),'w')
+            fd.close()
+            continue
+
+        fn_mds = fn = '%s.%s.mds' %(bfile,self.fn1000g,)
+
+        fd = open(fn,'r')
+        lines = fd.readlines()
+        fd.close()
+        x = 0
+        for line in lines[1:]:
+            x += 1
+            FID = line.split()[1]
+            if 'APP' in FID:
+                FID = FID[-10:]
+            if '_' in FID:
+                FID = FID[FID.rindex('_')+1:]
+            prefix = d_sample2pop[FID]
+##            print prefix
+            fd = open('mds/%s_%s.mds' %(bfile,prefix),'a')
+            fd.write(line)
+            fd.close()
+##            print FID, os.popen('grep %s samples/*' %(FID)).read()
+##        stop
+
+        i = 0
+        d_colors = {}
+        l_tribes = [
+            'Muganda',
+            'Munyarwanda',
+            'RwandeseUgandan',
+            'Murundi',
+            'Munyankole',
+            'Mukiga',
+            'Unknown',
+            'Other',
+            'Mutanzania',
+            'Musoga',
+            'Mutooro',
+            'Mufumbira',
+##                'Nyanjiro (Tanzania)',
+            'IBO',
+            ]
+        for tribe in l_tribes:
+            d_colors[tribe] = [i*20,i*20,i*20,]
+            i += 1
 
         l_colors = [
             [255,0,0,],
@@ -1098,101 +1306,28 @@ it's ugly and I will not understand it 1 year form now.'''
             [255,0,85,],
             ]
 
-        if self.project == 'uganda_gwas':
-            l_tribes = [
-                'Muganda',
-                'Munyarwanda',
-                'Rwandese Ugandan',
-                'Murundi',
-                'Munyankole',
-                'Mukiga',
-                'Unknown',
-                'Other',
-                'Mutanzania',
-                'Musoga',
-                'Mutooro',
-                'Mufumbira',
-##                'Nyanjiro (Tanzania)',
-                ]
-        else:
-            l_tribes = [bfile,]
+        l_pts = [5,7,9,11,]
 
-        if not os.path.isdir('mds'):
-            os.mkdir('mds')
+        l_pops = list(set(d_pops.keys())-set(l_tribes))
+        l_pops.sort()
+        l_pops += l_tribes
 
-        if self.project == 'uganda_gwas':
-
-            self.scatter_mds_excl1000g(bfile,l_tribes,l_colors,)
-
-        elif self.project in ['agv','uganda_gwas',]:
-
-            ##
-            ## scatter plot of mds
-            ##
-            d = {}
-            d_pops = {}
-            for fn in os.listdir('samples'):
-                ethnicity = fn[:-8]
-                fd = open('samples/%s' %(fn),'r')
-                s = fd.read()
-                fd.close()
-                l = s.split('\n')
-                d_pops[ethnicity] = []
-                for s in l:
-                    if s == 'NA':
-                        continue
-                    if ethnicity == '':
-                        continue
-                    if s in d.keys():
-                        if ethnicity == 'Unknown':
-                            continue
-                        print s, d[s], ethnicity
-                        stop
-                    d[s] = ethnicity
-                    d_pops[ethnicity] += [s]
-                fd = open('mds/%s_%s.mds' %(bfile,ethnicity),'w')
-                fd.close()
-
-            fd = open('%s.mds' %(bfile),'r')
-            lines = fd.readlines()
-            fd.close()
-            x = 0
-            for line in lines[1:]:
-                x += 1
-                FID = line.split()[1]
-                if 'APP' in FID:
-                    FID = FID[-10:]
-                if '_' in FID:
-                    FID = FID[FID.rindex('_')+1:]
-                prefix = d[FID]
-    ##            print prefix
-                fd = open('mds/%s_%s.mds' %(bfile,prefix),'a')
-                fd.write(line)
-                fd.close()
-    ##            print FID, os.popen('grep %s samples/*' %(FID)).read()
-    ##        stop
-
-            i = 0
-            d_colors = {}
-            for tribe in l_tribes:
-                d_colors[tribe] = [i*20,i*20,i*20,]
-                i += 1
-
-            l_pops = list(set(d_pops.keys())-set(l_tribes))
-            l_pops.sort()
-            l_pops += l_tribes
-            
-            line_plot = 'plot [:0.25]'
+        for c1,c2 in [
+            [1,2,],
+            [3,4,],
+            ]:
+            line_plot = 'set key out\nplot '
+    ##        line_plot = 'plot [:0.25]'
     ##        line_plot = 'plot [:0][-0.01:0.02]'
             i_color = 0
             d_plot = {'uganda':'','1000g':'',}
             for i_pop in xrange(len(l_pops)):
                 pop = l_pops[i_pop]
-                fn_mds = 'mds/%s_%s.mds' %(bfile,pop)
-                if not os.path.isfile(fn_mds):
+                fn_mds_pop = 'mds/%s_%s.mds' %(bfile,pop)
+                if not os.path.isfile(fn_mds_pop):
                     print 'skipping', pop
                     continue
-                if os.path.getsize(fn_mds) == 0:
+                if os.path.getsize(fn_mds_pop) == 0:
                     print 'skipping', pop
                     continue
                 if pop in d_colors.keys():
@@ -1201,13 +1336,14 @@ it's ugly and I will not understand it 1 year form now.'''
                     pt = 7
                 else:
                     print pop
-##                    color = l_colors[i_color%len(l_colors)]
-                    color = l_colors[i_color]
+                    color = l_colors[i_color%len(l_colors)]
+    ##                color = l_colors[i_color]
                     i_color += 1
                     ps = 2
-                    pt = 7
-                s = '"%s" u 4:5 lc rgb "#%s" ps %i pt %s t "%s",' %(
-                    fn_mds,
+                    pt = l_pts[i_color%len(l_pts)]
+                s = '"%s" u %i:%i lc rgb "#%s" ps %i pt %s t "%s",' %(
+                    fn_mds_pop,
+                    4-1+c1,4-1+c2,
                     "".join(map(chr, color)).encode('hex'),
                     ps,pt,
                     pop,
@@ -1219,24 +1355,23 @@ it's ugly and I will not understand it 1 year form now.'''
             line_plot += d_plot['uganda']
             line_plot += d_plot['1000g']
             line_plot = line_plot[:-1]+'\n'
-            n_samples = int(os.popen('cat %s.mds | wc -l' %(bfile)).read())
+            n_samples = int(os.popen('cat %s | wc -l' %(fn_mds)).read())
             n_samples -= 1
             cmd = 'cat %s.%s.prune.in | wc -l' %(bfile,self.fn1000g,)
             n_SNPs = int(os.popen(cmd).read())
             gnuplot.scatter_plot_2d(
-                '%s.mds' %(bfile),
+                '%s.%s.mds' %(bfile,self.fn1000g,),
     ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
     ##            s_plot = s_plot,
                 line_plot = line_plot,
-                column1 = 4, column2 = 5,
-                xlabel = 'C1',
-                ylabel = 'C2',
+                column1 = 4-1+c1, column2 = 4-1+c2,
+                xlabel = 'C%i' %(c1),
+                ylabel = 'C%i' %(c2),
                 title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                     bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                     ),
+                prefix_out = '%s.%s.mds.%i.%i' %(bfile,self.fn1000g,c1,c2,),
                 )
-##            if self.project == 'agv':
-##                stop_color_by_chip_cf_dg11_bp7
 
         return
 
@@ -1342,17 +1477,13 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         n_samples = int(os.popen('cat %s.het | wc -l' %(bfile)).read())-1
         if bool_with_stddev == True:
-            cmd = '''awk 'NR>1{print ($5-$3)/$5}' %s.het''' %(bfile)
-            l_het = os.popen(cmd).readlines()
-            l_het = [float(het) for het in l_het]
-            n_samples = n = len(l_het)
-            average = numpy.mean(l_het)
-            stddev = numpy.std(l_het)
+
+            l_cmds,average,stddev,het_min,het_max = self.het2stddev(
+                bfile,self.threshold_imiss,bool_execute=True)
 
         n_SNPs = int(os.popen('cat %s.autosomes.SNPs | wc -l' %(bfile)).read())
 
-##        print average, 3*stddev
-
+        ## horizontal lines
         l_arrows = [
 ##            'set arrow from graph(0),%f to graph(1),%f nohead lc 0\n' %(
             'set arrow from 0,%f to 1,%f nohead lc 0 lt 2 lw 2\n' %(
@@ -1362,6 +1493,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 0.99,0.99,
                 ),
             ]
+        ## vertical lines
         if bool_with_stddev == True:
             l_arrows += ['set arrow from %f,graph(0) to %f,graph(1) ' %(
                 average-3*stddev,average-3*stddev,
@@ -1375,20 +1507,18 @@ it's ugly and I will not understand it 1 year form now.'''
         if bool_with_stddev == True:
             d_colors = {
                 .97:'green',.99:'blue',
+                .00:'black',
                 #.98:'orange',
                 }
-            for threshold in d_colors.keys():
-                cmd = '''
-    awk 'NR>1 {if(1-$6<%f) print $1}' %s.imiss > %s.imiss.filtered
-    grep -v -f %s.imiss.filtered %s.het | awk 'NR>1{print ($5-$3)/$5}'
-    ''' %(
-        threshold,bfile,bfile,bfile,bfile,
-        )
+            l_thresholds = d_colors.keys()
+            l_thresholds.sort()
+            l_thresholds.reverse()
+            for threshold in l_thresholds:
 
-                l_het = os.popen(cmd).readlines()
-                l_het = [float(het) for het in l_het]
-                average_w_exclusion = numpy.mean(l_het)
-                stddev_w_exclusion = numpy.std(l_het)
+                (
+                    l_cmds,average_w_exclusion,stddev_w_exclusion,het_min,het_max,
+                    ) = self.het2stddev(bfile,threshold,bool_execute=True,)
+                
                 color = d_colors[threshold]
                 l_arrows += [
                     'set arrow from %f,graph(0) to %f,graph(1) ' %(
@@ -1404,12 +1534,10 @@ it's ugly and I will not understand it 1 year form now.'''
                     ]
     ##            print threshold, len(l_het), average_w_exclusion, 3*stddev_w_exclusion
 
-            os.remove('%s.imiss.filtered' %(bfile))
-
         if bool_with_stddev == True:
             line_plot = 'plot [%f:%f][:1]' %(
-                min(min(l_het),average-3*stddev,)-0.001,
-                max(max(l_het),average+3*stddev,)+0.001,
+                min(het_min,average-3*stddev,)-0.001,
+                max(het_max,average+3*stddev,)+0.001,
                 )
         else:
             line_plot = 'plot [:][:1]'
@@ -1455,6 +1583,75 @@ it's ugly and I will not understand it 1 year form now.'''
 
         return
 
+
+    def het2stddev(
+        self,bfile,threshold_imiss,bool_execute=False,bool_remove=True,):
+
+        l_cmds = []
+
+        cmd = 'cat %s.imiss' %(bfile)
+        cmd += " | awk 'NR>1 {if(1-$6<%f) print $1}'" %(threshold_imiss)
+        cmd += ' | sort'
+        cmd += ' > %s.imiss.remove.sorted' %(bfile)
+        l_cmds += [cmd]
+
+        cmd = "cat %s.het | awk 'NR>1' | sort -k1,1 > %s.het.sorted" %(bfile,bfile,)
+        l_cmds += [cmd]
+
+        cmd = 'join -1 1 -2 1 -v2'
+        cmd += ' %s.imiss.remove.sorted %s.het.sorted ' %(bfile,bfile,)
+        cmd += ' > %s.het.joined' %(bfile)
+        l_cmds += [cmd]
+
+        if bool_execute == True:
+            for cmd in l_cmds:
+                self.execmd(cmd)
+
+        cmd = ''
+        if bool_execute == False:
+            ## use var=$(cmd) if bash...
+            ## use set var=`cmd` if tcsh...
+            ## set variable s equal to stdout of command in parenthesis
+            cmd += 's=$( '
+        cmd += ' cat %s.het.joined' %(bfile)
+        cmd += " | awk '"
+        cmd += ' BEGIN {minhet=1; maxhet=0; sum=0; sumsq=0}'
+        cmd += ' {het=($5-$3)/$5; sum+=het; sumsq+=het**2;'
+        cmd += ' if(het<minhet) minhet=het; if(het>maxhet) maxhet=het}'
+        cmd += ' END {'
+        cmd += ' mean=sum/(NR);'
+        cmd += ' stddev=sqrt(sumsq/(NR) - (sum/(NR))**2);'
+        cmd += ' print mean, stddev, minhet, maxhet}'
+        cmd += "'"
+        if bool_execute == False:
+            cmd += ' )'
+        l_cmds += [cmd]
+
+        if bool_execute == True:
+            l = os.popen(cmd).read().split()
+            average = float(l[0])
+            stddev = float(l[1])
+            het_min = float(l[2])
+            het_max = float(l[3])
+        else:
+            average = None
+            stddev = None
+            het_min = None
+            het_max = None
+
+        cmd = 'rm %s.het.sorted %s.imiss.remove.sorted' %(bfile,bfile,)
+        l_cmds += [cmd]
+        if bool_execute == True:
+            self.execmd(cmd)
+
+        if bool_remove == True:
+            cmd = 'rm %s.het.joined' %(bfile,)
+            l_cmds += [cmd]
+            if bool_execute == True:
+                self.execmd(cmd)
+
+        return l_cmds, average, stddev, het_min, het_max
+
     
 
     def plink_execution(self,bfile,):
@@ -1467,21 +1664,27 @@ it's ugly and I will not understand it 1 year form now.'''
         for plink_cmd_full in l_plink_cmds:
 
             plink_cmd = plink_cmd_full.split()[0].replace('--','')
-            if plink_cmd == 'cluster': continue
-
-            ##
-            ## check that file output doesn't already exist
-            ##
-            bool_continue_out, out_prefix = self.check_output_existence(
-                bfile,plink_cmd,plink_cmd_full,
-                )
 
             ##
             ## check that file input exists (LSF dependency does not work...)
             ##
-            bool_continue_in, in_prefix = self.check_input_existence(
+            bool_continue_in, in_prefix, fn_in = self.check_input_existence(
                 bfile,plink_cmd,plink_cmd_full,
                 )
+            if bool_continue_in == True:
+                print 'in does not exist', plink_cmd, fn_in
+                continue
+
+            ##
+            ## check that file output doesn't already exist
+            ## and immediately create it if it doesn't
+            ##
+            bool_continue_out, out_prefix, fn_out = self.check_output_existence(
+                bfile,plink_cmd,plink_cmd_full,
+                )
+            if bool_continue_out == True:
+                print 'out exists', plink_cmd, fn_out
+                continue
 
             ##
             ## initiate command
@@ -1525,23 +1728,20 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd_LSF = self.append_LSF(bfile,plink_cmd,plink_cmd_full,)
             cmd_LSF += './%s_%s.sh' %(out_prefix,plink_cmd,)
 
-            ## run all in one go (not finished...)
-            ## .. will not finish this as results should be checked during the process
-            if self.bool_run_all == True and plink_cmd != 'genome':
-                cmd += self.cmd_rerun(bfile,)
+            if (
+                self.bool_run_all == True
+                and
+                ## only rerun after completing a step in the "genome loop"
+                ## not simply after exiting the "genome loop"
+                plink_cmd != 'genome'
+                ):
+                cmd += self.cmd_rerun(bfile,plink_cmd,)
 
             ##
             ## terminate command
             ##
             if self.bool_verbose == True:
                 cmd += self.mail(bfile,plink_cmd,out_prefix,'finished',)
-
-            if bool_continue_out == True:
-                print 'out exists', plink_cmd
-                continue
-            if bool_continue_in == True:
-                print 'in does not exist', plink_cmd
-                continue
 
             ##
             ## write plink command and associated commands
@@ -1560,13 +1760,13 @@ it's ugly and I will not understand it 1 year form now.'''
 ##                print cmd_LSF
 
             if not '--remove' in cmd and plink_cmd not in [
-                'missing','check-sex','het','flip',
+                'missing','het','recodeA','check-sex',
                 ]:
                 print cmd
                 stop1
             if '%' in cmd.replace('%02g',''):
                 print cmd
-                stop2
+                stop2_parenthesis_in_cmd
 ##            print cmd
 ##            print cmd_LSF
 ##            continue
@@ -1595,16 +1795,35 @@ it's ugly and I will not understand it 1 year form now.'''
         return cmd
 
 
-    def cmd_rerun(self,bfile,nl='\n',):
+    def cmd_rerun(self,bfile,plink_cmd,nl='\n',):
 
         cmd = '\n'
-        cmd += 'if [ ! -s %s.SNPQC.bed ]; then\n' %(bfile)
-        cmd += 'sleep 300;'
-        cmd += 'python %s/QC.py ' %(
+        cmd += 'if [ ! -s %s.SNPQC.bed -a ! -s %s.posthardy.mds ]; then\n' %(
+            bfile,bfile,)
+        if plink_cmd == 'indep-pairwise':
+            cmd += 'sleep 600;'
+        else:
+            cmd += 'sleep 300;'
+        cmd += '/software/bin/python-2.7.3 %s/QC.py' %(
             os.path.dirname(sys.argv[0]),
             )
-        ## add all variables if default values are not used...
-        cmd += '--project %s --bfile %s' %(self.project,bfile,)
+        ## snould add all variables from .options file if default values are not used...
+        cmd += ' --project %s --bfile %s' %(self.project,bfile,)
+        ## indep-pairwise
+        cmd += ' --indepWindow %i' %(self.indepWindow)
+        cmd += ' --indepShift %i' %(self.indepShift)
+        cmd += ' --Rsquared %f' %(self.Rsquared)
+        ## genome
+        cmd += ' --pi_hat_max %f' %(self.pi_hat_max)
+        ## het
+        cmd += ' --threshold_het_stddev %i' %(self.threshold_het_stddev)
+        ## freq
+        cmd += ' --threshold_maf %f' %(self.maf_min)
+        ## missing
+        cmd += ' --threshold_imiss %f' %(self.threshold_imiss)
+        cmd += ' --threshold_lmiss %f' %(self.threshold_lmiss)
+        ## hardy
+        cmd += ' --threshold_hwe_min %.1e' %(self.hwe_min)
         cmd += nl
         cmd += 'fi'
         cmd += '\n'
@@ -1637,10 +1856,39 @@ it's ugly and I will not understand it 1 year form now.'''
 ##                if self.bool_verbose == True:
 ##                    print fn_out, 'exists'
                 break
+            ##
+            ## this conflicts with file output check in shell scripts...
+            ##
+##            ##
+##            ## create the output so another process doesn't think it's not created
+##            ##
+##            else:
+##                fd = open(fn_out,'w')
+##                fd.close()
+            continue
+
+        ## check that no other process has started writing to the log file recently
+        ## to avoid the same step being carried out twice
+        ## and worst case scenario output being corrupted
+        if bool_file_out == False:
+            fn_log = '%s.log' %(out_prefix)
+            if os.path.isfile(fn_log):
+                if time.time()-os.path.getmtime(fn_log) < 5*60:
+                    bool_file_out = True
+                    fn_out = fn_log
+                    pass
+                pass
+            ##
+            ## create the output so another process doesn't think it's not created
+            ##
+            else:
+                fd = open(fn_log,'w')
+                fd.close()
+                
         if bool_file_out == True:
             bool_continue = True
 
-        return bool_continue, out_prefix
+        return bool_continue, out_prefix, fn_out
 
 
     def check_input_existence(self,bfile,plink_cmd,plink_cmd_full,):
@@ -1665,15 +1913,23 @@ it's ugly and I will not understand it 1 year form now.'''
         for option in [
             'extract','remove','exclude','keep',
             'read-freq', 'read-genome',
-            ## 'flip',
+            'bmerge',
             ]:
-            if plink_cmd == 'bmerge' and option == 'extract':
-                fp_in = '%s.posthardy.prune.in' %(bfile,)
-                l_fp_in += [fp_in]
-                pass
-            elif '--%s' %(option) in plink_cmd_full:
+##            if plink_cmd == 'bmerge' and option == 'extract':
+##                fp_in = '%s.posthardy.prune.in' %(bfile,)
+##                l_fp_in += [fp_in]
+##                pass
+##            elif '--%s' %(option) in plink_cmd_full:
+##                l = plink_cmd_full.split()
+##                fp_in = l[l.index('--%s' %(option))+1]
+##                l_fp_in += [fp_in]
+##                pass
+            if '--%s' %(option) in plink_cmd_full:
                 l = plink_cmd_full.split()
-                fp_in = l[l.index('--%s' %(option))+1]
+                if option == 'bmerge':
+                    fp_in = l[l.index('--%s' %(option))+2]
+                else:
+                    fp_in = l[l.index('--%s' %(option))+1]
                 l_fp_in += [fp_in]
                 pass
             continue
@@ -1684,7 +1940,7 @@ it's ugly and I will not understand it 1 year form now.'''
             bool_input = self.check_file_in(fp_in)
             if bool_input == False:
                 if self.bool_verbose == True:
-                    print plink_cmd, fp_in, 'does not exist'
+                    print plink_cmd, fp_in, 'does not exist or was recently modified'
                     pass
                 break
             continue
@@ -1692,14 +1948,12 @@ it's ugly and I will not understand it 1 year form now.'''
             bool_continue = True
             pass
 
-        return bool_continue, bfile_prefix
+        return bool_continue, bfile_prefix, fp_in
 
 
     def append_plink(self,bfile,plink_cmd_full,out_prefix,):
 
-##        ## http://pngu.mgh.harvard.edu/~purcell/plink/flow.shtml
-####        cmd += ' --keep-before-remove --keep %s.non1000g.samples' %(bfile)
-##        cmd += '--keep %s.non1000g.samples \\\n' %(bfile)
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/flow.shtml
         
         plink_cmd = plink_cmd_full.split()[0].replace('--','')
 
@@ -1709,6 +1963,8 @@ it's ugly and I will not understand it 1 year form now.'''
         ## --bfile
         if '--bfile' not in plink_cmd_full:
             cmd += '--bfile %s \\\n' %(bfile,)
+
+        ##
         cmd += '%s \\\n' %(plink_cmd_full,)
 
         ## --extract SNPs
@@ -1757,7 +2013,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if plink_cmd_full:
             mem = self.assign_memory(bfile,plink_cmd,plink_cmd_full,)
         else:
-            mem = 3
+            mem = 4
         
         cmd = ''
         cmd += 'bsub \\\n'
@@ -1808,10 +2064,15 @@ it's ugly and I will not understand it 1 year form now.'''
         ## approximate memory (MB) required per 1000 samples
         ## depends on number of SNPs as well...
         d_mem = {
-            'check-sex':900,
+            'check-sex':800,
             'cluster':900,
-            'het':1000,
-            'bmerge':1700,
+            'het':1100,
+            'bmerge':1300,
+            'freq':800,
+            'indep-pairwise':800,
+            'make-bed':800,
+            'missing':800,
+            'genome':800, ## memory requirements low if EIGENSOFT bed not to be written...
             }
 
         if '--bfile' not in plink_cmd_full:
@@ -1824,18 +2085,19 @@ it's ugly and I will not understand it 1 year form now.'''
         n_samples = int(os.popen(cmd).read())
         ## additional samples if bmerge
         if plink_cmd == 'bmerge':
-            cmd = 'cat %s.fam | wc -l' %(self.fp1000g)
-            if self.bool_verbose == True:
-                print cmd
-            n_samples += int(os.popen(cmd).read())
+            if os.path.isfile(self.fp1000g):
+                cmd = 'cat %s.fam | wc -l' %(self.fp1000g)
+                if self.bool_verbose == True:
+                    print cmd
+                n_samples += int(os.popen(cmd).read())
 
         ## assign appropriate amount of memory (GB)
         if plink_cmd in d_mem.keys():
             mem = int(
-                max(2,math.ceil((d_mem[plink_cmd]/1000.)*n_samples/1000.))
+                max(3,math.ceil((d_mem[plink_cmd]/1000.)*n_samples/1000.))
                 )
         else:
-            mem = int(max(2,math.ceil(0.8*n_samples/1000.)))
+            mem = int(max(3,math.ceil(0.8*n_samples/1000.)))
             pass
 
         return mem
@@ -1857,44 +2119,46 @@ it's ugly and I will not understand it 1 year form now.'''
         s_cluster = '--cluster \\\n'
         s_cluster += '--mds-plot 4 \\\n'
         s_cluster += '--exclude %s.ldregions.SNPs \\\n' %(bfile,)
-        s_cluster += '--extract %s.posthardy.prune.in \\\n' %(bfile,)
-        s_cluster += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+
+##        ##
+##        ## sequential for Manj
+##        ##
+##        l_plink_cmds += ['--het --remove %s.imiss.samples --out %s.sequential' %(bfile,bfile,)]
+##        l_plink_cmds += ['--check-sex --extract %s.X.SNPs --remove %s.imiss.samples --out %s.sequential' %(bfile,bfile,bfile,)]
 
         ##
-        ## sequential for Manj
-        ##
-        l_plink_cmds += ['--het --remove %s.imiss.samples --out %s.sequential' %(bfile,bfile,)]
-        l_plink_cmds += ['--check-sex --extract %s.X.SNPs --remove %s.imiss.samples --out %s.sequential' %(bfile,bfile,bfile,)]
-
-        ##
-        ##
-        ##
-        l_plink_cmds += [
-            ## http://pngu.mgh.harvard.edu/~purcell/plink/dataman.shtml#flip
-            '--flip %s.flip \\\n--make-bed --out %s.flipped' %(bfile,bfile,),
-            ]
-
-        ##
-        ## sample QC
+        ## 1) sample QC
         ##
 
-        l_plink_cmds += [
-            ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
-            '--missing',
-            ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#inbreeding
-            '--het',
-            ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
-            '--check-sex --extract %s.X.SNPs' %(bfile),
-            ]
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
+        l_plink_cmds += ['--missing']
+
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#inbreeding
+##        l_plink_cmds += ['--het --keep %s.imiss' %(bfile)] ## keep just to make sure it doesn't run until --missing finishes
+        l_plink_cmds += ['--recodeA --out %s' %(bfile)] ## keep just to make sure it doesn't run until --missing finishes
+        ## xxx rename het_before/after to recodeA_before/after and include het calculation in recode_after
+
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
+        l_plink_cmds += ['--check-sex --extract %s.X.SNPs' %(bfile)]
+
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
-        s += '--flip %s.flip \\\n' %(bfile)
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
         s += '--out %s.sampleQC \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ##
-        ## SNP QC, pre Hardy
+        ## 2) SNP QC, pre Hardy, SNP exclusion (missingness)
+        ##
+
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
+        s = '--missing \\\n'
+        s +='--out %s.SNPQC \\\n' %(bfile,)
+        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
+        l_plink_cmds += [s]
+
+        ##
+        ## 3) SNP QC, pre Hardy, sample removal (relatedness)
         ##
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
@@ -1902,12 +2166,6 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
         s += '--out %s.sampleQC \\\n' %(bfile)
         s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
-        l_plink_cmds += [s]
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
-        s = '--missing \\\n'
-        s +='--out %s.SNPQC \\\n' %(bfile,)
-        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
@@ -1921,15 +2179,28 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
         s = self.write_genome_cmd(bfile, 'prehardy', 'sampleQC', bfile,)
         l_plink_cmds += [s]
+##
+##        ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
+##        s = s_cluster+'--read-genome %s.prehardy.genome \\\n' %(bfile,)
+##        s += '--bfile %s \\\n' %(bfile,)
+##        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
+##        s += '--extract %s.prehardy.prune.in \\\n' %(bfile,)
+##        s += '--out %s.prehardy \\\n' %(bfile,)
+##        l_plink_cmds += [s]
+
+        ##
+        ## 4) SNP QC, pre Hardy, sample removal (EIGENSOFT)
+        ## 5) SNP QC, pre Hardy, SNP exclusion (HWE)
+        ##
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#hardy
         s = '--hardy \\\n'
         s += '--exclude %s.lmiss.SNPs \\\n' %(bfile,)
-        s += '--remove %s.genome.prehardy.samples \\\n' %(bfile,)
+        s += '--remove %s.genome.prehardy.EIGENSOFT.samples \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         ##
-        ## SNP QC, post Hardy
+        ## 5) SNP QC, post Hardy, MDS plot without 1000G
         ##
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
@@ -1952,15 +2223,19 @@ it's ugly and I will not understand it 1 year form now.'''
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
-        cmd_cluster = s_cluster+'--read-genome %s.posthardy.genome \\\n' %(
-            bfile,
-            )
-        cmd_cluster += '--bfile %s \\\n' %(bfile,)
-        l_plink_cmds += [cmd_cluster]
+        s = s_cluster+'--read-genome %s.posthardy.genome \\\n' %(bfile,)
+        s += '--bfile %s \\\n' %(bfile,)
+        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+        s += '--extract %s.posthardy.prune.in \\\n' %(bfile,)
+        s += '--out %s.posthardy \\\n' %(bfile,)
+        l_plink_cmds += [s]
+
+        ##
+        ## 7) post SNP QC, make-bed
+        ##
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
-        s += '--flip %s.flip \\\n' %(bfile)
         s += '--remove %s.SNPQC.samples \\\n' %(bfile)
         s += '--out %s.SNPQC \\\n' %(bfile)
         s += '--exclude %s.SNPQC.SNPs \\\n' %(bfile,)
@@ -1991,7 +2266,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#hardy
         s = '--hardy \\\n'
         s += '--out %s.X.females \\\n' %(bfile,)
-        s += '--remove %s.genome.prehardy.samples \\\n' %(bfile,)
+        s += '--remove %s.genome.prehardy.EIGENSOFT.samples \\\n' %(bfile,)
         s += '--extract %s.X.SNPs \\\n' %(bfile)
         s += '--exclude %s.X.females.lmiss.SNPs \\\n' %(bfile,)
         s += '--filter-females \\\n'
@@ -1999,7 +2274,6 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
-        s += '--flip %s.flip \\\n' %(bfile)
         s += '--remove %s.SNPQC.samples \\\n' %(bfile)
         s += '--extract %s.X.SNPs \\\n' %(bfile)
         s += '--out %s.X \\\n' %(bfile,)
@@ -2010,27 +2284,49 @@ it's ugly and I will not understand it 1 year form now.'''
         ## MDS with 1000G
         ##
 
+        suffix = self.fn1000g
+
         ## http://pngu.mgh.harvard.edu/~purcell/plink/dataman.shtml#merge
         s = '--bmerge \\\n'
-        s += '%s.%s.flipped.bed \\\n' %(bfile,self.fn1000g,)
-        s += '%s.%s.flipped.bim \\\n' %(bfile,self.fn1000g,)
-        s += '%s.%s.flipped.fam \\\n' %(bfile,self.fn1000g,)
+        s += '%s.bed \\\n' %(self.fp1000g,)
+        s += '%s.bim \\\n' %(self.fp1000g,)
+        s += '%s.fam \\\n' %(self.fp1000g,)
         s += '--make-bed \\\n'
-        s += '--out %s.%s \\\n' %(bfile,self.fn1000g,)
-        s += '--bfile %s.flipped \\\n' %(bfile,)
+        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--bfile %s.SNPQC \\\n' %(bfile,)
         s += '--remove %s.SNPQC.samples \\\n' %(bfile)
-        s += '--extract %s.%s.prune.in \\\n' %(bfile,self.fn1000g,)
+        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,self.fn1000g,)
+        l_plink_cmds += [s]
+
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
+        s = '--freq \\\n'
+        s += '--bfile %s.%s \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
+        l_plink_cmds += [s]
+
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
+        s = s_indep_pairwise
+        s += '--bfile %s.%s \\\n' %(bfile,suffix,)
+        s += '--read-freq %s.%s.frq \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
         s = self.write_genome_cmd(
-            bfile, self.fn1000g, 'SNPQC', '%s.%s' %(bfile,self.fn1000g,),
+            bfile, suffix, 'SNPQC', '%s.%s' %(bfile,suffix,),
             )
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
-        s = s_cluster+'--read-genome %s.%s.genome \\\n' %(bfile,self.fn1000g,)
-        s += '--bfile %s.%s \\\n' %(bfile,self.fn1000g,)
+        s = s_cluster+'--read-genome %s.%s.genome \\\n' %(bfile,suffix,)
+        s += '--bfile %s.%s \\\n' %(bfile,suffix,)
+        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+        s += '--extract %s.%s.prune.in \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile,suffix,)
         l_plink_cmds += [s]
 
         return l_plink_cmds
@@ -2080,20 +2376,20 @@ it's ugly and I will not understand it 1 year form now.'''
 
         l_cmds = []
 
-        ##
-        ## exclude samples from previous steps
-        ##
-        if plink_cmd == 'bmerge':
-            l_cmds = self.bmerge_before(bfile,)
+        cmd = ''
+        for out_suffix in self.d_out_suffix[plink_cmd]:
+            fn_out = '%s.%s' %(out_prefix,out_suffix,)
+            cmd += 'if [ -f %s ]; then\nexit\nfi\n' %(fn_out)
+        l_cmds += [cmd]
+
+        if plink_cmd == None:
+            pass
 
         elif plink_cmd == 'genome':
             l_cmds = self.genome_before(bfile,in_prefix,out_prefix,)
 
-        elif plink_cmd == 'flip':
-            cmd = '''awk '{if($5=="-") print $1}' %s | sort > %s.flip''' %(
-                self.strand,bfile,
-                )
-            l_cmds += [cmd]
+##        elif plink_cmd == 'hardy':
+##            l_cmds = self.hardy_before(bfile,out_prefix,)
 
         cmds = '\n\n'.join(l_cmds)
         
@@ -2107,8 +2403,8 @@ it's ugly and I will not understand it 1 year form now.'''
         if plink_cmd == 'missing':
             l_cmds = self.missing_after(bfile)
 
-        elif plink_cmd == 'het':
-            l_cmds = self.het_after(bfile)
+        elif plink_cmd == 'recodeA':
+            l_cmds = self.recodeA_after(bfile)
             cmd = self.concatenate_sampleQC_remove_lists(bfile,)
             l_cmds += [cmd]
 
@@ -2123,148 +2419,247 @@ it's ugly and I will not understand it 1 year form now.'''
             l_cmds = self.genome_after(bfile,in_prefix,out_prefix,)
 
         elif plink_cmd == 'hardy':
-            l_cmds = self.hardy_after(bfile,)
+            l_cmds = self.hardy_after(bfile,out_prefix,)
 
 ##        elif plink_cmd == 'cluster':
 ##            l_cmds += ['fi\n']
 
         elif plink_cmd == 'bmerge':
-            l_cmds += ['rm %s.%s.flipped.*' %(bfile, self.fn1000g,)] ## --bfile
-
-##        elif plink_cmd == 'flip':
-##            l_cmds += ['rm %s.flip' %(bfile,)]
-
-        elif plink_cmd == 'make-bed' and out_prefix == '%s.SNPQC' %(bfile):
-            l_cmds += self.makebed_after(bfile,in_prefix,out_prefix,)
+            l_cmds = self.bmerge_after(bfile,)
 
         cmds = '\n\n'.join(l_cmds)
 
         return cmds
 
 
-    def hardy_after(self,bfile,):
+    def hardy_after(self,bfile,out_prefix,):
 
         l_cmds = []
 
-        cmd = 'if [ -s %s.hwe -a ! -f %s.SNPQC.SNPs ]; then\n' %(bfile,bfile,)
-        cmd += "awk '{if ($9 < %.1e) print $2}' %s.hwe > %s.hwe.SNPs\n" %(
-            self.hwe_min, bfile,bfile,)
-        cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs > %s.SNPQC.SNPs\n' %(
-            bfile,bfile,bfile,
-            )
-        cmd += 'fi\n'
-        l_cmds += [cmd]
+        ##
+        ## autosome
+        ##
+        if out_prefix == bfile:
 
-        cmd = 'if [ -s %s.X.females.hwe -a ' %(bfile)
-        cmd += '! -f %s.X.females.lmiss.hwe.SNPs ]; then\n' %(bfile)
-        cmd += 'cat %s.X.females.hwe | ' %(bfile)
-        cmd += "awk '{if ($9 < %.1e) print $2}' > %s.X.females.hwe.SNPs\n" %(
-            self.hwe_min, bfile,)
-        cmd += 'cat '
-        cmd += '%s.X.males.lmiss.SNPs ' %(bfile,)
-        cmd += '%s.X.females.lmiss.SNPs ' %(bfile,)
-        cmd += '%s.X.females.hwe.SNPs ' %(bfile,)
-        cmd += '| sort -u '
-        cmd += '> %s.X.lmiss.hwe.SNPs\n' %(bfile,)
-        cmd += 'fi\n'
-        l_cmds += [cmd]
+            ##
+            ## if output exists
+            ##
+            cmd = 'if [ -s %s.hwe ]; then\n' %(bfile,)
+
+            cmd += "awk '{if ($9 < %.1e) print $2}' %s.hwe > %s.hwe.SNPs\n" %(
+                self.hwe_min, bfile,bfile,)
+            cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs > %s.SNPQC.SNPs\n' %(
+                bfile,bfile,bfile,
+                )
+
+            ##
+            ## only merge SNPs found in 1000g and current dataset
+            ##
+            for fn_in,fn_out in [
+                [self.fp1000g,self.fn1000g,],
+                [bfile,bfile,],
+                ]:
+                ## 1) sort
+                cmd += "\ncat %s.bim | awk '{print $2}' | sort > %s.SNPs.sorted" %(
+                    fn_in,fn_out,)
+
+            cmd += '\ncomm -12 %s.SNPs.sorted %s.SNPs.sorted > %s.%s.comm.SNPs' %(
+                bfile,self.fn1000g,bfile,self.fn1000g,)
+
+            cmd += '\nrm %s.SNPs.sorted %s.SNPs.sorted' %(bfile,self.fn1000g,)
+
+########            cmd += '\nsort %s.posthardy.prune.in' %(bfile)
+########            cmd += ' > %s.posthardy.prune.in.sorted' %(bfile)
+########
+########            cmd += '\ncomm -12 %s.posthardy.prune.in.sorted %s.%s.comm.SNPs > %s.%s.prune.in' %(
+########                bfile,bfile,self.fn1000g,bfile,self.fn1000g,)
+########
+########            cmd += '\nrm %s.%s.comm.SNPs %s.posthardy.prune.in.sorted' %(
+########                bfile,self.fn1000g,bfile,)
+
+            ##
+            ## fi
+            ##
+            cmd += '\nfi\n'
+            l_cmds += [cmd]
+
+        ##
+        ## X
+        ##
+        if out_prefix == '%s.X.females' %(bfile):
+
+            cmd = 'if [ -s %s.X.females.hwe -a -s %s.X.males.lmiss.SNPs ]; then\n' %(bfile,bfile,)
+
+            cmd += 'cat %s.X.females.hwe | ' %(bfile)
+            cmd += "awk '{if ($9 < %.1e) print $2}' > %s.X.females.hwe.SNPs\n" %(
+                self.hwe_min, bfile,)
+            cmd += 'cat '
+            cmd += '%s.X.males.lmiss.SNPs ' %(bfile,)
+            cmd += '%s.X.females.lmiss.SNPs ' %(bfile,)
+            cmd += '%s.X.females.hwe.SNPs ' %(bfile,)
+            cmd += '| sort -u '
+            cmd += '> %s.X.lmiss.hwe.SNPs\n' %(bfile,)
+
+            cmd += 'fi\n'
+            l_cmds += [cmd]
 
         return l_cmds
 
 
-    def makebed_after(self,bfile,in_prefix,out_prefix,):
+    def EIGENSOFT(self,bfile,):
 
-        l_cmds = []
+        ## http://computing.bio.cam.ac.uk/local/doc/eigenstrat.txt
+        ## http://helix.nih.gov/Applications/README.eigenstrat
+
+        ##Estimated running time of the smartpca program is 
+        ##  2.5e-12 * nSNP * NSAMPLES^2 hours            if not removing outliers.
+        ##  2.5e-12 * nSNP * NSAMPLES^2 hours * (1+m)    if m outlier removal iterations.
+        ##Thus, under the default of up to 5 outlier removal iterations, running time is 
+        ##  up to 1.5e-11 * nSNP * NSAMPLES^2 hours.
 
         cmd = ''
 
-        cmd += 'cat %s.fam' %(out_prefix)
-        cmd += ' | '
-        cmd += "awk '{print $1,$2,substr($1,12,10),substr($2,12,10)}'"
-        cmd += ' > '
-        cmd += '%s.recoded.txt' %(out_prefix)
-        cmd += '\n\n'
+        if self.project == 'uganda_gwas':
+            bool_eigensoft = True
+        elif self.project == 'agv':
+            bool_eigensoft = False ## cp8 17jan2013
+            
+        if bool_eigensoft == True:
 
-        cmd += 'if [ ! -f %s.longLDexcl.bed ]; then\n\n' %(out_prefix)
-        cmd += 'plink \\\n'
-        cmd += '--bfile %s \\\n' %(out_prefix,)
-        cmd += '--exclude %s.ldregions.SNPs \\\n' %(bfile,)
-        cmd += '--update-ids %s.recoded.txt \\\n' %(out_prefix,)
-        cmd += '--make-bed \\\n'
-        cmd += '--out %s.longLDexcl \\\n' %(out_prefix)
-        cmd += '\nfi\n\n'
+            ##
+            ## commands executed now
+            ##
+            
+            cmd = ''
+            cmd += 'cat %s.fam' %(bfile)
+    ##        cmd += "awk '{print $1,$2,substr($1,12,10),substr($2,12,10)}'"
+            ## init awk
+            cmd += " | awk '{"
+            cmd += 'sub(/-RECLUSTER/,"",$1);sub(/-RECLUSTER/,"",$2)'
+            cmd += ';print $1,$2,'
+            cmd += 'substr($1,length($1)-9,10),substr($2,length($2)-9,10)'
+            ## term awk
+            cmd += "}'"
+            cmd += ' > %s.recoded.txt' %(bfile)
+            cmd += '\n\n'
+            self.execmd(cmd)
 
-        cmd += self.append_LSF(bfile,'eigensoft',verbose=True,)
-        cmd += '%s \\\n' %(self.eigensoft)
-        ## genotype file in any format (see ../CONVERTF/README)
-        cmd += '-i %s.longLDexcl.bed \\\n' %(os.path.join(os.getcwd(),out_prefix))
-        ## snp file in any format (see ../CONVERTF/README)
-        cmd += '-a %s.longLDexcl.bim \\\n' %(os.path.join(os.getcwd(),out_prefix))
-        ## indiv file in any format (see ../CONVERTF/README)
-        cmd += '-b %s.longLDexcl.fam \\\n' %(os.path.join(os.getcwd(),out_prefix))
-        ## (Default is 10) number of principal components to output
-        cmd += '-k 10 \\\n'
-        ## output file of principal components.  Individuals removed
-        ## as outliers will have all values set to 0.0 in this file.
-        cmd += '-o %s.pca \\\n' %(out_prefix.replace('.','_'))
-        ## prefix of output plot files of top 2 principal components.
-        ## (labeling individuals according to labels in indiv file)
-        cmd += '-p %s.plot \\\n' %(out_prefix.replace('.','_'))
-        ## output file of all eigenvalues
-        cmd += '-e %s.eval \\\n' %(out_prefix.replace('.','_'))
-        ## output logfile        
-        cmd += '-l %s.eigensoft.log \\\n' %(out_prefix.replace('.','_'))
-        ## (Default is 5) maximum number of outlier removal iterations.
-        ## To turn off outlier removal, set -m 0.
-        cmd += '-m 5 \\\n'
-        ## (Default is 10) number of principal components along which
-        ## to remove outliers during each outlier removal iteration.
-        cmd += '-t 10 \\\n'
-        ## (Default is 6.0) number of standard deviations which an
-        ## individual must exceed, along one of topk top principal
-        ## components, in order to be removed as an outlier.
-        cmd += '-s 6 \\\n'
-        ## verbose
-        cmd += '-V \\\n'
+            cmd = ''
+            cmd += 'cat %s.recoded.txt' %(bfile)
+            cmd += " | awk '{print $4}'"
+            cmd += ' | sort'
+            cmd += ' | uniq -d'
+            if os.popen(cmd).read().strip() != '' and os.popen(cmd).read().strip() != 'APP5212239':
+                print cmd
+                stop
 
-##        l_cmds += [cmd]
-        fd = open('%s.pca.sh' %(bfile),'w')
-        fd.write('#!/bin/bash\n\n'+cmd+'\n\n')
-        fd.close()
+            self.write_EIGENSOFT_parameter_file(bfile)
 
-##        cmd = 'echo "'
-##        cmd += 'Hi Deepti. This is an automated message sent to you, because my script ran to completion. '
-##        cmd += 'Would you mind running this EIGENSOFT script for me: '
-##        cmd += '%s/%s.pca.sh ' %(os.getcwd(),bfile,)
-##        cmd += 'Thank you! Tommy'
-##        cmd += '"'
-##        cmd += '| mail -s "EIGENSOFT %s" ' %(bfile)
-##        cmd += 'dg11@sanger.ac.uk\n'
-##        l_cmds += [cmd]
+            ##
+            ## command to be appended to shell script
+            ##
 
-        cmd = 'echo "'
-        cmd += 'Hi Deepti. This is an automated message sent to you, because my script ran to completion. '
-        cmd += 'Would you mind running this EIGENSOFT script for me: '
-        cmd += '%s/%s.pca.sh ' %(os.getcwd(),bfile,)
-        cmd += 'Thank you! Tommy'
-        cmd += '"'
-        cmd += '| mail -s "EIGENSOFT %s" ' %(bfile)
-        cmd += 'tc9@sanger.ac.uk\n'
-        l_cmds += [cmd]
+            cmd = ''
+            cmd += 'echo EIGENSOFT\n\n'
+            
+            cmd += 'cat %s.lmiss.SNPs %s.ldregions.SNPs > %s.EIGENSOFT.exclude.SNPs\n\n' %(
+                bfile,bfile,bfile,)
 
-        cmd = 'echo "'
-        cmd += 'Hi Deepti. This is an automated message sent to you, because my script ran to completion. '
-        cmd += 'Would you mind running this EIGENSOFT script for me: '
-        cmd += '%s/%s.pca.sh ' %(os.getcwd(),bfile,)
-        cmd += 'Thank you! Tommy'
-        cmd += '"'
-        cmd += '| mail -s "EIGENSOFT %s" ' %(bfile)
-        cmd += 'tommy.carstensen@gmail.com\n'
-        l_cmds += [cmd]
+            ## format IIDs of sample removal list
+            cmd += 'cat %s.genome.samples' %(bfile)
+            cmd += " | awk '{"
+            cmd += 'sub(/-RECLUSTER/,"",$2);sub(/-RECLUSTER/,"",$2); print '
+            cmd += 'substr($1,length($1)-9,10),substr($2,length($2)-9,10)'
+            cmd += "}'"
+            cmd += ' > %s.genome.EIGENSOFT.samples\n\n' %(bfile)
 
-        os.system('chmod +x %s.pca.sh' %(bfile))
+            cmd += 'if [ ! -f %s.EIGENSOFT.bed ]; then\n\n' %(bfile)
+            cmd += 'plink \\\n'
+            cmd += '--bfile %s \\\n' %(bfile,)
+            cmd += '--exclude %s.EIGENSOFT.exclude.SNPs \\\n' %(bfile,)
+            cmd += '--extract %s.prehardy.prune.in \\\n' %(bfile,)
+            cmd += '--update-ids %s.recoded.txt \\\n' %(bfile,)
+            cmd += '--remove %s.genome.EIGENSOFT.samples \\\n' %(bfile,)
+            cmd += '--make-bed \\\n'
+            cmd += '--out %s.EIGENSOFT \\\n' %(bfile)
+            cmd += '\nfi'
+            cmd += '\n\n'
 
-        return l_cmds
+            ##
+            cmd += 'cat %s.genome.prehardy.samples' %(bfile)
+            cmd += " | awk '{"
+            cmd += 'sub(/-RECLUSTER/,"",$2);sub(/-RECLUSTER/,"",$2); print '
+            cmd += 'substr($1,length($1)-9,10),substr($2,length($2)-9,10)'
+            cmd += "}'"
+            cmd += ' | sort -k2,2'
+            cmd += ' > %s.genome.prehardy.samples.sorted\n\n' %(bfile)
+            ##
+            cmd += 'cat %s.EIGENSOFT.fam' %(bfile)
+            cmd += ' | sort -k2,2'
+            cmd += ' > %s.EIGENSOFT.fam.sorted\n\n' %(bfile)
+            ##
+            for s1,s2,s3 in [
+                [' -v2','fou','>',],
+                ['','nof','>>',],
+                ]:
+                cmd += 'join -1 2 -2 2 %s -o 2.1,2.2,2.3,2.4,2.5,2.6' %(s1)
+                cmd += ' %s.genome.prehardy.samples.sorted %s.EIGENSOFT.fam.sorted' %(bfile,bfile,)
+                cmd += " | awk '{"
+                cmd += 'sub(/-RECLUSTER/,"",$2);sub(/-RECLUSTER/,"",$2); print '
+                cmd += 'substr($1,length($2)-9,10),substr($2,length($2)-9,10),$3,$4,$5,"%s"' %(s2)
+                cmd += "}'"
+                cmd += ' %s %s.EIGENSOFT.fam\n\n' %(s3,bfile)
+  
+            cmd += 'echo "fou" > %s.EIGENSOFT.poplist\n' %(bfile)
+
+            ##
+            cmd += 'rm %s.EIGENSOFT.fam.sorted %s.genome.prehardy.samples.sorted\n\n' %(bfile,bfile,)
+
+            ## run with parameter file options
+            cmd += '%s \\\n' %(self.eigensoft)
+            cmd += '-p %s.par\n\n' %(bfile)
+
+##            ## run with command line options
+##            cmd += '/software/varinf/bin/eigensoft/bin/smartpca.perl \\\n'
+##            cmd += ' -i %s.EIGENSOFT.bed' %(bfile)
+##            cmd += ' -a %s.EIGENSOFT.bim' %(bfile)
+##            cmd += ' -b %s.EIGENSOFT.fam' %(bfile)
+##            cmd += ' -o %s.EIGENSOFT.evec' %(bfile)
+##            cmd += ' -p %s.EIGENSOFT.plot' %(bfile)
+##            cmd += ' -e %s.EIGENSOFT.eval' %(bfile)
+##            cmd += ' -l %s.EIGENSOFT.log' %(bfile)
+##            cmd += ' -w %s.EIGENSOFT.poplist' %(bfile)
+##            cmd += '\n\n'
+
+##            cat omni2.5-8_20120809_gwa_uganda_gtu_flipped.outlier | awk '{print $3}' | awk -F ":" '{print $1}' > tmp ; fgrep -f tmp omni2.5-8_20120809_gwa_uganda_gtu_flipped.prehardy.genome | awk '{if($10>0.05) print}' | head
+
+        else:
+
+            fd = open('%s.EIGENSOFT.outlier' %(bfile),'w')
+            fd.close()
+
+        ##
+        ## parse outliers and append
+        ##
+        ## print EIGENSOFT sample names to file
+        cmd += 'cat %s.EIGENSOFT.outlier' %(bfile)
+        cmd += " | awk '{print $3}'"
+        cmd += ''' | awk 'BEGIN{FS=":"}{print $2}' '''
+        cmd += ' > %s.outlier.EIGENSOFTsamples' %(bfile)
+        ## convert EIGENSOFT sample names to original sample names
+        cmd += ' ; fgrep -w -f %s.outlier.EIGENSOFTsamples %s.recoded.txt' %(bfile,bfile)
+        cmd += " | awk '{print $1,$2}'"
+        cmd += ' > %s.EIGENSOFT.samples' %(bfile)
+        ## before hardy
+        cmd += ' ; cat %s.genome.prehardy.samples %s.EIGENSOFT.samples' %(bfile,bfile)
+        cmd += ' > %s.genome.prehardy.EIGENSOFT.samples' %(bfile)
+        ## after hardy
+        cmd += ' ; cat %s.genome.samples %s.EIGENSOFT.samples' %(bfile,bfile)
+        cmd += ' > %s.SNPQC.samples\n\n' %(bfile)
+        ## clean-up
+        cmd += 'rm %s.outlier.EIGENSOFTsamples\n\n' %(bfile)
+
+        return cmd
 
 
 ##    def cluster_after(self,bfile,in_prefix,out_prefix,):
@@ -2276,6 +2671,70 @@ it's ugly and I will not understand it 1 year form now.'''
 ##        l_cmds += [cmd]
 ##
 ##        return l_cmds
+
+
+    def write_EIGENSOFT_parameter_file(self,bfile):
+
+        ## http://helix.nih.gov/Applications/README.popgen
+        ## http://computing.bio.cam.ac.uk/local/doc/popgen.txt
+        ##
+        ## input
+        par = 'genotypename: %s.EIGENSOFT.bed\n' %(bfile)
+        par += 'snpname: %s.EIGENSOFT.bim\n' %(bfile)
+        par += 'indivname: %s.EIGENSOFT.fam\n' %(bfile)
+        ##
+        ## output
+        par += 'evecoutname: %s.EIGENSOFT.evec\n' %(bfile)
+        par += 'evaloutname: %s.EIGENSOFT.eval\n' %(bfile)
+        ##
+        ## optional parameters
+        ##
+        ## numoutlieriter: maximum number of outlier removal iterations.
+        ## Default is 5.  To turn off outlier removal, set this parameter to 0.
+##        par += 'numoutlieriter: 5\n'
+        ##
+        ## outliersigmathresh: number of standard deviations which an individual must 
+        ## exceed, along one of the top (numoutlierevec) principal components, in
+        ## order for that individual to be removed as an outlier.  Default is 6.0.
+##        par += 'outliersigmathresh: 4\n'
+        ##
+        ## outlieroutname: output logfile of outlier individuals removed. If not specified,
+        ## smartpca will print this information to stdout, which is the default.
+        par += 'outlieroutname: %s.EIGENSOFT.outlier\n' %(bfile)
+        ##
+        ## numoutlierevec: number of principal components along which to
+        ## remove outliers during each outlier removal iteration.  Default is 10.
+##        par += 'numoutlierevec: 2\n'
+        ##
+        ## qtmode: If set to YES, assume that there is a single population and that the
+        ## population field contains information on real-valued phenotypes.
+        ## The default value for this parameter is NO.
+##        par += 'qtmode: YES\n'
+        ##
+        ## http://genepath.med.harvard.edu/~reich/eigensoftfaq.htm
+        ## Question: How do I compute principal components using only a subset of populations and project other populations onto those principal components? 
+        ## Answer: Use -w flag to smartpca.perl (see EIGENSTRAT/README), or use poplistname parameter to smartpca (see POPGEN/README).
+        ##
+        ## -w poplist       : compute eigenvectors using populations in poplist only,
+        ##                   where poplist is an ASCII file with one population per line
+        ##poplistname:   If wishing to infer eigenvectors using only individuals from a 
+        ##  subset of populations, and then project individuals from all populations 
+        ##  onto those eigenvectors, this input file contains a list of population names,
+        ##  one population name per line, which will be used to infer eigenvectors.  
+        ##  It is assumed that the population of each individual is specified in the 
+        ##  indiv file.  Default is to use individuals from all populations.
+        ##
+        ## http://helix.nih.gov/Applications/README.convertf
+        ##     6th column is case/control status (1 is control, 2 is case) OR
+        ##      quantitative trait value OR population group label.
+
+        par += 'poplistname: %s.EIGENSOFT.poplist\n' %(bfile)
+
+        fd = open('%s.par' %(bfile),'w')
+        fd.write(par)
+        fd.close()
+
+        return
 
 
     def genome_before(self,bfile,in_prefix,out_prefix,):
@@ -2298,35 +2757,52 @@ it's ugly and I will not understand it 1 year form now.'''
         ## generate family lists
         ##
 
-        ## sort fam file
-        cmd = "cat %s.fam | sort -k1,1 -k2,2" %(in_prefix,)
-        cmd += " | awk '{print $1,$2}' > %s.fam.sorted" %(out_prefix,)
-        l_cmds += [cmd]
-
         ## sort sample removal file
-        cmd = 'cat %s | sort -k1,1 -k2,2 ' %(fn_samples_remove,)
+        cmd = 'if ['
+        cmd += ' ! -s %s.sorted' %(fn_samples_remove,)
+        cmd += ' -a ! -s fam/%s.fam.00' %(out_prefix,)
+        cmd += ' ]; then\n'
+        cmd += 'parent=1\n' ## one time only
+        cmd += 'cat %s | sort -k1,1 -k2,2 ' %(fn_samples_remove,)
         cmd += '> %s.sorted' %(fn_samples_remove,)
+        cmd += '\nelse\nparent=0'
+        cmd += '\nfi'
         l_cmds += [cmd]
         
+        ## sort fam file
+        cmd = 'if [ $parent -eq 1 ]; then\n' ## one time only
+        cmd += "cat %s.fam | sort -k1,1 -k2,2" %(in_prefix,)
+        cmd += " | awk '{print $1,$2}' > %s.fam.sorted" %(out_prefix,)
+        cmd += '\nfi'
+        l_cmds += [cmd]
+
         ## exclude samples
-        cmd = "comm -23 %s.fam.sorted %s.sorted" %(out_prefix,fn_samples_remove,)
+        cmd = 'if [ $parent -eq 1 ]; then\n' ## one time only
+        cmd += "comm -23 %s.fam.sorted %s.sorted" %(out_prefix,fn_samples_remove,)
         cmd += " > %s.filtered.fam" %(out_prefix,)
+        cmd += '\nfi'
         l_cmds += [cmd]
 
         ## parse FID and IID columns
-        cmd = 'cat %s.filtered.fam' %(out_prefix,)
+        cmd = 'if [ $parent -eq 0 ]; then\n' ## one time only
+        cmd += 'sleep 60'
+        cmd += '\nelse\n'
+        cmd += 'cat %s.filtered.fam' %(out_prefix,)
         cmd += ' | '
         cmd += " awk '{print $1,$2}' "
         ## and pipe them to individual fam files
         cmd += ' | split -d -a 2 -l %i - fam/%s.fam.' %(
             self.len_lists,out_prefix,
             )
+        cmd += '\nfi'
         l_cmds += [cmd]
 
         ## clean up
-        cmd = 'rm %s.sorted\n' %(fn_samples_remove)
+        cmd = 'if [ $parent -eq 1 ]; then\n' ## one time only
+        cmd += 'rm %s.sorted\n' %(fn_samples_remove)
         cmd += 'rm %s.fam.sorted\n' %(out_prefix)
         cmd += 'rm %s.filtered.fam\n' %(out_prefix)
+        cmd += '\nfi'
         l_cmds += [cmd]
 
         ##
@@ -2370,15 +2846,19 @@ it's ugly and I will not understand it 1 year form now.'''
         ## append to command
         if self.bool_run_all == True:
             cmd += ';'
-            cmd += self.cmd_rerun(bfile,nl=';\n')
+            cmd += self.cmd_rerun(bfile,'genome',nl=';\n')
         ## terminate command
         cmd += "\n'\n\n"
         ## evaluate command
         cmd_LSF = self.append_LSF(bfile,'genome',JOBID='genome.${i}.${j}',)
+##        cmd += 'echo $cmd\n'
         cmd += '''cmd="%sbash -c '$cmd' $i $j"\n''' %(cmd_LSF)
+        cmd += 'echo $cmd\n'
         cmd += 'eval $cmd\n'
         ## end loops
         cmd += '\ndone\ndone\n'
+        ## exit before count if file out exists
+        cmd += 'if [ -f %s.genome ];then\nexit\nfi\n' %(out_prefix)
         l_cmds += [cmd]
 
         ## count lines
@@ -2404,6 +2884,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = '##\n## concatenate lines if they are all present\n##\n'
         cmd += 'echo actual $nlines expected $(($n*($n-1)/2))\n'
         cmd += 'if [ $nlines -ne $(($n*($n-1)/2)) ];then\nexit\nfi\n'
+        ## exit after count if file out exists
+        cmd += 'if [ -f %s.genome ];then\nexit\nfi\n' %(out_prefix)
         l_cmds += [cmd]
 
         ## initiate .genome file with header
@@ -2421,6 +2903,10 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += '\ndone\ndone\n\n'
 
         if out_prefix == '%s.prehardy' %(bfile):
+
+            ##
+            ## run IBD prune
+            ##
 
             ## disallow duplicates (i.e. IBD>0.90)
             if self.project == 'uganda_gwas':
@@ -2440,62 +2926,62 @@ it's ugly and I will not understand it 1 year form now.'''
                 self.pi_hat_max,bfile,bfile,bfile,
                 )
 
+            ##
+            ## concatenate sample removal lists
+            ##
+
+            ## after HWE
             if self.project == 'uganda_gwas':
                 ## concatenate sample exclusion lists (i.e. IBD>0.90)
                 cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
                     bfile,bfile,.9,
                     )
-                cmd += ' > %s.SNPQC.samples\n\n' %(bfile,)
+                cmd += ' > %s.genome.samples\n\n' %(bfile,)
             elif self.project == 'agv':
                 ## concatenate sample exclusion lists (i.e. IBD>low threshold)
                 cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
                     bfile,bfile,self.pi_hat_max,
                     )
-                cmd += ' > %s.SNPQC.samples\n\n' %(bfile,)
+                cmd += ' > %s.genome.samples\n\n' %(bfile,)
             else:
                 stop_unknown_project
 
-            ## concatenate sample exclusion lists (related)
+            ## before HWE
             cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
                 bfile,bfile,self.pi_hat_max,
                 )
             cmd += ' > %s.genome.prehardy.samples\n' %(bfile,)
 
-        if self.bool_run_all == True:
-            cmd += self.cmd_rerun(bfile,)
+            ##
+            ## EIGENSOFT before HWE
+            ##
+            cmd_EIGENSOFT = self.EIGENSOFT(bfile,)
+            cmd += '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
 
-        cmd += self.mail(bfile,'genome',out_prefix,'finished',)
+        if self.bool_run_all == True:
+            cmd += self.cmd_rerun(bfile,'genome',)
+
+##        cmd += self.mail(bfile,'genome',out_prefix,'finished',)
 
         l_cmds += [cmd]
 
         return l_cmds
 
 
-    def het_after(self,bfile,):
+    def recodeA_after(self,bfile,):
 
         l_cmds = []
         
-        ## a) calculate heterozygosity mean and stddev and use for exclusion of samples
-        ## make list of samples going to be excluded by sample call rate threshold
-        cmd = "awk '{print $1}' %s.imiss.samples > %s.awk.tmp" %(bfile,bfile,)
-        l_cmds += [cmd]
-        ## use var=$(cmd) if bash...
-        ## use set var=`cmd` if tcsh...
-        ## set variable s equal to stdout of command in parenthesis
-        cmd = 's=$( '
-        ## exclude samples below call rate threshold before calc of stddev
-        ## I probably should use sort and join instead of grep... if IDs not unique...
-        cmd += 'fgrep -w -v -f %s.awk.tmp %s.het' %(bfile,bfile,)
-        cmd += ' | '
-        ## calculate mean and stddev for remaining samples
-        cmd += "awk 'NR>1 "
-        cmd += " {het=($5-$3)/$5; sum+=het; sumsq+=het**2} "
-        cmd += " END {print sum/(NR-1), sqrt(sumsq/(NR-1) - (sum/(NR-1))**2)}' "
-        cmd += ')'
-        cmd += ';mean=$(echo $s | cut -d " " -f1)'
-        cmd += ';stddev=$(echo $s | cut -d " " -f2)'
-        cmd += ';rm %s.awk.tmp' %(bfile)
-        l_cmds += [cmd]
+        ## a) calculate heterozygosity mean and stddev
+        l, mean,average, het_min, het_max = self.het2stddev(
+                bfile,self.threshold_imiss,bool_execute=False,)
+        l_cmds += l
+
+        l_cmds += ['mean=$(echo $s | cut -d " " -f1)']
+        l_cmds += ['stddev=$(echo $s | cut -d " " -f2)']
+
+        l_cmds += ['echo mean $mean stddev $stddev']
+
         ## b) write list of samples outside mean+-3stddev
         cmd = 'awk -v mean=$mean -v stddev=$stddev '
         cmd += " 'NR>1 {if( "
@@ -2565,230 +3051,12 @@ it's ugly and I will not understand it 1 year form now.'''
         return l_cmds
 
 
-    def bmerge_before(self,bfile,):
+    def bmerge_after(self,bfile,):
 
         l_cmds = []
 
-        ## agreed with Manj at meeting 15oct2012
-        ## to find SNPs common between the chip and 1000g
-        ## by position instead of rsID
-        l_cmds += ['##\n## 1a) rename 1000g\n##']
-        l_cmds += self.rename_1000g(bfile,)
-
-        l_cmds += ['##\n## 1b) flip 1000g\n##']
-
-        ## 2a) 1000g.flip
-        ## 2a1) sort chip bim
-##        cmd = 'cat %s.bim | sort -k2,2 > %s.bim.sorted' %(bfile,bfile,)
-        cmd = 'cat %s.flipped.bim | sort -k2,2 > %s.bim.sorted' %(bfile,bfile,)
+        cmd = 'rm %s.%s.prune.in' %(bfile,self.fn1000g,)
         l_cmds += [cmd]
-
-        ## 2a2) sort renamed 1000g bim
-        cmd = 'cat %s.%s_renamed.bim | sort -k2,2 > %s.%s_renamed.bim.sorted' %(
-            bfile,self.fn1000g,
-            bfile,self.fn1000g,
-            )
-        l_cmds += [cmd]
-
-        ## 2a3) join bims by name (join should be by chr+pos!!!)
-        cmd = 'join -o 0 1.5 1.6 2.5 2.6 '
-        cmd += '-1 2 -2 2 %s.bim.sorted %s.%s_renamed.bim.sorted '%(
-            bfile, bfile, self.fn1000g,
-            )
-        cmd += ' > %s.%s.bim.joined' %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        l_cmds += ['rm %s.bim.sorted' %(bfile)]
-
-        ## 2a4) only allow alleles to be flipped,
-        ## if they are flipped differently
-        ## *before* flipping
-        cmd = "cat %s.%s.bim.joined" %(bfile,self.fn1000g,)
-        cmd += " | awk '{if (!("
-        cmd += '(($2==$4 || $2==0 || $4==0) && ($3==$5 || $3==0 || $5==0))'
-        cmd += ' || '
-        cmd += '(($2==$5 || $2==0 || $5==0) && ($3==$4 || $3==0 || $4==0))'
-        cmd += ")) print $1}'"
-        cmd += " > %s.%s.different.flip" %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-
-        ## clean up
-##        l_cmds += ['rm %s.%s.bim.joined' %(bfile,self.fn1000g,)]
-
-        ## 2b) flip renamed 1000g
-##        cmd = 'if [ ! -s %s.flipped.bed ]\n' %(self.fn1000g)
-##        cmd += 'then\n\n'
-        cmd = 'echo "---flip 1000g---"\n'
-        cmd += 'plink \\\n'
-        cmd += '--bfile %s.%s_renamed \\\n' %(bfile,self.fn1000g,)
-        cmd += '--flip %s.%s.different.flip \\\n' %(bfile,self.fn1000g,)
-        cmd += '--make-bed \\\n'
-        cmd += '--out %s.%s.flipped \\\n' %(
-            bfile,self.fn1000g,
-            )
-        cmd += '--extract %s.%s.prune.in \\\n' %(bfile,self.fn1000g,)
-        cmd += '--noweb \\\n'
-        cmd += '--allow-no-sex \\\n'
-        cmd += '--nonfounders \\\n'
-##        cmd += '\nfi\n'
-        l_cmds += [cmd]
-
-        ## clean up
-        l_cmds += ['rm %s.%s_renamed*' %(bfile, self.fn1000g,)] ## --bfile
-        l_cmds += ['rm %s.%s.different.flip' %(bfile,self.fn1000g,)] ## --flip
-
-        l_cmds += ['##\n## 2) merge flipped files\n##\n']
-
-        return l_cmds
-
-
-    def rename_1000g(self,bfile,):
-
-        l_cmds = []
-
-        col_chr = 1
-        col_name = 2
-        col_pos = 4
-
-        ##
-        ## 1) create prune.in.chrpos.sorted
-        ##
-
-        ## 1a) sort .prune.in
-        cmd = 'cat %s.posthardy.prune.in | sort > %s.prune.in.sorted' %(bfile,bfile,)
-        l_cmds += [cmd]
-
-        ## 1b) sort .bim
-        cmd = 'cat %s.bim | sort -k%i,%i > %s.bim.sorted' %(
-            bfile,col_name,col_name,bfile,
-            )
-        l_cmds += [cmd]
-
-        ## 1c) join .prune.in and .bim by name (i.e. find common names)
-        cmd = 'join -1 1 -2 %i' %(col_name)
-        cmd += ' -o 2.1,2.2,2.3,2.4,2.5,2.6'
-        cmd += ' %s.prune.in.sorted %s.bim.sorted' %(bfile,bfile,)
-        ## sort by chr and pos
-        cmd += ' | sort -k%i,%i -k%i,%i' %(col_chr,col_chr,col_pos,col_pos,)
-        ## print chr+pos column
-        cmd += ''' | awk '{print $0,$%i":"$%i}' ''' %(col_chr,col_pos,)
-        ## generate join file 2
-        cmd += ' > %s.prune.in.chrpos.sorted' %(bfile,)
-        l_cmds += [cmd]
-        l_cmds += ['rm %s.prune.in.sorted %s.bim.sorted' %(bfile,bfile,)]
-
-        ##
-        ## 2) create 1000g.bim.chrpos.sorted
-        ##
-
-        ## 2a) sort 1000g.bim by chr and pos
-        cmd = 'cat %s.bim | ' %(self.fp1000g)
-        cmd += 'sort -k%i,%i -k%i,%i' %(col_chr,col_chr,col_pos,col_pos,)
-        ## print chr+pos and name column
-        cmd += ''' | awk '{print $0,$%i":"$%i}' ''' %(col_chr,col_pos,)
-        ## generate join file 1
-        cmd += ' > %s.%s.bim.chrpos.sorted' %(
-            bfile,self.fn1000g,
-            )
-        l_cmds += [cmd]
-
-        ##
-        ## 3) join prune.in.chrpos.sorted and 1000g.bim.chrpos.sorted by chrpos
-        ##
-        
-        ## join bims by position
-        cmd = 'join -1 7 -2 7 -o 1.2,2.2,1.5,1.6,2.5,2.6 '
-        cmd += '%s.%s.bim.chrpos.sorted %s.prune.in.chrpos.sorted' %(
-            bfile,self.fn1000g,
-            bfile,
-            )
-        cmd += ' > %s.%s.bim.prune.joined' %(
-            bfile, self.fn1000g,
-            )
-        l_cmds += [cmd]
-
-        ##
-        ## 4)
-        ##
-        
-        ## 4a) write 2 column dic
-        cmd = "cat %s.%s.bim.prune.joined" %(bfile,self.fn1000g,)
-        cmd += " | awk '{print $1,$2}'"
-        cmd += ' > %s.%s.prune.dic' %(
-            bfile, self.fn1000g,
-            )
-        l_cmds += [cmd]
-        l_cmds += ['rm %s.%s.bim.chrpos.sorted %s.prune.in.chrpos.sorted' %(
-            bfile,self.fn1000g,
-            bfile,
-            )]
-
-        ## 4b) do not extract mismatch SNPs (e.g. kgp11141322 AG/GA/TC/CT vs GT/TG/CA/AC)
-        cmd = "cat %s.%s.bim.prune.joined" %(bfile,self.fn1000g,)
-        cmd += " | awk '{if (!("
-        cmd += '(($3==0 || $5==0 || $3==$5) && ($4==0 || $6==0 || $4==$6))'
-        cmd += ' || '
-        cmd += '(($3==0 || $6==0 || $3==$6) && ($4==0 || $5==0 || $4==$5))'
-        cmd += ")) print $1,$2}'"
-        cmd += ' > %s.%s.mismatch.SNPs.2columns' %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        l_cmds += ['rm %s.%s.bim.prune.joined' %(bfile,self.fn1000g,)]        
-        ##
-        cmd = "cat %s.%s.mismatch.SNPs.2columns" %(bfile,self.fn1000g,)
-        cmd += " | awk '{print $1}' "
-        cmd += "> %s.%s.mismatch.SNPs.1column" %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        ##
-        cmd = 'cat %s.%s.mismatch.SNPs.2columns' %(bfile,self.fn1000g,)
-        cmd += " | awk '{print $2}' "
-        cmd += '>> %s.%s.mismatch.SNPs.1column' %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        ##
-        l_cmds += ['rm %s.%s.mismatch.SNPs.2columns' %(bfile, self.fn1000g,),]
-
-        ## 4c) only extract SNPs common to both beds
-        cmd = 'cat %s.%s.prune.dic | ' %(bfile, self.fn1000g,)
-        cmd += "awk '{print $2}' | "
-        cmd += 'sort > %s.%s.prune.in.sorted' %(bfile, self.fn1000g,)
-        l_cmds += [cmd]
-
-        ## 4d) exclude mismatch SNPs from extraction list
-        cmd = 'sort %s.%s.mismatch.SNPs.1column ' %(bfile,self.fn1000g,)
-        cmd += '> %s.%s.mismatch.SNPs.sorted' %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        l_cmds += ['rm %s.%s.mismatch.SNPs.1column' %(bfile,self.fn1000g,),] ## sort
-        cmd = 'comm -23 '
-        cmd += '%s.%s.prune.in.sorted ' %(bfile,self.fn1000g,)
-        cmd += '%s.%s.mismatch.SNPs.sorted ' %(bfile,self.fn1000g,)
-        cmd += '> %s.%s.prune.in' %(bfile,self.fn1000g,)
-        l_cmds += [cmd]
-        cmd = 'rm %s.%s.prune.in.sorted' %(bfile,self.fn1000g,)
-        l_cmds += [cmd] ## comm1
-        cmd = 'rm %s.%s.mismatch.SNPs.sorted' %(bfile,self.fn1000g,)
-        l_cmds += [cmd] ## comm2
-
-        ##
-        ## 5) rename the 1000g SNPs
-        ##
-        l_cmds += ['## --update-name']
-        l_cmd = ['plink']
-        l_cmd += ['--bfile %s' %(self.fp1000g,)]
-        l_cmd += ['--make-bed --out %s.%s_renamed' %(
-            bfile, self.fn1000g,
-            )]
-        ## the file quad2octo.dic is generated by the function extract_and_translate
-        l_cmd += ['--update-map %s.%s.prune.dic --update-name' %(
-            bfile, self.fn1000g,
-            )]
-        l_cmd += ['--extract %s.%s.prune.in' %(bfile,self.fn1000g,)]
-        l_cmd += ['--noweb --nonfounders']
-        cmd = ' \\\n'.join(l_cmd)
-        l_cmds += [cmd]
-
-        ##
-        ## clean up (need --extract file for --bmerge)
-        ##
-        ## --update-map
-        l_cmds += ['rm %s.%s.prune.dic' %(bfile, self.fn1000g,),]
 
         return l_cmds
 
@@ -2825,28 +3093,17 @@ it's ugly and I will not understand it 1 year form now.'''
         n_samples = int(os.popen('cat %s.het | wc -l' %(bfile)).read())-1
         cmd = 'cat %s.imiss.samples | wc -l' %(bfile)
         n_samples -= int(os.popen(cmd).read())
-        cmd = 'cat %s.X.SNPs | wc -l' %(bfile)
+        cmd = 'cat %s.autosomes.SNPs | wc -l' %(bfile)
         n_SNPs = int(os.popen(cmd).read())
 
-        x_step=0.001
+        x_step=0.0005
 
         if bool_with_stddev == True:
 
-            cmd = "cat %s.imiss.samples | awk '{print $1}' > %s.imiss.1column.samples" %(
-                bfile,bfile,
-                )
-            self.execmd(cmd)
+            fn_plot = '%s.het.joined' %(bfile)
 
-            cmd = 'fgrep -w -v -f %s.imiss.1column.samples %s.het' %(bfile,bfile,)
-            cmd += '''| awk 'NR>1{print ($5-$3)/$5}' '''
-            l_het = os.popen(cmd).readlines()
-            os.remove('%s.imiss.1column.samples' %(bfile))
-            ## exclude imiss outliers before stddev calc...!!!
-            l_het = [float(het) for het in l_het]
-            n_samples = len(l_het)
-            average = numpy.mean(l_het)
-            stddev = numpy.std(l_het)
-            print average,stddev
+            l_cmds,average,stddev,het_min,het_max = self.het2stddev(
+                bfile,self.threshold_imiss,bool_execute=True,bool_remove=False,)
 
             l_arrows = [
                 'set arrow from %f,0 to %f,graph(1) nohead lc 0\n' %(
@@ -2857,37 +3114,44 @@ it's ugly and I will not understand it 1 year form now.'''
                     ),
                 ]
 
-            s_plot = 'plot [%f:%f]"%s.het" ' %(
-                min(min(l_het),average-3*stddev,)-x_step,
-                max(max(l_het),average+3*stddev,)+x_step,
-                bfile,
+            s_plot = 'plot [%f:%f]"%s" ' %(
+                min(het_min,average-3*stddev,)-2*x_step,
+                max(het_max,average+3*stddev,)+2*x_step,
+                fn_plot,
                 )
             s_plot += 'u (hist(($5-$3)/$5,width)):(1.0) smooth freq w boxes '
             s_plot += 'lc rgb"red" notitle\n'
+
+            s_average = '%.4f' %(average)
+            s_stddev = '%.4f' %(stddev)
 
             pass
 
         else:
 
-            s_plot = 'plot "%s.het" ' %(bfile)
+            fn_plot = '%s.het' %(bfile)
+
+            s_plot = 'plot "%s" ' %(fn_plot)
             s_plot += 'u (hist(($5-$3)/$5,width)):(1.0) smooth freq w boxes '
             s_plot += 'lc rgb"red" notitle\n'
             l_arrows = None
 
+            s_average = 'N/A'
+            s_stddev = 'N/A'
+
         gnuplot.histogram2(
             '%s.het' %(bfile),
 ##            x_min=het_min,x_max=het_max,#tic_step=0.05,
-            x_step = 0.001,
+            x_step = x_step,
             s_plot = s_plot,
             xlabel='heterozygosity',
-            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+            title='%s (n_{samples}=%i, n_{SNPs}=%i, mean=%s, SD=%s)' %(
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
+                s_average, s_stddev,
                 ),
             lines_extra = l_arrows,
             color = 'red',
             )
-            
-            
 
         return
 
@@ -2905,22 +3169,24 @@ it's ugly and I will not understand it 1 year form now.'''
         if int(os.popen('head %s.prehardy.genome | wc -l' %(bfile,)).read()) == 1:
             return
 
-        cmd = 'cat %s.prehardy.genome | wc -l' %(bfile)
-        if self.verbose == True:
-            print cmd
-        n = int(os.popen(cmd).read())-1
-        ## http://simple.wikipedia.org/wiki/Quadratic_equation
-        n_samples1 = int(((--.5)+math.sqrt((-.5)**2-4*.5*-n))/(2*.5))
+##        cmd = 'cat %s.prehardy.genome | wc -l' %(bfile)
+##        if self.verbose == True:
+##            print cmd
+##        n = int(os.popen(cmd).read())-1
+##        ## http://simple.wikipedia.org/wiki/Quadratic_equation
+##        n_samples1 = int(((--.5)+math.sqrt((-.5)**2-4*.5*-n))/(2*.5))
 
         n_samples2 = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
         n_samples2 -= int(os.popen('cat %s.sampleQC.samples | wc -l' %(bfile)).read())
 
-        if n_samples1 != n_samples2:
-            print n_samples1
-            print n_samples2
-            stop
-        else:
-            n_samples = n_samples1 = n_samples2
+##        if n_samples1 != n_samples2:
+##            print n_samples1
+##            print n_samples2
+##            stop
+##        else:
+##            n_samples = n_samples1 = n_samples2
+
+        n_samples = n_samples2
 
         n_SNPs = int(os.popen('cat %s.prehardy.prune.in | wc -l' %(bfile)).read())
 
@@ -3042,15 +3308,18 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if n_samples > 200:
             x_step = .0002
+        elif n_samples < 20:
+            x_step = .1
         else:
-            x_step = .002
+            x_step = .01
     
         gnuplot.histogram2(
             '%s.SNPQC.lmiss' %(bfile),
             prefix_out='%s.lmiss' %(bfile),
             column='(1-$5)',
             x_step=x_step,
-            x_min=self.threshold_lmiss,
+##            x_min=self.threshold_lmiss,
+            x_min=0.95,
             x_max=1,
             xlabel='call rate, SNPs',
             title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
@@ -3079,6 +3348,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         cmd = "awk 'NR>1{print 1-$6}' %s.imiss" %(bfile)
         x_min = min(
+            0.95,
             self.threshold_imiss,
             min([float(s) for s in os.popen(cmd).readlines()]),
             )
@@ -3104,35 +3374,37 @@ it's ugly and I will not understand it 1 year form now.'''
     def init(self,bfile,):
 
         ##
-        ## download and unzip strand file
+        ## create dirs
         ##
-        self.download_and_unzip_strand_file(bfile,)
+        for dn in ['stdout','stderr','fam','genome',]:
+            if not os.path.isdir(dn):
+                os.mkdir(dn)
+                pass
+            continue
 
         ##
-        ## write SNPs with mismatched chromosome and/or position
-        ## between strand/multiple files and bim file
-        ## N.B. this step will also exclude SNPs unique to bim file
-        ## N.B. this step will also exclude unplaced SNPs
         ##
-        self.strand_bim_mismatch_position(bfile,)
         ##
-        ## write SNPs in strand.miss file
-        ##
-        self.strand_miss(bfile,)
-        ##
-        ## write SNPs with duplicate chromosomal positions
-        ##
-        self.bim_duplicates(bfile,)
+        if not os.path.isfile('%s.bed' %(self.bfile)):
+            print 'bed not found:', self.bfile
+            sys.exit(0)
 
-##        gnuplot.venn3(
-##            f1='%s.position.SNPs' %(bfile),
-##            f2='%s.miss.SNPs' %(bfile),
-##            f3='%s.duplicates.SNPs' %(bfile),
-##            suffix='%s.SNPs' %(bfile),
-##            text1='chromosome+position mismatch',
-##            text2='in the miss file',
-##            text3='duplicate chromosome+position',
-##            )
+        ##
+        ## write options in use to file
+        ##
+        d_options = vars(self.opts)
+        l = []
+        for k,v in d_options.items():
+            l += [[k,v,]]
+            continue
+        l.sort()
+        s = ''
+        for k,v in l:
+            s += '%-20s\t%s\n' %(k,v,)
+            continue
+        fd = open('%s.options' %(self.bfile),'w')
+        fd.write(s)
+        fd.close()
 
         ##
         ## write lists of autosomal SNPs and X chromosome SNPs
@@ -3150,7 +3422,6 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## skip if output exists...
         self.d_out_suffix = {
-            'flip':['bed',],
             'missing':['imiss','lmiss',],
             'het':['het'],
             'cluster':['mds','cluster0','cluster1','cluster2','cluster3',],
@@ -3161,6 +3432,7 @@ it's ugly and I will not understand it 1 year form now.'''
             'bmerge':['bed','fam','bim',],
             'hardy':['hwe',],
             'make-bed':['bed','fam','bim',],
+            'recodeA':['raw',],
             }
 
         return
@@ -3219,161 +3491,6 @@ it's ugly and I will not understand it 1 year form now.'''
         return
 
 
-    def bim_duplicates(self,bfile,):
-
-        ## this function assumes that the only multiplets are duplets
-
-        if (
-            os.path.isfile('%s.duplicates.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.autosomes.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.X.SNPs' %(bfile,))
-##            and
-##            os.path.getsize('%s.duplicates.SNPs' %(bfile,)) > 0
-            ):
-            return
-
-        cmd = '''cat %s.bim | sort -k1,1 -k4,4 | awk '{print $2,$1,$4}' ''' %(bfile)
-        cmd += '> %s.bim.sorted' %(bfile,)
-        self.execmd(cmd)
-
-        fd_in = open('%s.bim.sorted' %(bfile),'r')
-        fd_out = open('%s.duplicates.SNPs' %(bfile,),'w')
-        fd_out_inclusion = open('%s.duplicates.inclusion.SNPs' %(bfile,),'w')
-        line_prev = 'x x x'
-        while True:
-            line = fd_in.readline()
-            if not line:
-                break
-            l = line.split()
-            l_prev = line_prev.split()
-            if (
-                ## chr
-                l_prev[1] == l[1]
-                and
-                ## pos
-                l_prev[2] == l[2]
-                and
-                ## not unplaced
-                l[1] != '0'
-                ):
-                if l[0][:2] == 'rs':
-                    fd_out.write('%s\n' %(l_prev[0]))
-                    fd_out_inclusion.write('%s\n' %(l[0]))
-                elif l_prev[0][:2] == 'rs':
-                    fd_out.write('%s\n' %(l[0]))
-                    fd_out_inclusion.write('%s\n' %(l_prev[0]))
-                else:
-                    fd_out.write('%s\n' %(l[0]))
-                    fd_out_inclusion.write('%s\n' %(l_prev[0]))
-            line_prev = line
-        fd_in.close()
-        fd_out.close()
-        fd_out_inclusion.close()
-
-        os.remove('%s.bim.sorted' %(bfile))
-
-        return
-
-
-    def strand_miss(self,bfile,):
-
-        if (
-            os.path.isfile('%s.miss.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.autosomes.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.X.SNPs' %(bfile,))
-            ):
-            return
-
-        ## cat HumanOmni2.5-8v1_A-b37.miss | awk 'NR>1{print $3}' | wc -l
-        ## =
-        ## fgrep -w -f %s.miss.SNPs omni2.5-8_20120809_gwa_uganda_gtu.bim | wc -l
-        cmd = "cat %s | awk 'NR>1{print $3}' > %s.miss.SNPs" %(self.miss,bfile,)
-        self.execmd(cmd)
-
-        return
-
-
-    def strand_bim_mismatch_position(self,bfile,):
-
-        if (
-            os.path.isfile('%s.position.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.autosomes.SNPs' %(bfile,))
-            and
-            os.path.isfile('%s.X.SNPs' %(bfile,))
-            ):
-            return
-
-        cmd = '''cat %s | sort -k1,1 | ''' %(self.strand,)
-        cmd += '''awk '{sub(/X/,23,$2);sub(/Y/,24,$2)'''
-        cmd += ''';sub(/XY/,25,$2);sub(/MT/,26,$2)'''
-        cmd += ''';print $1,$2,$3}' > %s.%s.sorted''' %(bfile,self.strand,)
-        self.execmd(cmd)
-        cmd = '''cat %s.bim | sort -k2,2 | awk '{print $2,$1,$4}' > %s.bim.sorted''' %(
-            bfile,bfile,
-            )
-        self.execmd(cmd)
-        cmd = 'comm -23 %s.bim.sorted %s.%s.sorted | ' %(
-            bfile,bfile,self.strand,
-            )
-        cmd += "awk '{print $1}' > %s.position.SNPs" %(bfile,)
-        self.execmd(cmd)
-
-        os.remove('%s.%s.sorted' %(bfile,self.strand,))
-        os.remove('%s.bim.sorted' %(self.bfile,))
-
-        return
-
-
-    def download_and_unzip_strand_file(self,bfile,):
-
-        n_SNPs = int(os.popen('cat %s.bim | wc -l' %(bfile)).read())
-        ## it's really stupid to choose the strand based on the number of SNPs
-        ## this is a temporary solution...
-        if n_SNPs in [2450000,2449626,]: ## quad
-            fn_zip = 'HumanOmni2.5M-b37-strand-v2.zip'
-            strand = 'HumanOmni2.5M-b37-v2.strand'
-            miss = 'Strand-HumanOmni2.5-b37.miss'
-        elif self.project == 'agv' or n_SNPs in [2379855,2379514,2362478,]:
-            fn_zip = 'HumanOmni2.5-8v1_A-b37-strand.zip'
-            strand = 'HumanOmni2.5-8v1_A-b37.strand'
-            miss = 'HumanOmni2.5-8v1_A-b37.miss'
-        ## assume octo (add command line option...)
-        else:
-            print n_SNPs
-            stop
-        self.strand = strand
-        self.miss = miss
-
-        self.strand1000g = 'HumanOmni2.5M-b37-v2.strand'
-        self.miss1000g = 'Strand-HumanOmni2.5-b37.miss'
-        fn_zip_1000g = 'HumanOmni2.5M-b37-strand-v2.zip' ## quad
-
-        for strand,miss,fn in [
-            [self.strand,self.miss,fn_zip,],
-            [self.strand1000g,self.miss1000g,fn_zip_1000g,],
-            ]:
-            if not os.path.isfile('%s' %(strand)):
-                cmd = 'wget http://www.well.ox.ac.uk/~wrayner/strand/%s' %(fn)
-                os.system(cmd)
-                os.system('unzip %s' %(fn))
-                os.remove('%s' %(fn))
-
-                os.system('dos2unix %s' %(strand))
-                os.system('dos2unix %s' %(miss))
-
-            if not os.path.isfile(strand):
-                stop1
-        if not os.path.isfile(miss):
-            stop2
-
-        return
-
-
     def execmd(self,cmd,):
 
         if '%s' in cmd:
@@ -3390,6 +3507,9 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def write_SNPs_by_chromosome(self,bfile,):
 
+        '''somehow I can never remember what this function does.
+maybe I should rename it.'''
+
         for out_prefix, condition in [
             ['X','$1==23',],
             ['autosomes','$1>=1 && $1<=22',],
@@ -3401,34 +3521,11 @@ it's ugly and I will not understand it 1 year form now.'''
             if os.path.isfile(fn_out):
                 continue
 
-            ## concatenate exclusion lists
-            if not os.path.isfile('%s.preQC.SNPs.sorted' %(bfile)):
-                cmd = 'cat %s.position.SNPs %s.miss.SNPs %s.duplicates.SNPs' %(
-                    bfile,bfile,bfile,
-                    )
-                cmd += ' | sort -u > %s.preQC.SNPs.sorted' %(bfile,)
-                self.execmd(cmd)
-                
-
             ## generate inclusion list
-            cmd = "cat %s.bim | awk '{if(%s) print $2}' | sort > %s.sorted" %(
+            cmd = "cat %s.bim | awk '{if(%s) print $2}'  > %s" %(
                 bfile,condition,fn_out,
                 )
             self.execmd(cmd)
-
-            ## subtract exclusion list from inclusion list
-            cmd = 'comm -23 %s.sorted %s.preQC.SNPs.sorted > %s' %(
-                fn_out,bfile,fn_out,
-                )
-            self.execmd(cmd)
-
-            os.remove('%s.sorted' %(fn_out))
-            os.remove('%s.preQC.SNPs.sorted' %(bfile))
-
-        ## clean up after ourselves; i.e. delete exclusion lists
-##        for suffix in ['position','miss','duplicates','preQC',]:
-##            if os.path.isfile('%s.%s.SNPs' %(bfile,suffix,)):
-##                os.remove('%s.%s.SNPs' %(bfile,suffix,))
 
         return
 
@@ -3447,7 +3544,7 @@ it's ugly and I will not understand it 1 year form now.'''
             '--pi_hat_max', '--pi_circumflex_max', '--threshold_ibd', '--threshold_pi_hat',
             dest='threshold_pi_hat_max',
             help='The HWE step is dependent on the chose PI CIRCUMFLEX MAX',
-            metavar='FLOAT',default=0.10,
+            metavar='FLOAT',default=0.05,
             )
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
@@ -3502,7 +3599,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/thresh.shtml
         parser.add_option(
-            '--hwe','--hwe_min', '--threshold_hwe_min',
+            '--hwe','--hwe_min', '--threshold_hwe_min', '--threshold_hwe',
             dest='threshold_hwe_min',
             help='HWe threshold used to determine failing SNPs after the HWE step.',
             metavar='FLOAT',default=10**-8,
@@ -3557,23 +3654,6 @@ it's ugly and I will not understand it 1 year form now.'''
         self.threshold_lmiss = float(opts.threshold_lmiss_min)
 
         ##
-        ## write options in use to file
-        ##
-        d_options = vars(opts)
-        l = []
-        for k,v in d_options.items():
-            l += [[k,v,]]
-            continue
-        l.sort()
-        s = ''
-        for k,v in l:
-            s += '%-20s\t%s\n' %(k,v,)
-            continue
-        fd = open('%s.options' %(self.bfile),'w')
-        fd.write(s)
-        fd.close()
-
-        ##
         ## other options
         ##
 
@@ -3584,7 +3664,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if '--run-all' in sys.argv:
             self.bool_run_all = True
         self.bool_run_all = True
-        self.bool_run_all = False
+##        self.bool_run_all = False
 
         self.bool_sequential = False
 
@@ -3595,23 +3675,26 @@ it's ugly and I will not understand it 1 year form now.'''
         ## paths
         ##
         
-        self.dn1000g = '/nfs/african_diversity/data/1KG/genotypes/release20110527/working_data/omni25_b37_bed_autosomes'
-        self.fn1000g = '1kg_r20110527_omni25_b37_autosomes'
+        self.dn1000g = '/lustre/scratch107/projects/uganda_gwas/users/tc9/QC'
+        self.fn1000g = '1000G_True' ## quad, build37, excl "chip effect" SNPs
+##        self.dn1000g = '/lustre/scratch107/projects/agv/users/tc9/QC/'
+##        self.fn1000g = 'omni25_b37_1kg'
         self.fp1000g = os.path.join(self.dn1000g,self.fn1000g,)
 
         ## dg11 2012oct09 06:32
+        ## build 37
         self.cluster_exclude = '/nfs/t149_influenza_exomes/working/analysis2/ldregions.txt'
 
-        self.eigensoft = '/nfs/team149/Software/usr/share/eigensoft/EIG4.2/bin/smartpca.perl'
+        ## http://genetics.med.harvard.edu/reich/Reich_Lab/Software.html
+        ## http://computing.bio.cam.ac.uk/local/doc/eigenstrat.txt        
+        ##Estimated running time of the smartpca program is 
+        ##  2.5e-12 * nSNP * NSAMPLES^2 hours            if not removing outliers.
+        ##  2.5e-12 * nSNP * NSAMPLES^2 hours * (1+m)    if m outlier removal iterations.
+        ##Thus, under the default of up to 5 outlier removal iterations, running time is 
+        ##  up to 1.5e-11 * nSNP * NSAMPLES^2 hours.
+        self.eigensoft = '/nfs/team149/Software/EIG4.2/bin/smartpca'
 
-        ##
-        ## create dirs
-        ##
-        for dn in ['stdout','stderr','fam','genome',]:
-            if not os.path.isdir(dn):
-                os.mkdir(dn)
-                pass
-            continue
+        self.opts = opts
 
         return
 
