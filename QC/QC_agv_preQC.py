@@ -1,16 +1,23 @@
 #!/software/bin/python
+# -*- coding: utf-8 -*-
 
 ## T. Carstensen (tc9), M.S. Sandhu (ms23), D. Gurdasani (dg11)
-## Wellcome Trust Sanger Institute, 2012
+## Wellcome Trust Sanger Institute, 2012-2013
 
+## built-ins
 import sys, os, time, inspect
+from xml.dom import minidom
+## add-ons
+import numpy
 sys.path.append('/nfs/users/nfs_t/tc9/lib/python2.7/site-packages')
 import xlrd
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
+##sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox/math')
+##import statistics
 
 
-hours = 24*30
+hours = 24*90
 
 col_bim_name = col_bim_rsID = 2
 col_bim_chr = 1
@@ -23,8 +30,16 @@ col_strand_alleles = 6
 
 def main():
 
+##    for country in root.findall('country'):
+##          rank = country.find('rank').text
+##          name = country.get('name')
+##          print name, rank
+
     ## 0a) check that he have the liftOver executable and the map.chain file
-    l_bfiles, l_strands, l_miss, l_multiple, l_populations, d_populations = init()
+    (
+        l_bfiles, l_strands, l_miss, l_multiple,
+        l_populations, d_populations,
+        ) = init()
 
     ## 0b) update quad sex and remove quad/octo samples without consent
     ## i.e. run PLINK --update-sex --remove
@@ -94,7 +109,7 @@ def main():
     ##
 
     ## ) count SNPs at each step
-    count_SNPs()
+    count_SNPs(l_bfiles,l_strands,)
 
 ##    ## ) create 4 set Venn
 ##    venn(l_strands_venn,l_bfiles_venn,)
@@ -106,690 +121,14 @@ def main():
 
     ## 12) split by population (previously QC_agv_preQC_split_populations.py)
     ## i.e. run PLINK --keep
-    l_populations_subset = [u'Muganda',u'GA-ADANGBE',u'ZULU',]
-    PLINK_split_by_population(l_bfiles,l_populations_subset,d_populations,)
+    PLINK_split_by_population(l_bfiles,l_populations,d_populations,)
 
     ## 13) merge selected quad and octo samples (previously QC_agv_preQC_merge_chips.py)
     ## i.e. run PLINK --bmerge
-    PLINK_bmerge(l_bfiles,l_populations_subset,d_populations,)
+    PLINK_bmerge(l_bfiles,l_populations,d_populations,)
 
     ## 14) run sample and SNP QC
 
-    ## 15) analyze discordance
-    analyze_discordance()
-
-    ## 16) exclude discordant SNPs
-    l_bfiles = exclude_discordant(l_bfiles)
-
-    ## 17) split by population (previously QC_agv_preQC_split_populations.py)
-    ## i.e. run PLINK --keep
-    PLINK_split_by_population(l_bfiles,l_populations,d_populations,)
-
-    ## 18) merge selected quad and octo samples (previously QC_agv_preQC_merge_chips.py)
-    ## i.e. run PLINK --bmerge
-    l_pops = PLINK_bmerge(l_bfiles,l_populations,d_populations,)
-
-    return
-
-
-def analyze_discordance():
-
-    for chip in ['quad','octo',]:
-        cmd = 'cut -d " " -f 2,5- Baganda_%s.sampleQC.tped' %(chip)
-        cmd += " | awk '{"
-        cmd += 'rsID=$1; gsub(/0/,""); if(NF==1) print rsID'
-        cmd += "}' > Baganda_call0%s.SNPs" %(chip)
-        execmd(cmd)
-
-        i = int(os.popen('cat Baganda_call0%s.SNPs | wc -l' %(chip)).read())
-        print 'not called for any samples', chip, i
-    print 'overlap', int(os.popen('comm -12 Baganda_call0quad.SNPs Baganda_call0octo.SNPs | wc -l').read())
-
-    ## 15a) identify discordant SNPs pre SNP QC
-    allelic_concordance_Baganda(
-        '../pops/Baganda_quad/Baganda_quad.sampleQC',
-        '../pops/Baganda_octo/Baganda_octo.sampleQC',
-        )
-
-    ## 15b) identify discordant SNPs post SNP QC
-    allelic_concordance_Baganda(
-        '../pops/Baganda_quad/Baganda_quad.SNPQC',
-        '../pops/Baganda_octo/Baganda_octo.SNPQC',
-        )
-
-    frqlmisshwe_scatter()
-
-    frqlmisshwe_discordant()
-
-    MDS()
-
-    return
-
-
-def eigensoft(prefix,fn_ld_regions,):
-
-    bfile = prefix
-    out_prefix = prefix
-
-    cmd = 'cat %s.fam' %(out_prefix)
-    cmd += ' | '
-    cmd += "awk '{print $1,$2,substr($1,12,10),substr($2,12,10)}'"
-    cmd += ' > '
-    cmd += '%s.recoded.txt' %(out_prefix)
-    execmd(cmd)
-
-    cmd = 'plink \\\n'
-    cmd += '--bfile %s \\\n' %(out_prefix,)
-    cmd += '--exclude %s \\\n' %(fn_ld_regions,)
-    cmd += '--extract %s.extract \\\n' %(out_prefix)
-##    cmd += '--extract %s.prune.in \\\n' %(prefix)
-    cmd += '--update-ids %s.recoded.txt \\\n' %(out_prefix,)
-    cmd += '--make-bed \\\n'
-    cmd += '--out %s.longLDexcl \\\n' %(out_prefix)
-    execmd(cmd)
-
-    path_EIG = '/nfs/team149/Software/EIG4.2/bin'
-##    path_EIG = '/software/varinf/bin/eigensoft/bin'
-##    path_EIG = '/nfs/team149/Software/usr/share/eigensoft/EIG4.2/bin'
-    cmd = '%s/smartpca.perl \\\n' %(path_EIG)
-    ## genotype file in any format (see ../CONVERTF/README)
-    cmd += '-i %s.longLDexcl.bed \\\n' %(os.path.join(os.getcwd(),out_prefix))
-    ## snp file in any format (see ../CONVERTF/README)
-    cmd += '-a %s.longLDexcl.bim \\\n' %(os.path.join(os.getcwd(),out_prefix))
-    ## indiv file in any format (see ../CONVERTF/README)
-    cmd += '-b %s.longLDexcl.fam \\\n' %(os.path.join(os.getcwd(),out_prefix))
-    ## (Default is 10) number of principal components to output
-    cmd += '-k 10 \\\n'
-    ## output file of principal components.  Individuals removed
-    ## as outliers will have all values set to 0.0 in this file.
-    cmd += '-o %s.pca \\\n' %(out_prefix.replace('.','_'))
-    ## prefix of output plot files of top 2 principal components.
-    ## (labeling individuals according to labels in indiv file)
-    cmd += '-p %s.plot \\\n' %(out_prefix.replace('.','_'))
-    ## output file of all eigenvalues
-    cmd += '-e %s.eval \\\n' %(out_prefix.replace('.','_'))
-    ## output logfile        
-    cmd += '-l %s.eigensoft.log \\\n' %(out_prefix.replace('.','_'))
-    ## (Default is 5) maximum number of outlier removal iterations.
-    ## To turn off outlier removal, set -m 0.
-    cmd += '-m 5 \\\n'
-    ## (Default is 10) number of principal components along which
-    ## to remove outliers during each outlier removal iteration.
-    cmd += '-t 10 \\\n'
-    ## (Default is 6.0) number of standard deviations which an
-    ## individual must exceed, along one of topk top principal
-    ## components, in order to be removed as an outlier.
-    cmd += '-s 6 \\\n'
-##    ## verbose
-##    cmd += '-V \\\n'
-    cmd += '-snpweightoutname %s.snpweight \\\n' %(out_prefix)
-    cmd += '-badsnpname %s.badsnpname \\\n' %(out_prefix)
-##    cmd += ' -p Muganda29_octo200_quad29.pca.par'
-    print cmd
-    os.system(cmd)
-
-    return
-
-
-def MDS():
-
-    import gnuplot
-
-    prefix = 'Baganda29_quad29_octo200'
-    prefix = 'Baganda29_quad29_octo200_excldiscordant'
-    prefix = 'Baganda29_quad29_octo200_SNPQCtogether'
-##    prefix = 'Ga-Adangbe'
-##    prefix = 'Zulu'
-##    prefix = 'Ga-Adangbeexcldiscordant'
-##    prefix = 'Zuluexcldiscordant'
-
-    bool_exclude_discordant = False
-    if 'excldiscordant' in prefix:
-        bool_exclude_discordant = True
-
-    bool_merge = True
-    if prefix in [
-        'Baganda29_quad29_octo200_SNPQCtogether',
-        'Ga-Adangbe','Zulu',
-        'Ga-Adangbeexcldiscordant','Zuluexcldiscordant',
-        ]:
-        bool_merge = False
-        if prefix == 'Baganda29_quad29_octo200_SNPQCtogether':
-            bfile = 'pops/Baganda_quad29octo200/Baganda_quad29octo200.SNPQC'
-        else:
-            if 'excldiscordant' in prefix:
-                bfile = 'pops/%s/%s.SNPQC' %(
-                    prefix.replace('excldiscordant',''),
-                    prefix.replace('excldiscordant',''),
-                    )
-            else:
-                bfile = 'pops/%s/%s.SNPQC' %(prefix,prefix,)
-
-    fn_ld_regions = 'pops/Baganda_octo/Baganda_octo.ldregions.SNPs'
-
-    ##
-    ## find common SNPs post QC
-    ##
-    if not os.path.isfile('%s.extract' %(prefix)):
-        if bool_merge == False:
-            cmd = 'cat %s.bim > %s.extract' %(bfile,prefix)
-            execmd(cmd)
-        else:
-            cmd = "cat pops/Baganda_quad/Baganda_quad.SNPQC.bim | awk '{print $2}' | sort > Baganda_quad.SNPs"
-            execmd(cmd)
-            cmd = "cat pops/Baganda_octo/Baganda_octo.SNPQC.bim | awk '{print $2}' | sort > Baganda_octo.SNPs"
-            execmd(cmd)
-            cmd = 'comm -12 Baganda_quad.SNPs Baganda_octo.SNPs > %s.extract' %(prefix)
-            execmd(cmd)
-            os.remove('Baganda_quad.SNPs')
-            os.remove('Baganda_octo.SNPs')
-
-    ##
-    ## find common samples post QC
-    ##
-    cmd = 'cat pops/Baganda_quad/Baganda_quad.SNPQC.fam | sort > Baganda_quad.fam'
-    execmd(cmd)
-    cmd = 'cat pops/Baganda_octo/Baganda_octo.SNPQC.fam | sort > Baganda_octo.fam'
-    execmd(cmd)
-    
-    cmd = "cat Baganda_quad.fam | awk '{print substr($1,12,10)}' | sort > Baganda_quad.samples"
-    execmd(cmd)
-    cmd = "cat Baganda_octo.fam | awk '{print substr($1,12,10)}' | sort > Baganda_octo.samples"
-    execmd(cmd)
-    cmd = 'comm -12 Baganda_quad.samples Baganda_octo.samples > Baganda29.samples'
-    execmd(cmd)
-    os.remove('Baganda_quad.samples')
-    os.remove('Baganda_octo.samples')
-    cmd = 'fgrep -f Baganda29.samples Baganda_quad.fam | sort > Baganda29_quad29_octo0.fam'
-    execmd(cmd)
-    cmd = 'fgrep -f Baganda29.samples Baganda_octo.fam | sort > Baganda29_quad0_octo29.fam'
-    execmd(cmd)
-    os.remove('Baganda29.samples')
-
-    cmd = 'comm -23 Baganda_quad.fam Baganda29_quad29_octo0.fam > Baganda29_quad71_octo0.fam'
-    execmd(cmd)
-    cmd = 'comm -23 Baganda_octo.fam Baganda29_quad0_octo29.fam > Baganda29_quad0_octo200.fam'
-    execmd(cmd)
-    cmd = 'cat Baganda29_quad0_octo200.fam Baganda29_quad29_octo0.fam > Baganda29_quad29_octo200.fam'
-    execmd(cmd)
-    cmd = 'cat Baganda29_quad0_octo200.fam Baganda29_quad29_octo0.fam > Baganda29_quad29_octo200_excldiscordant.fam'
-    execmd(cmd)
-    if bool_merge == False:
-        cmd = 'cat %s.fam > %s.fam' %(bfile,prefix,)
-        execmd(cmd)
-
-    ##
-    ## --bmerge
-    ##
-    if not os.path.isfile('%s.bed' %(prefix)):
-        cmd = 'plink \\\n'
-        if bool_merge == False:
-            cmd += '--bfile %s \\\n' %(bfile)
-        else:
-            cmd += '--bfile pops/Baganda_quad/Baganda_quad.SNPQC \\\n'
-            cmd += '--bmerge \\\n'
-            cmd += 'pops/Baganda_octo/Baganda_octo.SNPQC.bed \\\n'
-            cmd += 'pops/Baganda_octo/Baganda_octo.SNPQC.bim \\\n'
-            cmd += 'pops/Baganda_octo/Baganda_octo.SNPQC.fam \\\n'
-        cmd += '--keep %s.fam \\\n' %(prefix)
-        cmd += '--extract %s.extract \\\n' %(prefix)
-##        cmd += '--exclude 26diff_and_monomorphic.SNPs \\\n' ## tmp
-        if bool_exclude_discordant == True:
-            cmd += '--exclude discordant.SNPs \\\n' ## tmp
-        cmd += '--make-bed --out %s \\\n' %(prefix)
-        execmd(cmd)
-
-    ##
-    ## --indep-pairwise
-    ##
-    if not os.path.isfile('%s.prune.in' %(prefix)):
-        cmd = 'plink \\\n'
-        cmd += '--bfile %s \\\n' %(prefix)
-        cmd += '--out %s \\\n' %(prefix)
-        ## settings
-        cmd += '--indep-pairwise 50 5 0.2 \\\n'
-        cmd += '--maf 0.05 \\\n'
-        ## SNP exclusion
-        cmd += '--exclude %s \\\n' %(fn_ld_regions)
-        execmd(cmd)
-
-    ##
-    ## --genome
-    ##
-    if not os.path.isfile('%s.genome' %(prefix)):    
-        cmd = 'plink \\\n'
-        cmd += '--bfile %s \\\n' %(prefix)
-        cmd += '--out %s \\\n' %(prefix)
-        cmd += '--genome \\\n'
-        ## SNP exclusion
-        cmd += '--extract %s.prune.in \\\n' %(prefix)
-        cmd += '--exclude %s \\\n' %(fn_ld_regions)
-        execmd(cmd)
-
-    ##
-    ## --cluster
-    ##
-    if not os.path.isfile('%s.mds' %(prefix)):
-        cmd = 'plink \\\n'
-        cmd += '--bfile %s \\\n' %(prefix)
-        cmd += '--out %s \\\n' %(prefix)
-        cmd += '--cluster \\\n'
-        cmd += '--mds-plot 4 \\\n'
-        cmd += '--read-genome %s.genome \\\n' %(prefix)
-        ## SNP exclusion
-        cmd += '--extract %s.prune.in \\\n' %(prefix)
-        cmd += '--exclude %s \\\n' %(fn_ld_regions)
-        execmd(cmd)
-
-##    ##
-##    ## EIGENSOFT
-##    ##
-##    eigensoft(prefix,fn_ld_regions,)
-
-    ##
-    ## plot
-    ##
-    if not os.path.isfile('%s.mds' %(prefix)):
-        sys.exit(0)
-
-    if bool_merge == True:
-        cmd = "cat Baganda29_quad29_octo0.fam | awk '{print $1}' > Baganda29_quad29.samples"
-        execmd(cmd)
-        cmd = "cat Baganda29_quad0_octo29.fam | awk '{print $1}' > Baganda29_octo29.samples"
-        execmd(cmd)
-        for suffix in ['quad','octo',]:
-            cmd = 'fgrep -f Baganda29_%s29.samples %s.mds' %(suffix,prefix,)
-            cmd += " | awk '{print substr($1,12,10),$4,$5}'"
-            cmd += ' | sort -k1,1'
-            cmd += ' > %s_%s29.mds' %(prefix,suffix)
-            execmd(cmd)
-            if suffix == 'quad':
-                continue
-            cmd = "cat pops/Baganda_%s/Baganda_%s.fam | awk '{print $1}' > Baganda29_%s.samples" %(
-                suffix,suffix,suffix,)
-            execmd(cmd)
-            cmd = 'fgrep -f Baganda29_%s.samples %s.mds' %(suffix,prefix,)
-            cmd += " | awk '{print substr($1,12,10),$4,$5}'"
-            cmd += ' | sort -k1,1'
-            cmd += ' > %s_%s.mds' %(prefix,suffix)
-            execmd(cmd)
-
-##    lines_extra = ['set key out\n']
-##    fd = open('%s_quad29.mds' %(prefix))
-##    lines4 = fd.readlines()
-##    fd.close()
-##    fd = open('%s_octo29.mds' %(prefix))
-##    lines8 = fd.readlines()
-##    fd.close()
-##    for i in xrange(len(lines4)):
-##        l4 = lines4[i].split()
-##        l8 = lines8[i].split()
-##        x4 = float(l4[1])
-##        y4 = float(l4[2])
-##        x8 = float(l8[1])
-##        y8 = float(l8[2])
-##        lines_extra += ['set arrow from %f,%f to %f,%f\n' %(x4,y4,x8,y8,)]
-
-    n_samples = int(os.popen('cat %s.mds | wc -l' %(prefix)).read())-1
-    ## without pruning
-    n_SNPs = int(os.popen('cat %s.bim | wc -l' %(prefix)).read())
-    ## with pruning
-    n_SNPs = int(os.popen('cat %s.prune.in | wc -l' %(prefix)).read())
-
-    if bool_merge == False:
-        execmd("cat omni2.5-4_20120904_agv_gtu.fam | awk '{print $2}' > quad.samples")
-        execmd("cat omni2.5-8_agv_20120910_gtu.fam | awk '{print $2}' > octo.samples")
-        execmd('fgrep -w -f quad.samples %s.mds > %s_quad.mds' %(prefix,prefix,))
-        execmd('fgrep -w -f octo.samples %s.mds > %s_octo.mds' %(prefix,prefix,))
-        line_plot = 'plot '
-        line_plot += '"%s_quad.mds" u 4:5 ps 2 pt 7 lc 1 t "quad",' %(prefix)
-        line_plot += '"%s_octo.mds" u 4:5 ps 2 pt 7 lc rgb "#0000FF" t "octo",' %(prefix)
-        line_plot = line_plot[:-1]
-    else:
-        line_plot = 'plot '
-        line_plot += '"%s_quad29.mds" u 2:3 ps 2 pt 7 lc 1 t "quad",' %(prefix)
-    ##    line_plot += '"%s_octo29.mds" u 2:3 ps 3 pt 7 lc 3 t "octo",' %(prefix)
-        line_plot += '"%s_octo.mds" u 2:3 ps 2 pt 7 lc rgb "#0000FF" t "octo",' %(prefix)
-        line_plot = line_plot[:-1]
-
-    gnuplot.scatter_plot_2d(
-        '%s.mds' %(prefix),
-        line_plot = line_plot,
-##        column1 = 2, column2 = 3,
-        xlabel = 'C1',
-        ylabel = 'C2',
-        title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
-            'Baganda29',n_samples,n_SNPs,
-            ),
-        prefix_out='%s.mds' %(prefix),
-##        lines_extra=lines_extra,
-        bool_remove=False,
-        )
-
-    return
-
-
-def frqlmisshwe_discordant():
-
-    for chip in ['quad','octo',]:
-
-        cmd = 'cat pops/Baganda_%s/Baganda_%s.SNPQC.fam | wc -l' %(chip,chip,)
-        n_samples = int(os.popen(cmd).read())
-
-        for flag,prefix in [
-            ['-m1','discordant',],
-            ['-v','concordant',],
-            ]:
-
-            for suffix,column,x_min,x_max,x_step,x_label,condition in [
-                ['frq','$5',0,0.5,0.01,'MAF','',],
-                ['lmiss','1-$5',0.90,1.00,0.01,'SNP call rate','',],
-                ['hwe','-log($9)/log(10)',0,10,1,'p_{HWE}','if(NR%3==2)',],
-                ]:
-
-                cmd = 'cat pops/Baganda_%s/Baganda_%s.SNPQC.%s' %(chip,chip,suffix,)
-                cmd += " | awk '{%s print %s}'" %(condition,column,)
-                cmd += ' | fgrep %s -w -f discordant.SNPs' %(flag)
-                cmd += ' > %s.%s.%s' %(suffix,chip,prefix,)
-                execmd(cmd)
-
-                cmd = 'cat %s.%s.%s | wc -l' %(suffix,chip,prefix,)
-                n_SNPs = int(os.popen(cmd).read())
-                if flag == '-v':
-                    n_SNPs -= 1
-
-                gnuplot.histogram2(
-                    '%s.%s.%s' %(suffix,chip,prefix,),
-                    x_step = 0.01,
-                    x_min = x_min, x_max = x_max,
-                    xlabel=xlabel,
-                    title='Baganda %s (n_{samples}=%i, n_{SNPs}=%i)' %(
-                        chip,n_samples,n_SNPs,
-                        ),
-                    )
-
-    return
-
-
-def frqlmisshwe_scatter():
-
-##    for frq in [frq1,frq2,]:
-##        cmd = 'cat %s | sort -k2,2 > %s.sorted' %(frq,frq)
-##        execmd(cmd)
-##
-##    cmd = 'join -1 2 -2 2 -o 0,1.3,1.4,1.5,2.3,2.4,2.5'
-##    cmd += ' %s.sorted %s.sorted' %(frq1,frq2,)
-##    cmd += " | awk '{if($3==$6) {print $4,$7,$1} else {print $4,1-$7,$1}}'"
-##    cmd += ' > frq.joined'
-##    execmd(cmd)
-
-    n_samples = 0
-    n_SNPs = 0
-
-    cmd = 'cat frq.joined'
-    cmd += " | awk '{if(($1-$2)>0.2||($2-$1)>0.2) print}'"
-    cmd += ' > frq.joined.labels'
-    execmd(cmd)
-
-    line_plot = 'plot '
-    line_plot += '"frq.joined" u 1:2 pt 7 lc 0 t ""'
-    line_plot += ',"frq.joined.labels" u 1:2:3 w labels t ""'
-    line_plot += ',"frq.joined.labels" u 1:2 pt 7 lc 1 t ""'
-
-    gnuplot.scatter_plot_2d(
-        'frq.joined',
-        line_plot = line_plot,
-##        line_plot = line_plot,
-##        column1 = 1, column2 = 2,
-        xlabel = 'MAF %s' %(frq1),
-        ylabel = 'MAF %s' %(frq2),
-        title='MAF %s %s (n_{samples}=%i, n_{SNPs}=%i)' %(
-            frq1,frq2,n_samples,n_SNPs,
-            ),
-##        prefix_out='%s.mds' %(prefix),
-##        lines_extra=lines_extra,
-        bool_remove=False,
-        )
-    
-    return
-
-
-def allelic_concordance_Baganda(bfile1,bfile2,):
-
-    for bfile in [bfile1,bfile2,]:
-        if not os.path.isfile('%s.bed' %(bfile)):
-            print 'bed not found:', bfile
-            sys.exit(0)
-
-    basename1 = os.path.basename(bfile1)
-    basename2 = os.path.basename(bfile2)
-
-    ##
-    ## find common post QC samples (chip/lane independent)
-    ##
-    fn_common_samples = '%s.%s.comm.samples' %(basename1,basename2,)
-    cmd = "cat %s.fam | awk '{print substr($1,12,10)}'" %(bfile1)
-    l_quad = os.popen(cmd).read().strip().split('\n')
-    cmd = "cat %s.fam | awk '{print substr($1,12,10)}'" %(bfile2)
-    l_octo = os.popen(cmd).read().strip().split('\n')
-    l = list(set(l_quad)&set(l_octo))
-    n_samples = len(l)
-    s = '\n'.join(l)
-    fd = open('%s' %(fn_common_samples),'w')
-    fd.write(s)
-    fd.close()
-
-    ##
-    ## find common post QC samples (chip/lane specific)
-    ##
-    for bfile in [bfile1,bfile2,]:
-        basename = os.path.basename(bfile)
-        cmd = 'fgrep -f %s %s.fam' %(
-            fn_common_samples,bfile,)
-        cmd += " | awk '{print $1,$2}'"
-        cmd += ' > %s.comm.samples' %(basename)
-        execmd(cmd)
-        pass
-
-    ##
-    ## find common post QC SNPs
-    ##
-    fn_common_SNPs = '%s.%s.comm.SNPs' %(basename1,basename2,)
-    if not os.path.isfile(fn_common_SNPs):
-        for bfile, basename in [[bfile1,basename1,],[bfile2,basename2,],]:
-            cmd = "cat %s.bim | awk '{print $2}' | sort > %s.SNPs" %(bfile,basename,)
-            execmd(cmd)
-        cmd = 'comm -12 %s.SNPs %s.SNPs > %s' %(
-            basename1,basename2,fn_common_SNPs,)
-        execmd(cmd)
-        pass
-
-    ##
-    ## recode from bed to ped and extract common samples and SNPs
-    ##
-    for bfile in [bfile1,bfile2,]:
-        basename = os.path.basename(bfile)
-        if os.path.isfile('%s.tped' %(basename)):
-            deltat = time.time()-os.path.getmtime('%s.tped' %(basename))
-            if deltat < hours*60*60:
-                print int(deltat/float(60*60)), 'hrs'
-                continue
-        cmd = 'plink --bfile %s ' %(bfile)
-        cmd += '--keep %s.comm.samples ' %(basename,)
-        cmd += ' --recode --transpose --out %s' %(basename,)
-        cmd += ' --extract %s' %(fn_common_SNPs)
-        execmd(cmd)
-
-        cmd = 'sort -k1,1 -k4,4 %s.tped -o %s.tped' %(basename,basename,)
-        execmd(cmd)
-
-    ##
-    ## parse sample IIDs
-    ##
-    d_fam = {}
-    for bfile in [bfile1,bfile2,]:
-        basename = os.path.basename(bfile)
-        cmd = "cat %s.tfam | awk '{print substr($2,12,10)}'" %(basename)
-        l = os.popen(cmd).read().strip().split('\n')
-        d_fam[basename] = l
-    l_fam4 = d_fam[basename1]
-    l_fam8 = d_fam[basename2]
-
-    ##
-    ## initiate count
-    ##
-    d_sum = {}
-    for k in ['all','confirmed','possible',]:
-        d_sum[k] = {}
-        for count_disc in range(n_samples+1):
-            d_sum[k][count_disc] = {'count':0,'sum_conc':{},}
-##                                    'count_cum':0,'sum_conc_cum':{},}
-            for i_sample in xrange(n_samples):
-                d_sum[k][count_disc]['sum_conc'][i_sample] = 0
-##                d_sum[k][count_disc]['sum_conc_cum'][i_sample] = 0
-
-    l_discordant_SNPs = []
-    l_discordant_SNPs_all_samples = []
-
-    i_line = 0
-
-    print 'loop over lines/SNPs'
-
-    fd4 = open('%s.tped' %(basename1),'r')
-    fd8 = open('%s.tped' %(basename2),'r')
-    for line4 in fd4:
-        line8 = fd8.readline()
-        l4 = line4.split()
-        chromosome = int(l4[0])
-        ## skip if not autosomal or X chromosome SNP
-        if chromosome < 1 or chromosome > 23:
-            continue
-        l8 = line8.split()
-        i_line += 1
-        if i_line % 100000 == 0: print i_line
-
-        count_diff_all = 0
-        count_diff_confirmed = 0
-        count_diff_possible = 0
-        bool_disc_confirmed = False
-        l_conc = []
-        for i4 in xrange(n_samples):
-            sample = l_fam4[i4]
-            ## samples in different order, so...
-            ## identify index of octo sample equivalent to quad sample
-            i8 = l_fam8.index(sample)
-            genotype4 = l4[4+2*i4:4+2*(i4+1)]
-            genotype8 = l8[4+2*i8:4+2*(i8+1)]
-            ## concordant
-            if (
-                (genotype4[0] == genotype8[0] and genotype4[1] == genotype8[1])
-                or
-                (genotype4[0] == genotype8[1] and genotype4[1] == genotype8[0])
-                ):
-                l_conc += [1]
-                pass
-            ## discordant
-            else:
-                bool_concordant = False
-                count_diff_all += 1
-                if genotype4[0] == '0' or genotype8[0] == '0':
-                    count_diff_possible += 1
-                else:
-                    count_diff_confirmed += 1
-                l_conc += [0]
-
-            ## continue loop over samples
-            continue
-
-        d_disc_counts = {
-            'all':count_diff_all,
-            'confirmed':count_diff_confirmed,
-            'possible':count_diff_possible,
-            }
-
-##        l = ['all']
-##        if count_diff_confirmed == 0:
-##            l += ['possible']
-##        if count_diff_possible == 0:
-##            l += ['confirmed']
-        l = ['all','confirmed','possible',]
-        for k in l:
-            d_sum[k][d_disc_counts[k]]['count'] += 1
-##            for count in range(0,d_disc_counts[k]+1-1):
-            for i_sample in xrange(n_samples):
-                conc = l_conc[i_sample]
-                d_sum[k][d_disc_counts[k]]['sum_conc'][i_sample] += conc
-
-            ## continue loop over samples
-            continue
-
-        if count_diff_confirmed > 0:
-            l_discordant_SNPs += [l4[1]]
-            if count_diff_confirmed == n_samples:
-                l_discordant_SNPs_all_samples += [l4[1]]
-
-        ## continue loop over lines
-        continue
-
-    fd4.close()
-    fd8.close()
-
-    suffix = basename1[basename1.rindex('.')+1:]
-
-    fd = open('discordant_%s.SNPs' %(suffix),'w')
-    fd.write('\n'.join(l_discordant_SNPs)+'\n')
-    fd.close()
-
-    fd = open('discordant_%s_allsamples.SNPs' %(suffix),'w')
-    fd.write('\n'.join(l_discordant_SNPs_all_samples)+'\n')
-    fd.close()
-
-    s_table = 'confirmed discordances (e.g. TC!=CC or TT!=CC, TC and CT considered to be equivalent)\n'
-    s_table += 'possible discordances (e.g. TC!=00, 00 and 00 considered to be equivalent)\n'
-    print 'all', i_line
-    print 'all', int(os.popen('cat %s.tped | wc -l' %(basename1)).read())
-    print 'all', int(os.popen('cat %s.tped | wc -l' %(basename2)).read())
-
-    ## initiate table rows
-    lines_table = ['%2i' %(count) for count in xrange(n_samples+1)]
-    ## loop over columns
-    for k in ['all','confirmed','possible',]:
-        sum_conc_cum = 0
-        n_SNPs_cum = 0
-        ## loop over rows
-        for count in xrange(n_samples+1):
-            ## calculate concordance
-            sum_conc = 0
-            n_SNPs = d_sum[k][count]['count']
-            for i in xrange(n_samples):
-                sum_conc += d_sum[k][count]['sum_conc'][i]
-            ## calculate cumulated concordance
-            sum_conc_cum += sum_conc
-            avg_sum_conc_cum = float(sum_conc_cum)/n_samples
-            n_SNPs_cum += n_SNPs
-            if n_SNPs_cum == 0:
-                avg_conc_cum = 'N/A'
-            else:
-                avg_conc_cum = '%.4f' %(float(avg_sum_conc_cum)/n_SNPs_cum)
-            ## append to row
-            lines_table[count] += '\t%7i\t%s\t%7i\t%s' %(
-                n_SNPs,n_SNPs_cum,avg_conc_cum,)
-            ## continue loop over rows
-            continue
-        ## continue loop over columns
-        continue
-    ## terminate table rows
-    for count in xrange(n_samples+1):
-        lines_table[count] += '\n'
-    ## append table header
-    lines_table = [s_table]+lines_table
-    print ''.join(lines_table)
-    ## write table to file
-    fd = open('table%s.txt' %(suffix),'w')
-    fd.writelines(lines_table)
-    fd.close()
-    ####
-    
     return
 
 
@@ -1049,10 +388,9 @@ def PLINK_extract_intersection(l_strands,l_bfiles):
     suffix = 'commonpos'
 
     l_bfiles_out, bool_exists = check_file_out(l_bfiles,suffix)
-    if bool_exists == True:
-        return l_bfiles_out
-
     l_strands_out = [strand+'_'+suffix for strand in l_strands]
+    if bool_exists == True:
+        return l_bfiles_out,l_strands_out
 
     identify_common_strand_bim_and_bim_bim(l_strands,l_bfiles,)
 
@@ -1265,6 +603,9 @@ def exclude_strand_noncommon(l_strands_in):
     ##    print os.popen(cmd).read()
         execmd(cmd)
 
+        print os.popen('cat %s_common.strand | wc -l' %(l_strands_in[i])).read() ## tmp
+    stop ## tmp
+
 ##    cat HumanOmni2.5-8v1_A-b37_deduplicated_common.strand | awk '{print $2":"$3}' | sort > tmp.strand
 ##    cat omni2.5-4_20120904_agv_gtu_build37.bim | awk '{print $1":"$4}' | sort > tmp4.bim; cat omni2.5-8_agv_20120910_gtu.bim | awk '{print $1":"$4}' | sort > tmp8.bim
 ##    comm -12 tmp8.bim tmp.strand > tmp8merged.bim; wc -l tmp8merged.bim
@@ -1418,12 +759,33 @@ def update_quad_strand_to_build37(strand_in):
 def execmd(cmd):
 
     l_indexes = []
-    if cmd.split()[0] == 'cat':
+    l_cmd = cmd.split()
+
+    if not l_cmd[0] in [
+        ## unix utilities
+        'cat','mv','cp','rm','paste','comm','grep','fgrep','join','sort',
+        ## other
+        'plink','unix2dos','wget','gnuplot','tar','convert',
+        'bsub',
+        'chmod',
+        ##
+        './liftOver',
+        ]:
+        print l_cmd
+        stop_unknown_cmd
+
+    if '%' in cmd:
+        print cmd
+        stop
+
+    if cmd.split()[0] in ['cat','mv','cp','rm',]:
         l_indexes = [1]
+    elif cmd.split()[0] == 'paste':
+        l_indexes = [1,2,]
     elif cmd.split()[0] == 'comm':
         l_indexes = [2,3,]
-    elif cmd.split()[0] in ['grep','fgrep',] and cmd.split()[1] == '-f':
-        l_indexes = [2]
+    elif cmd.split()[0] in ['grep','fgrep',] and '-f' in cmd.split():
+        l_indexes = [l_cmd.index('-f')+1]
     for index in l_indexes:
         if not os.path.isfile(cmd.split()[index]):
             print cmd
@@ -1536,7 +898,7 @@ def PLINK_flip(l_bfiles,l_strands,):
     return l_bfiles_out
 
 
-def count_SNPs():
+def count_SNPs(l_bfiles,l_strands,):
 
     fn = 'SNPstats.txt'
 
@@ -1551,31 +913,36 @@ def count_SNPs():
     cmd = '''cat omni2.5-4_20120904_agv_gtu_sexupdated_exclconsent.unlifted.BED | awk 'NR%2==0{if ($1!="chr24" && $1!="chr25" && $1!="chr26") print}' | wc -l'''
     append_stats(cmd,fn,)
 
+    ##
+    ## bim/strand
+    ##
+    l_fn = []
+    for i in xrange(2):
+        bfile = l_bfiles[i]
+        bfile = bfile.replace('_commonpos','')
+        strand = l_strands[i]
+        strand = strand.replace('_commonpos','')
+        l_fn += [
+            '%s.bim.positions' %(bfile,),
+            '%s.bim.%s.strand.common.positions' %(bfile,strand,),
+            ]
+    l_fn += ['bim.strand.common.positions',]
+    for fn2 in l_fn:
+        for setname,condition in [
+            ['all','',],
+            ['autosomal','if($1>=1&&$1<=22)',],
+            ['X','if($1==23)',],
+            ]:
+            cmd = '''cat %s | awk 'BEGIN{FS=":"}{%s print}' | wc -l ''' %(fn2,condition,)
+            append_stats(cmd,fn)
+
     fd = open(fn,'a')
     fd.write('\n')
     fd.close()
 
-    l_bfiles = [
-        'omni2.5-4_20120904_agv_gtu',
-        'omni2.5-8_agv_20120910_gtu',
-        ]
-    for suffix in [
-##        '','sexupdated','build37','flipped','exclmissmult','deduplicated','common','renamed',
-        '','sexupdated','exclconsent','build37','renamed','flipped','commonpos',
-        ]:
-        for i in xrange(2):
-            if i==1 and suffix in ['sexupdated','build37','renamed',]:
-                continue
-            bfile = l_bfiles[i]
-            if suffix != '':
-                l_bfiles[i] += '_'+suffix
-            if not os.path.isfile('%s.bim' %(bfile)):
-                append_stats("echo 0",fn)
-                continue
-            append_stats("cat %s.bim | awk '{print $2}' | wc -l" %(bfile),fn)
-            append_stats("cat %s.bim | awk '{if($1>=1 && $1<=22) print $2}' | wc -l" %(bfile),fn)
-            append_stats("cat %s.bim | awk '{if($1==23) print $2}' | wc -l" %(bfile),fn)
-
+    ##
+    ## strand
+    ##
     fd = open(fn,'a')
     fd.write('\n')
     fd.close()
@@ -1589,12 +956,46 @@ def count_SNPs():
         for i in xrange(2):
             if i == 1 and suffix == 'build37':
                 continue
+            if suffix != '':
+                l_strands[i] += '_'+suffix
+            if suffix == 'renamed':
+                continue
             strand = l_strands[i]
             append_stats("cat %s.strand | awk '{print $2}' | wc -l" %(strand),fn)
             append_stats("cat %s.strand | awk '{if($2>=1 && $2<=22) print $2}' | wc -l" %(strand),fn)
-            append_stats('''cat %s.strand | awk '{if($2=="X") print $2}' | wc -l''' %(strand),fn)
+            append_stats('''cat %s.strand | awk '{if($2=="X"||$2==23) print $2}' | wc -l''' %(strand),fn)
+            append_stats('''cat %s.strand | awk '{if($2=="Y"||$2==24) print $2}' | wc -l''' %(strand),fn)
+
+    ##
+    ## bim
+    ##
+    fd = open(fn,'a')
+    fd.write('\n')
+    fd.close()
+
+    l_bfiles = [
+        'omni2.5-4_20120904_agv_gtu',
+        'omni2.5-8_agv_20120910_gtu',
+        ]
+    for suffix in [
+##        '','sexupdated','build37','flipped','exclmissmult','deduplicated','common','renamed',
+        '','sexupdated','exclconsent','commonID','build37','renamed','flipped','commonpos',
+        ]:
+        for i in xrange(2):
+            if i==1 and suffix in ['sexupdated','build37','renamed',]:
+                continue
             if suffix != '':
-                l_strands[i] += '_'+suffix
+                l_bfiles[i] += '_'+suffix
+            if suffix in ['exclconsent','renamed',]:
+                continue
+            bfile = l_bfiles[i]
+            if not os.path.isfile('%s.bim' %(bfile)):
+                append_stats("echo 0",fn)
+                continue
+            append_stats("cat %s.bim | awk '{print $2}' | wc -l" %(bfile),fn)
+            append_stats("cat %s.bim | awk '{if($1>=1 && $1<=22) print $2}' | wc -l" %(bfile),fn)
+            append_stats("cat %s.bim | awk '{if($1==23) print $2}' | wc -l" %(bfile),fn)
+            append_stats("cat %s.bim | awk '{if($1==24) print $2}' | wc -l" %(bfile),fn)
 
     return
 
@@ -1721,7 +1122,7 @@ def PLINK_split_by_population(l_bfiles,l_populations,d_populations,):
                 cmd += ' | '
                 cmd += "awk '{print $1,$2}' >> %s" %(keep,)
 ##                print cmd
-                os.system(cmd)
+                execmd(cmd)
                 continue
 
             cmd = 'cat %s | wc -l' %(keep)
@@ -1750,7 +1151,7 @@ def PLINK_split_by_population(l_bfiles,l_populations,d_populations,):
             bsub += "-J'%s' " %(population_out)
             bsub += '%s' %(cmd)
 
-            os.system(bsub)
+            execmd(bsub)
 
             l_bfiles_out += [bfile_out]
 
@@ -1783,7 +1184,7 @@ def PLINK_split_by_population(l_bfiles,l_populations,d_populations,):
             for extension in ['keep','log','nof',]:
                 fn = '%s.%s' %(bfile_out,extension,)
                 if os.path.isfile(fn):
-                    os.system('mv %s trash/%s' %(fn,fn))
+                    execmd('mv %s trash/%s' %(fn,fn))
             continue
         ## break loop over x
         if bool_break == True:
@@ -1855,7 +1256,7 @@ def PLINK_bmerge(l_bfiles,l_populations,d_populations,):
                 if not os.path.isfile('%s.bed' %(out)):
                     continue
                 for extension in ['bed','fam','bim',]:
-                    os.system('mv %s.%s ../pops/%s/%s.%s' %(
+                    execmd('mv %s.%s ../pops/%s/%s.%s' %(
                         out,extension,
                         population_out,
                         population_out,extension,
@@ -1864,7 +1265,8 @@ def PLINK_bmerge(l_bfiles,l_populations,d_populations,):
                 break
             pass
         ## 2) keep separate
-        elif population_out in ['Baganda', 'Banyarwanda',]:
+##        elif population_out in ['Baganda', 'Banyarwanda',]:
+        elif True:
             for bfile in l_bfiles:
                 fn1 = '%s_%s' %(bfile,population_out,)
                 fn2 = '%s_%s' %(population_out,d_bfiles[bfile])
@@ -1872,7 +1274,7 @@ def PLINK_bmerge(l_bfiles,l_populations,d_populations,):
                 if not os.path.isdir(dn_out):
                     os.mkdir(dn_out)
                 for extension in ['bed','fam','bim',]:
-                    os.system('mv %s.%s ../pops/%s_%s/%s.%s' %(
+                    execmd('mv %s.%s ../pops/%s_%s/%s.%s' %(
                         fn1,extension,
                         population_out,d_bfiles[bfile],
                         fn2,extension,
@@ -1915,14 +1317,14 @@ def PLINK_bmerge(l_bfiles,l_populations,d_populations,):
             fd = open('%s_merge.sh' %(population_out),'w')
             fd.write(cmd)
             fd.close()
-            os.system('chmod +x %s_merge.sh' %(population_out))
+            execmd('chmod +x %s_merge.sh' %(population_out))
 
             bsub = "bsub -M3000000 -R'select[mem>3000] rusage[mem=3000]' "
             bsub += '-G agv '
             bsub += '-q normal '
             bsub += "-J'%s' " %(population_out)
 
-            os.system('%s ./%s_merge.sh' %(bsub, population_out))
+            execmd('%s ./%s_merge.sh' %(bsub, population_out))
 
             pass
 
@@ -2186,8 +1588,8 @@ def init():
             sys.exit(0)
 
     if not os.path.isfile('liftOver'):
-        os.system('wget http://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/liftOver')
-        os.system('chmod +x liftOver')
+        execmd('wget http://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/liftOver')
+        execmd('chmod +x liftOver')
         pass
 
     ##
@@ -2195,8 +1597,8 @@ def init():
     ##
     fn = 'hg18ToHg19.over.chain'
     if not os.path.isfile(fn):
-        os.system('wget http://hgdownload.cse.ucsc.edu/goldenPath/hg18/liftOver/%s.gz' %(fn))
-        os.system('gunzip %s.gz' %(fn))
+        execmd('wget http://hgdownload.cse.ucsc.edu/goldenPath/hg18/liftOver/%s.gz' %(fn))
+        execmd('gunzip %s.gz' %(fn))
         pass
 
     ##
@@ -2224,12 +1626,12 @@ def init():
         fn_zip = l_fn_zip[i]
         fn_strand = l_strands[i]+'.strand'
         if not os.path.isfile(fn_strand):
-            os.system('wget http://www.well.ox.ac.uk/~wrayner/strand/%s' %(fn_zip))
-            os.system('unzip %s' %(fn_zip))
+            execmd('wget http://www.well.ox.ac.uk/~wrayner/strand/%s' %(fn_zip))
+            execmd('unzip %s' %(fn_zip))
             os.remove('%s' %(fn_zip))
-            os.system('dos2unix %s' %(fn_strand))
-            os.system('dos2unix %s' %(l_miss[i]))
-            os.system('dos2unix %s' %(l_multiple[i]))
+            execmd('dos2unix %s' %(fn_strand))
+            execmd('dos2unix %s' %(l_miss[i]))
+            execmd('dos2unix %s' %(l_multiple[i]))
             pass
         continue
 
@@ -2238,31 +1640,34 @@ def init():
         u'IBO',
         'Ethiopia', ## SOMALI,AMHARA,OROMO
         ## 1000g
-        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','IBO','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
+        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
     ##    'MKK', ## 31 samples
     ##    'CHD', ## 1 sample
         ]
 
     d_populations = {
-        ## Uganda
+        ## Uganda (East)
         u'Muganda':'Baganda', u'Murundi':'Barundi', u'Munyarwanda':'Banyarwanda',
-        ## Kenya
+        ## Kenya (East)
         u'KALENJIN':'Kalenjin', u'KIKUYU':'Kikuyu',
-        ## South Africa
+        ## South Africa (South)
         u'ZULU':'Zulu', u'Sotho':'Sotho',
-        ## Nigeria
-        u'IBO':'Ibo',
-        ##
+        ## Nigeria (West)
+        u'IBO':'Igbo',
+        ## Ghana (West)
         u'GA-ADANGBE':'Ga-Adangbe',
-        ##
+        ## West
         u'Mandinka':'Mandinka', u'Wolloff':'Wolof', u'Fula':'Fula', u'Jola':'Jola',
         ## Ethiopia
         'Ethiopia':'Ethiopia', ## SOMALI,AMHARA,OROMO
         ## 1000g
-        'YRI': 'YRI', 'CHB': 'CHB', 'ASW': 'ASW', 'TSI': 'TSI', 'CDX': 'CDX', 'IBO': 'IBO', 'CLM': 'CLM', 'CEU': 'CEU', 'KHV': 'KHV', 'PEL': 'PEL', 'LWK': 'LWK', 'MXL': 'MXL', 'CHS': 'CHS', 'GBR': 'GBR', 'ACB': 'ACB', 'IBS': 'IBS', 'FIN': 'FIN', 'JPT': 'JPT', 'PUR': 'PUR', 'GIH': 'GIH',
+        'YRI': 'YRI', 'CHB': 'CHB', 'ASW': 'ASW', 'TSI': 'TSI', 'CDX': 'CDX', 'CLM': 'CLM', 'CEU': 'CEU', 'KHV': 'KHV', 'PEL': 'PEL', 'LWK': 'LWK', 'MXL': 'MXL', 'CHS': 'CHS', 'GBR': 'GBR', 'ACB': 'ACB', 'IBS': 'IBS', 'FIN': 'FIN', 'JPT': 'JPT', 'PUR': 'PUR', 'GIH': 'GIH',
         }
 
-    return l_bfiles, l_strands, l_miss, l_multiple, l_populations, d_populations
+    return (
+        l_bfiles, l_strands, l_miss, l_multiple,
+        l_populations, d_populations,
+        )
 
 
 
