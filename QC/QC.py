@@ -25,9 +25,9 @@ class main:
 
     def main(self,bfile,):
 
-        self.check_logs() ## tmp!!!
-
         self.init(bfile,)
+
+        self.check_logs() ## tmp!!!
 
         if self.verbose == True: print '############ execute ############'
         self.plink_execution(bfile,)
@@ -803,7 +803,8 @@ class main:
 
         ## parse heterozygosities for stats.histogram
         cmd = 'cat %s.het.joined ' %(bfile,)
-        cmd += " | awk '{het=($5-$3)/$5; print het}'"
+##        cmd += " | awk '{het=($5-$3)/$5; print het}'"
+        cmd += " | awk '{print $5}'"
         l_het = [float(line) for line in os.popen(cmd).readlines()]
         os.remove('%s.het.joined' %(bfile))
 
@@ -1425,7 +1426,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## join2 (het)
         cmd = 'grep -f %s.sexcheck.samples.1column %s.het' %(bfile,bfile,)
         cmd += ' | '
-        cmd += "awk '{print $1, ($5-$3)/$5}' > %s_join2.txt" %(bfile,)
+        cmd += "awk '{print $1,$5}' > %s_join2.txt" %(bfile,)
         self.execmd(cmd)
         ## join het and imiss
         cmd = "join %s_join1.txt %s_join2.txt > %s.sex.dat" %(
@@ -1459,7 +1460,7 @@ it's ugly and I will not understand it 1 year form now.'''
             self.execmd(cmd)
             ## join2 (het)
             cmd = "grep -f %s.%s.txt %s.het" %(bfile,suffix,bfile,)
-            cmd += "| awk '{print $1, ($5-$3)/$5}'"
+            cmd += "| awk '{print $1,$5}'"
             cmd += "> %s_join2.txt" %(bfile,)
             self.execmd(cmd)
             ## rm
@@ -1542,7 +1543,7 @@ it's ugly and I will not understand it 1 year form now.'''
         else:
             line_plot = 'plot [:][:1]'
         line_plot += '"%s.imiss.het.joined" ' %(bfile)
-        line_plot += 'u (($10-$8)/$10):(1-$6) lc 0 ps 2 pt 7 t ""'
+        line_plot += 'u ($10):(1-$6) lc 0 ps 2 pt 7 t ""'
 
         ## sexcheck dots and labels
         l_colors = ['red','orange',]
@@ -1590,15 +1591,15 @@ it's ugly and I will not understand it 1 year form now.'''
         l_cmds = []
 
         cmd = 'cat %s.imiss' %(bfile)
-        cmd += " | awk 'NR>1 {if(1-$6<%f) print $1}'" %(threshold_imiss)
-        cmd += ' | sort'
+        cmd += " | awk 'NR>1 {if($6>%f) print $1,$2}'" %(1-threshold_imiss)
+        cmd += ' | sort -k2,2'
         cmd += ' > %s.imiss.remove.sorted' %(bfile)
         l_cmds += [cmd]
 
-        cmd = "cat %s.het | awk 'NR>1' | sort -k1,1 > %s.het.sorted" %(bfile,bfile,)
+        cmd = "cat %s.het | awk 'NR>1' | sort -k2,2 > %s.het.sorted" %(bfile,bfile,)
         l_cmds += [cmd]
 
-        cmd = 'join -1 1 -2 1 -v2'
+        cmd = 'join -1 2 -2 2 -v2'
         cmd += ' %s.imiss.remove.sorted %s.het.sorted ' %(bfile,bfile,)
         cmd += ' > %s.het.joined' %(bfile)
         l_cmds += [cmd]
@@ -1615,13 +1616,19 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += 's=$( '
         cmd += ' cat %s.het.joined' %(bfile)
         cmd += " | awk '"
+        ## BEGIN
         cmd += ' BEGIN {minhet=1; maxhet=0; sum=0; sumsq=0}'
-        cmd += ' {het=($5-$3)/$5; sum+=het; sumsq+=het**2;'
+        ## loop NR
+        cmd += ' {'
+        cmd += ' het=$5;'
+        cmd += ' sum+=het; sumsq+=het**2;'
         cmd += ' if(het<minhet) minhet=het; if(het>maxhet) maxhet=het}'
+        ## END
         cmd += ' END {'
-        cmd += ' mean=sum/(NR);'
-        cmd += ' stddev=sqrt(sumsq/(NR) - (sum/(NR))**2);'
-        cmd += ' print mean, stddev, minhet, maxhet}'
+        cmd += ' n=NR;' ## without header
+        cmd += ' mean=sum/n;'
+        cmd += ' stddev=sqrt(sumsq/n - (sum/n)**2);'
+        cmd += ' print mean, stddev, minhet, maxhet, n}'
         cmd += "'"
         if bool_execute == False:
             cmd += ' )'
@@ -1798,6 +1805,7 @@ it's ugly and I will not understand it 1 year form now.'''
     def cmd_rerun(self,bfile,plink_cmd,nl='\n',):
 
         cmd = '\n'
+##        cmd += 'if [ ! -s %s.SNPQC.bed ]; then\n' %(bfile)
         cmd += 'if [ ! -s %s.SNPQC.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
         if plink_cmd == 'indep-pairwise':
@@ -2117,7 +2125,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
         s_cluster = '--cluster \\\n'
-        s_cluster += '--mds-plot 4 \\\n'
+        s_cluster += '--mds-plot 10 \\\n' ## 10 components
         s_cluster += '--exclude %s.ldregions.SNPs \\\n' %(bfile,)
 
 ##        ##
@@ -2135,7 +2143,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#inbreeding
 ##        l_plink_cmds += ['--het --keep %s.imiss' %(bfile)] ## keep just to make sure it doesn't run until --missing finishes
-        l_plink_cmds += ['--recodeA --out %s' %(bfile)] ## keep just to make sure it doesn't run until --missing finishes
+        l_plink_cmds += ['--recodeA --keep %s.imiss' %(bfile)]
         ## xxx rename het_before/after to recodeA_before/after and include het calculation in recode_after
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
@@ -2971,6 +2979,27 @@ it's ugly and I will not understand it 1 year form now.'''
     def recodeA_after(self,bfile,):
 
         l_cmds = []
+
+        cmd = 'cat %s.raw' %(bfile)
+        ## init awk
+        cmd += " | awk '"
+        ## loop rows
+        cmd += ' NR>1 {cntNM=0;cntHET=0;'
+        ## loop fields
+        cmd += ' for(i=7;i<=NF;i++)'
+        cmd += ' if($i==1) {cntHET++; cntNM++} else if($i!="NA") cntNM++;'
+        ## loop rows continued
+        cmd += ' het=cntHET/cntNM; print $1,$2,cntHET,cntNM,het;'
+        cmd += ' }'
+        ## term awk
+        cmd += "'"
+        cmd += ' > %s.het' %(bfile)
+        l_cmds += [cmd]
+
+        ## append header
+        cmd = "sed -i '1i FID IID N(HET) N(NM) HET' %s.het" %(bfile)
+##        cmd = 'echo "FID IID N(HET) N(NM) HET" > %s.het' %(bfile)
+        l_cmds += [cmd]
         
         ## a) calculate heterozygosity mean and stddev
         l, mean,average, het_min, het_max = self.het2stddev(
@@ -2985,7 +3014,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## b) write list of samples outside mean+-3stddev
         cmd = 'awk -v mean=$mean -v stddev=$stddev '
         cmd += " 'NR>1 {if( "
-        cmd += '(($5-$3)/$5)<mean-%i*stddev || (($5-$3)/$5)>mean+%i*stddev ' %(
+        cmd += '$5<mean-%i*stddev || $5>mean+%i*stddev ' %(
             self.threshold_het_stddev, self.threshold_het_stddev,
             )
         cmd += ") print $1,$2}' "
@@ -3004,6 +3033,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         cmd = 'if [ -s %s.imiss -a ! -f %s.imiss.samples ]\n' %(bfile,bfile,)
         cmd += 'then\n'
+        ## exclusion list
         cmd += "awk 'NR>1 {if($6>%f) print $1,$2}' %s.imiss " %(
             1-self.threshold_imiss,
             bfile,
@@ -3067,6 +3097,9 @@ it's ugly and I will not understand it 1 year form now.'''
         ## check file out
         cmd += '! -s %s.sampleQC.samples ' %(bfile)
         ## check file in
+        cmd += '-a -s %s.imiss ' %(bfile)
+        cmd += '-a -s %s.het ' %(bfile)
+        cmd += '-a -s %s.sexcheck ' %(bfile)
         cmd += '-a -f %s.imiss.samples ' %(bfile)
         cmd += '-a -f %s.het.samples ' %(bfile)
         cmd += '-a -f %s.sexcheck.samples ' %(bfile)
@@ -3119,7 +3152,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 max(het_max,average+3*stddev,)+2*x_step,
                 fn_plot,
                 )
-            s_plot += 'u (hist(($5-$3)/$5,width)):(1.0) smooth freq w boxes '
+            s_plot += 'u (hist($5,width)):(1.0) smooth freq w boxes '
             s_plot += 'lc rgb"red" notitle\n'
 
             s_average = '%.4f' %(average)
@@ -3132,7 +3165,7 @@ it's ugly and I will not understand it 1 year form now.'''
             fn_plot = '%s.het' %(bfile)
 
             s_plot = 'plot "%s" ' %(fn_plot)
-            s_plot += 'u (hist(($5-$3)/$5,width)):(1.0) smooth freq w boxes '
+            s_plot += 'u (hist($5,width)):(1.0) smooth freq w boxes '
             s_plot += 'lc rgb"red" notitle\n'
             l_arrows = None
 
