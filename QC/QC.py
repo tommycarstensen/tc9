@@ -15,6 +15,8 @@ sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
 ## todo 2013-01-18: add option to do --options bfile.options
+## todo 2013-01-23: add option to run --indep-pairwise in parallel per chromosome with --chr option (remember check every 10 mins)
+## todo 2013-01-23: get rid of any references to uganda_gwas and agv in final version
 
 class main:
 
@@ -103,7 +105,7 @@ class main:
                 print s
                 print fn
 ####                os.remove('stdout/%s' %(fn))
-                stop_error
+                stop_error_MEMLIMIT
 
         print 'checked logs'
 
@@ -180,49 +182,6 @@ class main:
 
         os.remove('%s.hwe.in' %(bfile))
         os.remove('%s.hwe.out' %(bfile))
-
-        return
-
-
-    def histogram_hwe(self,bfile,):
-
-        if os.path.isfile('%s.hwe.png' %(bfile)):
-            return
-        
-##        cmd = '''awk 'NR>1{if ($9!="NA") print}' %s.hwe > %s.hwe.dat''' %(
-##            bfile,bfile,
-##            )
-        cmd = 'cat %s.hwe' %(bfile)
-        cmd += ' | '
-        cmd += "awk 'NR>1{"
-        cmd += 'if ($9!="NA") {logp=-log($9)/log(10); if(logp<=10) print logp}'
-        cmd += "}'"
-        cmd += '> %s.hwe.dat' %(bfile)
-        self.execmd(cmd)
-
-        n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
-        cmd = 'cat %s.genome.prehardy.EIGENSOFT.samples | wc -l' %(bfile)
-        n_samples -= int(os.popen(cmd).read())
-
-        n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
-
-        gnuplot.histogram2(
-##                '%s.hwe' %(bfile),
-            '%s.hwe.dat' %(bfile),
-            prefix_out = '%s.hwe' %(bfile),
-##            x_step=0.01,
-            x_step=0.1,
-##            x_max=0.1,
-##            column='$9',
-            column='$1',
-            xlabel='-log_{10}({/Helvetica-Italic p}_{HWE})',
-            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
-                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
-                ),
-            color = 'yellow',
-            )
-
-        os.remove('%s.hwe.dat' %(bfile))
 
         return
 
@@ -981,6 +940,49 @@ class main:
         return
 
 
+    def histogram_hwe(self,bfile,):
+
+        if os.path.isfile('%s.hwe.png' %(bfile)):
+            return
+        
+##        cmd = '''awk 'NR>1{if ($9!="NA") print}' %s.hwe > %s.hwe.dat''' %(
+##            bfile,bfile,
+##            )
+        cmd = 'cat %s.hwe' %(bfile)
+        cmd += ' | '
+        cmd += "awk 'NR>1{"
+        cmd += 'if ($9!="NA") {logp=-log($9)/log(10); if(logp<=10) print logp}'
+        cmd += "}'"
+        cmd += '> %s.hwe.dat' %(bfile)
+        self.execmd(cmd)
+
+        n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
+        cmd = 'cat %s.genome.prehardy.EIGENSOFT.samples | wc -l' %(bfile)
+        n_samples -= int(os.popen(cmd).read())
+
+        n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
+
+        gnuplot.histogram2(
+##                '%s.hwe' %(bfile),
+            '%s.hwe.dat' %(bfile),
+            prefix_out = '%s.hwe' %(bfile),
+##            x_step=0.01,
+            x_step=0.1,
+##            x_max=0.1,
+##            column='$9',
+            column='$1',
+            xlabel='-log_{10}({/Helvetica-Italic p}_{HWE})',
+            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
+                ),
+            color = 'yellow',
+            )
+
+        os.remove('%s.hwe.dat' %(bfile))
+
+        return
+
+
     def scatter_mds_excl_1000g(self,bfile,):
 
         if os.path.isfile('%s.posthardy.mds.pc1.pc2.mds.png' %(bfile)):
@@ -1132,7 +1134,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 ##
                 ## add labels for MD outliers
                 ##
-                line_plot = self.add_MD_labels(
+                line_plot = self.add_MDS_outlier_labels(
                     bfile,array_components,l_IIDs,pc1,pc2,line_plot,)
 
                 ## finalize plot line
@@ -1157,7 +1159,7 @@ it's ugly and I will not understand it 1 year form now.'''
         return
 
 
-    def add_MD_labels(self,bfile,array_components,l_IIDs,pc1,pc2,line_plot,):
+    def add_MDS_outlier_labels(self,bfile,array_components,l_IIDs,pc1,pc2,line_plot,):
 
 ##        sys.path.append('/nfs/users/nfs_t/tc9/github/tc9/math')
 ##        import statistics
@@ -2020,12 +2022,13 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if plink_cmd_full:
             mem = self.assign_memory(bfile,plink_cmd,plink_cmd_full,)
+        ## --genome
         else:
-            mem = 4
+            mem = 4000 ## uganda_gwas --genome
         
         cmd = ''
         cmd += 'bsub \\\n'
-        cmd += "-M%i000000 -R'select[mem>%i000] rusage[mem=%i000]' \\\n" %(
+        cmd += "-M%i000 -R'select[mem>%i] rusage[mem=%i]' \\\n" %(
             mem,mem,mem,
             )
         cmd += '-G %s \\\n' %(self.project)
@@ -2101,11 +2104,11 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## assign appropriate amount of memory (GB)
         if plink_cmd in d_mem.keys():
-            mem = int(
+            mem = 1000*int(
                 max(3,math.ceil((d_mem[plink_cmd]/1000.)*n_samples/1000.))
                 )
         else:
-            mem = int(max(3,math.ceil(0.8*n_samples/1000.)))
+            mem = 1000*int(max(3,math.ceil(0.8*n_samples/1000.)))
             pass
 
         return mem
@@ -2179,9 +2182,11 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
         s = s_indep_pairwise
         s += '--read-freq %s.sampleQC.frq \\\n' %(bfile)
-        s += '--out %s.prehardy \\\n' %(bfile,)
+        s += '--out %s.prehardy \\\n' %(bfile,) ## non-parallel
+##        s += '--out prune/%s.prehardy.$0 \\\n' %(bfile,) ## parallel
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
         s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
+##        s += '--chr $0 \\\n' %(bfile) ## parallel
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
@@ -2396,6 +2401,9 @@ it's ugly and I will not understand it 1 year form now.'''
         elif plink_cmd == 'genome':
             l_cmds = self.genome_before(bfile,in_prefix,out_prefix,)
 
+##        elif plink_cmd == 'indep-pairwise': ## parallel
+##            l_cmds = self.indep_pairwise_before(bfile,in_prefix,out_prefix,)
+
 ##        elif plink_cmd == 'hardy':
 ##            l_cmds = self.hardy_before(bfile,out_prefix,)
 
@@ -2425,6 +2433,9 @@ it's ugly and I will not understand it 1 year form now.'''
 
         elif plink_cmd == 'genome':
             l_cmds = self.genome_after(bfile,in_prefix,out_prefix,)
+
+##        elif plink_cmd == 'indep-pairwise': ## parallel
+##            l_cmds = self.indep_pairwise_after(bfile,in_prefix,out_prefix,)
 
         elif plink_cmd == 'hardy':
             l_cmds = self.hardy_after(bfile,out_prefix,)
@@ -2641,31 +2652,40 @@ it's ugly and I will not understand it 1 year form now.'''
 
 ##            cat omni2.5-8_20120809_gwa_uganda_gtu_flipped.outlier | awk '{print $3}' | awk -F ":" '{print $1}' > tmp ; fgrep -f tmp omni2.5-8_20120809_gwa_uganda_gtu_flipped.prehardy.genome | awk '{if($10>0.05) print}' | head
 
+            ##
+            ## parse outliers
+            ##
+            ## print EIGENSOFT sample names to file
+            cmd += 'cat %s.EIGENSOFT.outlier' %(bfile)
+            cmd += " | awk '{print $3}'"
+            cmd += ''' | awk 'BEGIN{FS=":"}{print $2}' '''
+            cmd += ' > %s.outlier.EIGENSOFTsamples' %(bfile)
+            ## convert EIGENSOFT sample names to original sample names
+            cmd += ' ; fgrep -w -f %s.outlier.EIGENSOFTsamples %s.recoded.txt' %(bfile,bfile)
+            cmd += " | awk '{print $1,$2}'"
+            cmd += ' > %s.EIGENSOFT.samples' %(bfile)
+
+            cmd += '\n\n'
+
+            ## clean-up
+            cmd += 'rm %s.outlier.EIGENSOFTsamples\n\n' %(bfile)
+            
         else:
 
-            fd = open('%s.EIGENSOFT.outlier' %(bfile),'w')
+            fd = open('%s.EIGENSOFT.samples' %(bfile),'w')
             fd.close()
 
         ##
-        ## parse outliers and append
+        ## append outliers
         ##
-        ## print EIGENSOFT sample names to file
-        cmd += 'cat %s.EIGENSOFT.outlier' %(bfile)
-        cmd += " | awk '{print $3}'"
-        cmd += ''' | awk 'BEGIN{FS=":"}{print $2}' '''
-        cmd += ' > %s.outlier.EIGENSOFTsamples' %(bfile)
-        ## convert EIGENSOFT sample names to original sample names
-        cmd += ' ; fgrep -w -f %s.outlier.EIGENSOFTsamples %s.recoded.txt' %(bfile,bfile)
-        cmd += " | awk '{print $1,$2}'"
-        cmd += ' > %s.EIGENSOFT.samples' %(bfile)
         ## before hardy
-        cmd += ' ; cat %s.genome.prehardy.samples %s.EIGENSOFT.samples' %(bfile,bfile)
+        cmd += 'cat %s.genome.prehardy.samples %s.EIGENSOFT.samples' %(bfile,bfile)
         cmd += ' > %s.genome.prehardy.EIGENSOFT.samples' %(bfile)
         ## after hardy
         cmd += ' ; cat %s.genome.samples %s.EIGENSOFT.samples' %(bfile,bfile)
-        cmd += ' > %s.SNPQC.samples\n\n' %(bfile)
-        ## clean-up
-        cmd += 'rm %s.outlier.EIGENSOFTsamples\n\n' %(bfile)
+        cmd += ' > %s.SNPQC.samples' %(bfile)
+
+        cmd += '\n\n'
 
         return cmd
 
@@ -2743,6 +2763,24 @@ it's ugly and I will not understand it 1 year form now.'''
         fd.close()
 
         return
+
+
+    def indep_pairwise_before(self,bfile,out_prefix,):
+
+        l_cmds = []
+
+        ## loop over chromosomes
+        cmd = '\n##\n## loop 1 (plink execution)\n##\n'
+        cmd += 'for chrom in {1..22}\ndo\n'
+        cmd += '## continue if output exists\n'
+        cmd += 'if [ -s prune/%s.$chrom.prune.in ]\nthen continue\nfi\n\n' %(
+            out_prefix,
+            )
+        ## initiate command
+        cmd += "cmd='\n"
+        l_cmds += [cmd]
+
+        return l_cmds
 
 
     def genome_before(self,bfile,in_prefix,out_prefix,):
@@ -2842,6 +2880,93 @@ it's ugly and I will not understand it 1 year form now.'''
         return l_cmds
 
 
+    def indep_pairwise_after(self,bfile,out_prefix,):
+        l_cmds = []
+
+        ##
+        ## continuation of nested loop and command from indep_pairwise_before
+        ##
+        cmd = ''
+
+        ## append to command
+        if self.bool_run_all == True:
+            cmd += ';'
+            ## need to rerun at the end of each bsub
+            cmd += self.cmd_rerun(bfile,'indep-pairwise',nl=';\n')
+        ## terminate command
+        cmd += "\n'\n\n"
+        ## evaluate command
+        cmd_LSF = self.append_LSF(bfile,'genome',JOBID='%s.indep-pairwise.${chrom}' %(out_prefix),)
+##        cmd += 'echo $cmd\n'
+        cmd += '''cmd="%sbash -c '$cmd' $chrom"\n''' %(cmd_LSF)
+        cmd += 'echo $cmd\n'
+        cmd += 'eval $cmd\n'
+        ## end loops
+        cmd += '\ndone\n'
+        ## exit before count if file out exists
+        cmd += 'if [ -f %s.prune.in ];then\nexit\nfi\n' %(out_prefix)
+        l_cmds += [cmd]
+
+        ## count lines
+        l_fn = [
+            'prune/%s.$chrom.prune.in' %(out_prefix),
+            'prune/%s.$chrom.prune.out' %(out_prefix),
+            ]
+        cmd = '\n##\n## loop 2 (count lines)\n##\n'
+        cmd += 'nlines=0\n'
+        cmd += 'for i in $(seq -f "%02g" 0 $(($cnt-1)))\ndo\n'
+        cmd += 'if [ ! -s %s ]\nthen\n' %(fn)
+        cmd += 'break\nfi\n\n'
+        cmd += 'let nlines=$nlines+$('
+        cmd += 'cat'
+        for fn in l_fn:
+            cmd += ' %s' %(fn)
+        cmd += ' | wc -l'
+        cmd += ')-2\n'
+        cmd += '\ndone\n'
+        l_cmds += [cmd]
+
+        ## expected lines
+        cmd = 'n=$('
+        cmd += 'cat %s.sampleQC.frq' %(bfile)
+        cmd += " | awk '{if($1==22&&$5>0.05) print}'"
+        cmd += ' | wc -l'
+        cmd += ')'
+
+        ##
+        ## concatenanate lines if they are all present
+        ## and do some additional stuff if they are...
+        ##
+        cmd = '##\n## concatenate lines if they are all present\n##\n'
+        cmd += 'echo actual $nlines expected $(($n*($n-1)/2))\n'
+        cmd += 'if [ $nlines -ne $(($n*($n-1)/2)) ];then\nexit\nfi\n'
+        ## exit after count if file out exists
+        cmd += 'if [ -f %s.genome ];then\nexit\nfi\n' %(out_prefix)
+        l_cmds += [cmd]
+        yyy
+
+        ## initiate .prune.in file with header
+        header = 'xxx'
+        xxx
+        cmd = '\n##\n## loop 3 (concatenate files)\n##\n'
+        cmd += 'echo "%s" > %s.prune.in\n' %(header,out_prefix,)
+        ## loop .genome files
+        cmd += 'for chrom in {1..22}\ndo\n'
+        ## append to .genome file
+        cmd += "cat prune/%s.$chrom.prune.in | awk 'NR>1' >> %s.prune.in\n" %(
+            out_prefix,out_prefix,
+            )
+        cmd += '\ndone\n\n'
+
+        if self.bool_run_all == True:
+            xxx
+            cmd += self.cmd_rerun(bfile,'indep-pairwise',)
+
+        l_cmds += [cmd]
+
+        return l_cmds
+
+
     def genome_after(self,bfile,in_prefix,out_prefix,):
 
         l_cmds = []
@@ -2854,6 +2979,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## append to command
         if self.bool_run_all == True:
             cmd += ';'
+            ## need to rerun at the end of each bsub
             cmd += self.cmd_rerun(bfile,'genome',nl=';\n')
         ## terminate command
         cmd += "\n'\n\n"
@@ -3158,6 +3284,11 @@ it's ugly and I will not understand it 1 year form now.'''
             s_average = '%.4f' %(average)
             s_stddev = '%.4f' %(stddev)
 
+            if int(os.popen('cat %s | wc -l' %(fn_plot)).read()) != n_samples:
+                print n_samples
+                print int(os.popen('cat %s | wc -l' %(fn_plot)).read())
+                stop
+
             pass
 
         else:
@@ -3332,6 +3463,12 @@ it's ugly and I will not understand it 1 year form now.'''
         if os.path.isfile('%s.lmiss.png' %(bfile)):
             return
 
+        ## other process already generating this image
+        if os.path.isfile('%s.lmiss.plt' %(bfile)):
+            sys.exit(0)
+        if os.path.isfile('%s.lmiss.ps' %(bfile)):
+            sys.exit(0)
+
         print 'histogram call lmiss', bfile
 
         n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
@@ -3409,7 +3546,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         ## create dirs
         ##
-        for dn in ['stdout','stderr','fam','genome',]:
+        for dn in ['stdout','stderr','fam','genome','prune',]:
             if not os.path.isdir(dn):
                 os.mkdir(dn)
                 pass
@@ -3526,9 +3663,27 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def execmd(self,cmd,):
 
-        if '%s' in cmd:
+        l_indexes = []
+        l_cmd = cmd.split()
+
+        if '%' in cmd:
             print cmd
             stop
+
+        if cmd.split()[0] in ['cat','mv','cp','rm',]:
+            l_indexes = [1]
+        elif cmd.split()[0] == 'paste':
+            l_indexes = [1,2,]
+        elif cmd.split()[0] == 'comm':
+            l_indexes = [2,3,]
+        elif cmd.split()[0] in ['grep','fgrep',] and '-f' in cmd.split():
+            l_indexes = [l_cmd.index('-f')+1]
+        for index in l_indexes:
+            if not os.path.isfile(cmd.split()[index]):
+                print cmd
+                print 'does not exist:', cmd.split()[index]
+                sys.exit(0)
+
         if self.bool_verbose == True:
             print
             print inspect.stack()[1][3]
