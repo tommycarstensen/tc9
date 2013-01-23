@@ -3444,7 +3444,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## the latter is used for --check-sex
         ## subtract concatenated SNP exclusion list
         ##
-        self.write_SNPs_by_chromosome(bfile,)
+        self.write_list_of_autosomal_and_X_SNPs(bfile,)
 
         ##
         ## convert range exclusion list to SNP exclusion list
@@ -3538,7 +3538,7 @@ it's ugly and I will not understand it 1 year form now.'''
         return
 
 
-    def write_SNPs_by_chromosome(self,bfile,):
+    def write_list_of_autosomal_and_X_SNPs(self,bfile,):
 
         '''somehow I can never remember what this function does.
 maybe I should rename it.'''
