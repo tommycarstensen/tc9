@@ -655,12 +655,7 @@ class main:
         ##
         ## highly related samples
         ##
-        if self.project == 'uganda_gwas':
-            cmd = '''awk 'NR>1{if($10>0.9) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
-        elif self.project == 'agv':
-            cmd = '''awk 'NR>1{if($10>0.1) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
-        else:
-            stop
+        cmd = '''awk 'NR>1{if($10>0.9) print $1,$3,$10}' %s.prehardy.genome''' %(bfile)
         lines = os.popen(cmd).readlines()
         s = ''
         for line in lines:
@@ -882,7 +877,8 @@ class main:
             [['hwe',],self.scatter_hwe,],
 ##            [['SNPQC.lmiss','frq',],self.scatter_lmiss_frq,],
 ##            [['mds',],self.scatter_mds,],
-            [['posthardy.mds',],self.scatter_mds_excl_1000g,],
+            [['prehardy.mds',],self.scatter_mds_excl_1000g,],
+##            [['posthardy.mds',],self.scatter_mds_excl_1000g,],
             [['%s.mds' %(self.fn1000g),],self.scatter_mds_incl_1000g,],
             ]:
             bool_continue = False
@@ -985,7 +981,9 @@ class main:
 
     def scatter_mds_excl_1000g(self,bfile,):
 
-        if os.path.isfile('%s.posthardy.mds.pc1.pc2.mds.png' %(bfile)):
+        mds_prefix = '%s.prehardy' %(bfile)
+        fn = '%s.mds' %(mds_prefix)
+        if os.path.isfile('%s.pc1.pc2.mds.png' %(fn)):
             return
 
         '''this function needs to be rewritten.
@@ -1012,6 +1010,7 @@ it's ugly and I will not understand it 1 year form now.'''
             [255,0,85,],
             ]
 
+        ## give option to add --samplefile flag instead!!!
         if self.project == 'uganda_gwas':
             l_tribes = [
                 'Muganda',
@@ -1027,12 +1026,9 @@ it's ugly and I will not understand it 1 year form now.'''
                 'Mutooro',
                 'Mufumbira',
 ##                'Nyanjiro (Tanzania)',
-                'IBO',
                 ]
         else:
             l_tribes = [bfile,]
-
-        fn = '%s.posthardy.mds' %(bfile)
 
         if not os.path.isdir('mds'):
             os.mkdir('mds')
@@ -1066,14 +1062,14 @@ it's ugly and I will not understand it 1 year form now.'''
             for line in lines[1:]:
                 FID = line.split()[0][-10:]
                 if FID in d_IID2tribe.keys():
-                    prefix = d_IID2tribe[FID]
+                    pop_prefix = d_IID2tribe[FID]
                 else:
-                    prefix = 'other'
+                    pop_prefix = 'other'
                     print 'no tribe assigned', FID, os.popen('grep %s samples/*' %(FID)).read()
                 if FID == 'APP5339441':
                     print tribe
                     stop
-                fd = open('mds/%s.mds' %(prefix),'a')
+                fd = open('mds/%s.mds' %(pop_prefix),'a')
                 fd.write(line)
                 fd.close()
                 continue
@@ -1085,7 +1081,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         cmd = 'cat %s | wc -l' %(fn)
         n_samples = int(os.popen(cmd).read().strip())-1
-        n_SNPs = int(os.popen('cat %s.posthardy.prune.in | wc -l' %(bfile)).read())
+        n_SNPs = int(os.popen('cat %s.prune.in | wc -l' %(mds_prefix)).read())
 
         ##
         ## loop over combinations of principal components
@@ -1268,6 +1264,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         i = 0
         d_colors = {}
+        ## this is specific to the uganda_gwas project and should be a command line option...
         l_tribes = [
             'Muganda',
             'Munyarwanda',
@@ -1282,7 +1279,6 @@ it's ugly and I will not understand it 1 year form now.'''
             'Mutooro',
             'Mufumbira',
 ##                'Nyanjiro (Tanzania)',
-            'IBO',
             ]
         for tribe in l_tribes:
             d_colors[tribe] = [i*20,i*20,i*20,]
@@ -1808,7 +1804,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         cmd = '\n'
 ##        cmd += 'if [ ! -s %s.SNPQC.bed ]; then\n' %(bfile)
-        cmd += 'if [ ! -s %s.SNPQC.bed -a ! -s %s.posthardy.mds ]; then\n' %(
+        cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
         if plink_cmd == 'indep-pairwise':
             cmd += 'sleep 600;'
@@ -1887,6 +1883,21 @@ it's ugly and I will not understand it 1 year form now.'''
                     bool_file_out = True
                     fn_out = fn_log
                     pass
+                else:
+                    
+##                    ## Python 2.5
+##                    with open(fn_log,'r') as fd:
+##                        lines = fd.readlines()
+                    ## All Python versions
+                    fd = open(fn_log,'r')
+                    lines = fd.readlines()
+                    fd.close()
+
+                    if 'Analysis finished: ' not in lines[-2]:
+                        bool_file_out = True
+                        fn_out = fn_log
+                        pass
+                    pass
                 pass
             ##
             ## create the output so another process doesn't think it's not created
@@ -1894,9 +1905,12 @@ it's ugly and I will not understand it 1 year form now.'''
             else:
                 fd = open(fn_log,'w')
                 fd.close()
+                pass
+            pass
                 
         if bool_file_out == True:
             bool_continue = True
+            pass
 
         return bool_continue, out_prefix, fn_out
 
@@ -2024,7 +2038,7 @@ it's ugly and I will not understand it 1 year form now.'''
             mem = self.assign_memory(bfile,plink_cmd,plink_cmd_full,)
         ## --genome
         else:
-            mem = 4000 ## uganda_gwas --genome
+            mem = 4000
         
         cmd = ''
         cmd += 'bsub \\\n'
@@ -2176,7 +2190,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s = '--freq \\\n'
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
         s += '--out %s.sampleQC \\\n' %(bfile)
-        s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
+        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
@@ -2185,7 +2199,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--out %s.prehardy \\\n' %(bfile,) ## non-parallel
 ##        s += '--out prune/%s.prehardy.$0 \\\n' %(bfile,) ## parallel
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
-        s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
+        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
 ##        s += '--chr $0 \\\n' %(bfile) ## parallel
         l_plink_cmds += [s]
 
@@ -2193,13 +2207,13 @@ it's ugly and I will not understand it 1 year form now.'''
         s = self.write_genome_cmd(bfile, 'prehardy', 'sampleQC', bfile,)
         l_plink_cmds += [s]
 ##
-##        ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
-##        s = s_cluster+'--read-genome %s.prehardy.genome \\\n' %(bfile,)
-##        s += '--bfile %s \\\n' %(bfile,)
-##        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
-##        s += '--extract %s.prehardy.prune.in \\\n' %(bfile,)
-##        s += '--out %s.prehardy \\\n' %(bfile,)
-##        l_plink_cmds += [s]
+        ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
+        s = s_cluster+'--read-genome %s.prehardy.genome \\\n' %(bfile,)
+        s += '--bfile %s \\\n' %(bfile,)
+        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
+        s += '--extract %s.prehardy.prune.in \\\n' %(bfile,)
+        s += '--out %s.prehardy \\\n' %(bfile,)
+        l_plink_cmds += [s]
 
         ##
         ## 4) SNP QC, pre Hardy, sample removal (EIGENSOFT)
@@ -2220,7 +2234,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s = '--freq \\\n'
         s += '--out %s.SNPQC \\\n' %(bfile,)
         s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
-        s += '--exclude %s.SNPQC.SNPs \\\n' %(bfile,)
+        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
@@ -2228,7 +2242,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--read-freq %s.SNPQC.frq \\\n' %(bfile,)
         s += '--out %s.posthardy \\\n' %(bfile,)
         s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
-        s += '--exclude %s.SNPQC.SNPs \\\n' %(bfile,)
+        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
@@ -2250,7 +2264,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
         s += '--remove %s.SNPQC.samples \\\n' %(bfile)
-        s += '--out %s.SNPQC \\\n' %(bfile)
+        s += '--out %s.postQC.autosomes \\\n' %(bfile)
         s += '--exclude %s.SNPQC.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
@@ -2289,7 +2303,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s = '--make-bed \\\n'
         s += '--remove %s.SNPQC.samples \\\n' %(bfile)
         s += '--extract %s.X.SNPs \\\n' %(bfile)
-        s += '--out %s.X \\\n' %(bfile,)
+        s += '--out %s.postQC.X \\\n' %(bfile,)
         s += '--exclude %s.X.lmiss.hwe.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
@@ -2306,17 +2320,28 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '%s.fam \\\n' %(self.fp1000g,)
         s += '--make-bed \\\n'
         s += '--out %s.%s \\\n' %(bfile,suffix,)
-        s += '--bfile %s.SNPQC \\\n' %(bfile,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile)
         s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,self.fn1000g,)
+        ## posthardy
+##        s += '--bfile %s.postQC.autosomes \\\n' %(bfile,)
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile)
+##        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
+        ## prehardy
+        s += '--bfile %s.sampleQC \\\n' %(bfile,)
+        s += '--remove %s.genome.samples \\\n' %(bfile)
+        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
         s = '--freq \\\n'
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
         s += '--out %s.%s \\\n' %(bfile,suffix,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
         s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
+##        ## posthardy
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+##        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
+        ## prehardy
+        s += '--remove %s.genome.samples \\\n' %(bfile)
+        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
@@ -2324,22 +2349,33 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
         s += '--read-freq %s.%s.frq \\\n' %(bfile,suffix,)
         s += '--out %s.%s \\\n' %(bfile,suffix,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
         s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
+##        ## posthardy
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+##        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
+        ## prehardy
+        s += '--remove %s.genome.samples \\\n' %(bfile)
+        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
         s = self.write_genome_cmd(
-            bfile, suffix, 'SNPQC', '%s.%s' %(bfile,suffix,),
+            ## posthardy
+##            bfile, suffix, 'SNPQC', '%s.%s' %(bfile,suffix,),
+            ## prehardy
+            bfile, suffix, 'genome', '%s.%s' %(bfile,suffix,),
             )
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
         s = s_cluster+'--read-genome %s.%s.genome \\\n' %(bfile,suffix,)
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
         s += '--extract %s.%s.prune.in \\\n' %(bfile,suffix,)
         s += '--out %s.%s \\\n' %(bfile,suffix,)
+        ## posthardy
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+        ## prehardy
+        s += '--remove %s.genome.samples \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         return l_plink_cmds
@@ -2470,6 +2506,9 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs > %s.SNPQC.SNPs\n' %(
                 bfile,bfile,bfile,
                 )
+            cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs %s.ldregions.SNPs' %(
+                bfile,bfile,bfile,)
+            cmd += ' > %s.SNPQC.exclLRLD.SNPs\n' %(bfile)
 
             ##
             ## only merge SNPs found in 1000g and current dataset
@@ -2539,7 +2578,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = ''
 
         if self.project == 'uganda_gwas':
-            bool_eigensoft = True
+            bool_eigensoft = False ## ms23 24jan2013
         elif self.project == 'agv':
             bool_eigensoft = False ## cp8 17jan2013
             
@@ -2668,7 +2707,7 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += '\n\n'
 
             ## clean-up
-            cmd += 'rm %s.outlier.EIGENSOFTsamples\n\n' %(bfile)
+            cmd += 'rm %s.outlier.EIGENSOFTsamples %s.recoded.txt\n\n' %(bfile,bfile)
             
         else:
 
@@ -3147,6 +3186,9 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' %s.het > %s.het.samples' %(bfile, bfile,)
         l_cmds += [cmd]
 
+        ## remove huge .raw file to save disk space
+        l_cmds += ['rm %s.raw' %(bfile)]
+
         return l_cmds
 
 
@@ -3175,13 +3217,16 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         cmd = 'if [ -s %s.SNPQC.lmiss -a ! -f %s.lmiss.SNPs ]\n' %(bfile,bfile,)
         cmd += 'then\n'
+
         cmd += 'cat %s.SNPQC.lmiss' %(bfile)
         cmd += ' | '
         cmd += "awk 'NR>1 {if ((1-$5)<%.2f) print $2}' " %(
             self.threshold_lmiss,
             )
-        cmd += ' > '
-        cmd += '%s.lmiss.SNPs\n' %(bfile)
+        cmd += ' > %s.lmiss.SNPs\n' %(bfile)
+
+        cmd += 'cat %s.lmiss.SNPs %s.ldregions.SNPs > %s.lmiss.exclLRLD.SNPs\n' %(
+            bfile,bfile,bfile)
         cmd += 'rm %s.SNPQC.imiss\n' %(bfile)
         cmd += 'fi\n'
         l_cmds += [cmd]
@@ -3198,8 +3243,7 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += "awk 'NR>1 {if ((1-$5)<%.2f) print $2}' " %(
                 self.threshold_lmiss,
                 )
-            cmd += ' > '
-            cmd += '%s.X.%s.lmiss.SNPs\n' %(bfile,sex,)
+            cmd += ' > %s.X.%s.lmiss.SNPs\n' %(bfile,sex,)
             cmd += 'rm %s.X.%s.imiss\n' %(bfile,sex,)
             cmd += 'fi\n'
             l_cmds += [cmd]
@@ -3855,9 +3899,6 @@ maybe I should rename it.'''
 ##        self.bool_run_all = False
 
         self.bool_sequential = False
-
-        ## perform various sanity checks of file lengths etc.
-        self.bool_check_file_io = True
 
         ##
         ## paths
