@@ -49,10 +49,11 @@ def write_exclusion_list(l_exclude,):
     pi_hat_max = float(sys.argv[sys.argv.index('--pi_hat_max')+1])
     out = sys.argv[sys.argv.index('--out')+1]
 
-    s = '\n'.join(['%s %s' %(IIDa,IIDa,) for IIDa in l_exclude])+'\n'
+##    s = '\n'.join(['%s %s' %(IIDa,IIDa,) for IIDa in l_exclude])+'\n'
+    l = ['%s %s\n' %(IIDa,IIDa,) for IIDa in l_exclude]
 
     fd = open('%s.genome.%.2f.samples' %(out,pi_hat_max,),'w')
-    fd.write(s)
+    fd.writelines(l)
     fd.close()
 
     return
