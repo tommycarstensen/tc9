@@ -1082,6 +1082,9 @@ def PLINK_split_by_population(l_bfiles,l_populations,d_populations,):
 
     parse_sample_and_population_from_Excel()
 
+    if not os.path.isdir('../pops'):
+        os.mkdir('../pops')
+
     l_bfiles_out = []
 
     for bfile in l_bfiles:

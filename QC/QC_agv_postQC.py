@@ -19,19 +19,20 @@ hours = 24
 
 def main():
 
-    l_populations, d_populations, d_pops2coords = init()
+    l_populations, d_pops2coords = init()
     l_bfiles = [
-        'omni2.5-4_20120904_agv_gtu_sexupdated_exclconsent_commonID_build37_renamed_flipped_commonpos',
-        'omni2.5-8_agv_20120910_gtu_exclconsent_commonID_flipped_commonpos',
+        '../preQC/omni2.5-4_20120904_agv_gtu_sexupdated_exclconsent_commonID_build37_renamed_flipped_commonpos',
+        '../preQC/omni2.5-8_agv_20120910_gtu_exclconsent_commonID_flipped_commonpos',
         ]
 
     if False:
-        tables(l_populations,d_populations)
-        plots(l_populations,d_populations)
+        tables(l_populations)
+        plots(l_populations)
+        sys.exit(0)
 
     ## 15) analyze discordance
     analyze_discordance(
-        l_populations,d_populations,d_pops2coords,l_bfiles,)
+        l_populations,d_pops2coords,l_bfiles,)
 
     return
 
@@ -131,6 +132,7 @@ def run_eigensoft(population,QC,):
     cmd += '../pops/%s_octo/%s_octo.%s.bim \\\n' %(population,population,QC)
     cmd += '../pops/%s_octo/%s_octo.%s.fam \\\n' %(population,population,QC)
     if population == 'Baganda':
+        execmd('cat Baganda_quad.%s.comm.samples Baganda_octo.%s.comm.samples > Baganda.%s.comm.samples' %(QC,QC,QC))
         cmd += '--remove Baganda.%s.comm.samples \\\n' %(QC)
     cmd += '--extract %s \\\n' %(fn_common_SNPs)
     cmd += '--update-ids %s.recoded.txt \\\n' %(bfile_out,)
@@ -188,7 +190,7 @@ def run_eigensoft(population,QC,):
     fn_sh = '%s_eigensoft.sh' %(bfile_out,)
     write_shell(fn_sh,l_cmds,)
 
-    cmd = LSF_append('./%s' %(fn_sh))
+    cmd = LSF_append('./%s' %(fn_sh),mem=4000,)
     execmd(cmd)
 
     return
@@ -205,14 +207,17 @@ def allelic_concordance_EIGENSOFT():
     ## merge quad/octo
     ##
     for population in ['Zulu','Banyarwanda','Baganda','Ga-Adangbe',]:
+        print population
         fn_ld_regions = 'ldregions.SNPs'
         run_eigensoft(population,QC,)
 
-    for population in ['Zulu','Banyarwanda','Baganda','Ga-Adangbe',]:
+    for population in ['Baganda','Zulu','Banyarwanda','Ga-Adangbe',]:
+        print population
         bfile = '%s_%s' %(population,QC,)
         fn_snpweight = '%s.snpweight' %(bfile,)
 
         if not os.path.isfile(fn_snpweight):
+            print 'missing', fn_snpweight
             sys.exit(0)
 
         ## sort by rsID
@@ -437,6 +442,29 @@ def Baganda_frq_scatter(QC):
     return
 
 
+def write_shell(fn_sh,l_cmds):
+
+    fd = open(fn_sh, 'w')
+    fd.write('\n'.join(l_cmds))
+    fd.close()
+
+    execmd('chmod +x %s' %(fn_sh))
+
+    return
+
+
+def LSF_append(cmd,job_name=None,mem=3000,queue='normal',):
+
+    cmd_lsf = 'bsub -G agv'
+    cmd_lsf += ' -q %s' %(queue)
+    cmd_lsf += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(mem,mem,mem,)
+    if job_name:
+        cmd_lsf += ' -J"%s"' %(job_name)
+    cmd_lsf += ' %s' %(cmd)
+
+    return cmd_lsf
+
+
 def MDS(population,QC,bool_excl_discordant,bool_excl_MAF_below_5,set_name,threshold,prefix,):
 
     if True:
@@ -586,7 +614,7 @@ def MDS(population,QC,bool_excl_discordant,bool_excl_MAF_below_5,set_name,thresh
 
 
 def analyze_discordance(
-    l_populations,d_populations,d_pops2coords,l_bfiles,):
+    l_populations,d_pops2coords,l_bfiles,):
 
 ##    ##
 ##    ## find discordant SNPs with EIGENSOFT
@@ -618,7 +646,7 @@ def analyze_discordance(
     ##
     ## PCA for Africa and all
     ##
-    super_MDS(d_populations,d_pops2coords,l_bfiles,)
+    super_MDS(d_pops2coords,l_bfiles,l_populations,)
 
     ##
     ## intersection between EIGENSOFT discordant and Baganda discordant
@@ -1136,27 +1164,53 @@ def allelic_concordance_Baganda(bfile1,bfile2,):
     fd.close()
     ####
 
+##    cmd = 'cat'
+##    for i_sample in xrange(n_samples):
+##        fn = 'discordant_%s_%i.SNPs' %(suffix,i_sample,)
+##        cmd += ' %s' %(fn)
+##    cmd += ' > discordant_%s.SNPs' %(suffix)
+
+    cmd = 'sort discordant_%s.SNPs > discordant_%s.SNPs.sorted' %(suffix,suffix,)
+    execmd(cmd)
+    cmd = 'sort %s > %s.sorted' %(fn_common_SNPs,fn_common_SNPs,)
+    execmd(cmd)
+    execmd('comm -23 %s.sorted discordant_%s.SNPs.sorted > discordant_%s_0.SNPs' %(
+        fn_common_SNPs,suffix,suffix,))
+    cmd = "awk '{print $1,substr(FILENAME,18,length(FILENAME)-22)}'"
+    cmd += ' discordant_%s_*.SNPs > discordant_%s.dg11' %(suffix,suffix,)
+    execmd(cmd)
+
     return n_samples, fn_common_SNPs
 
 
-def execmd(cmd):
+def execmd(cmd,bool_exe=True,):
 
     l_indexes = []
-    if cmd.split()[0] == 'cat':
+    l_cmd = cmd.split()
+
+    if '%' in cmd:
+        print cmd
+        stop
+
+    if cmd.split()[0] in ['cat','mv','cp','rm',]:
         l_indexes = [1]
+    elif cmd.split()[0] == 'paste':
+        l_indexes = [1,2,]
     elif cmd.split()[0] == 'comm':
         l_indexes = [2,3,]
-    elif cmd.split()[0] in ['grep','fgrep',] and cmd.split()[1] == '-f':
-        l_indexes = [2]
+    elif cmd.split()[0] in ['grep','fgrep',] and '-f' in cmd.split():
+        l_indexes = [l_cmd.index('-f')+1]
     for index in l_indexes:
         if not os.path.isfile(cmd.split()[index]):
             print cmd
+            print inspect.stack()[1][3]
             print 'does not exist:', cmd.split()[index]
             sys.exit(0)
 
-##    print inspect.stack()[1][3]
-##    print cmd
-    os.system(cmd)
+    if bool_exe == True:
+        print inspect.stack()[1][3]
+        print cmd
+        os.system(cmd)
 
     return
 
@@ -1220,18 +1274,18 @@ def HWE_merged():
     return
 
 
-def super_MDS(d_populations,d_pops2coords,l_bfiles,):
+def super_MDS(d_pops2coords,l_bfiles,l_populations,):
 
-    d_l_popset2bfiles = init_MDS(d_populations)
+    d_l_popset2bfiles = init_MDS(l_populations)
 
     fn_ld_regions = 'ldregions.SNPs'
 
     l_population_sets = list(d_l_popset2bfiles.keys())
     l_population_sets = [
         'Africa',
-##        'Africa1000G',
-##        'BBGZ',
-##        '1000G',
+        'Africa1000G',
+        'BBGZ',
+        '1000G',
         ]
 
     ##
@@ -1260,7 +1314,7 @@ def super_MDS(d_populations,d_pops2coords,l_bfiles,):
     ## 3) find component with greatest "quad/octo correlation"
     ##
     for bfile in l_bfiles:
-        cmd = 'sort -k1,1 %s.fam -o %s.fam.sorted' %(bfile,bfile,)
+        cmd = 'cat %s.fam | sort -k1,1 > %s.fam.sorted' %(bfile,bfile,)
         execmd(cmd)
     d_max_correlation = {}
     for population_set in l_population_sets:
@@ -1275,7 +1329,7 @@ def super_MDS(d_populations,d_pops2coords,l_bfiles,):
             if not os.path.isfile('%s.mds' %(bfile)):
                 continue
 
-            cmd = 'sort -k1,1 %s.mds -o %s.mds.sorted' %(bfile,bfile,)
+            cmd = 'cat %s.mds | sort -k1,1 > %s.mds.sorted' %(bfile,bfile,)
             execmd(cmd)
             l_keys = ['quad','octo',]
             d_arrays = {'quad':None,'octo':None,}
@@ -1780,7 +1834,7 @@ def plots(l_populations):
 
     print 'plots'
 
-    os.system('cp ../pops/%s/%s.autosomes.SNPs agv.autosomes.SNPs' %(
+    execmd('cp ../pops/%s/%s.autosomes.SNPs agv.autosomes.SNPs' %(
         l_populations[0],l_populations[0],))
 
     for suffix in [
@@ -1789,14 +1843,13 @@ def plots(l_populations):
         ## 'prehardy.genome',
         ## SNPs (paste/join)
 ##        'frq','hwe','SNPQC.lmiss',
-        'fam','sampleQC.samples',
+        'fam',
 ##        'mds',
-        'imiss.samples',
+        'imiss.samples','het.samples','sexcheck.samples','sampleQC.samples',
         ]:
         
         bool_continue = False
         for pop in l_populations:
-            pop = d_populations[pop]
             fn = '../pops/%s/%s.%s' %(pop,pop,suffix,)
             if not os.path.isfile(fn):
                 print 'not found', fn
@@ -1812,19 +1865,17 @@ def plots(l_populations):
         fd = open('agv.%s' %(suffix),'w')
         fd.close()
 
-        if not suffix in ['fam','sampleQC.samples',]:
+        if not suffix in ['fam',] and not '.samples' in suffix:
 ##            cmd = 'head -1 %s.%s > agv.%s' %(l_populations[0],suffix,suffix,)
-            if suffix in ['het','sexcheck',]:
+            if suffix in ['imiss','het','sexcheck',]:
                 cmd = 'head -1 ../pops/%s/%s.%s > agv.%s' %(
-                    d_populations[l_populations[0]],
-                    d_populations[l_populations[0]],suffix,suffix,)
+                    l_populations[0],l_populations[0],suffix,suffix,)
             else:
+                stop1
                 cmd = 'head -1 ../pops/%s/%s.%s > agv.%s' %(
-                    d_populations[l_populations[0]],
-                    d_populations[l_populations[0]],suffix,suffix,)
+                    l_populations[0],l_populations[0],suffix,suffix,)
             execmd(cmd)
         for pop in l_populations:
-            pop = d_populations[pop]
             fn = '../pops/%s/%s.%s' %(pop,pop,suffix,)
             ## no header
             if suffix in ['fam',] or '.samples' in suffix:
@@ -1855,10 +1906,19 @@ def plots(l_populations):
 ##    instanceQC.histogram_frq('agv')
 ##    instanceQC.histogram_hwe('agv')
 
+    l_het = os.popen('cat agv.het.samples').read().split()
+    l_imiss = os.popen('cat agv.imiss.samples').read().split()
+    l_sexcheck = os.popen('cat agv.sexcheck.samples').read().split()
+    gnuplot.venn3(
+        l1=l_imiss,l2=l_het,l3=l_sexcheck,
+        suffix='agv',
+        text1='call rate',text2='heterozygosity',text3='sex',
+        )
+
     return
 
 
-def tables(l_populations):
+def tables(l_populations,):
 
     print 'tables'
 
@@ -1873,17 +1933,17 @@ def tables(l_populations):
         'hwe':'',
         'hwe.X.females':'',
         }
-    cmd = 'cat ../pops/%s/%s.lmiss.SNPs ../pops/%s/%s.hwe.SNPs' %(
-        l_populations[0],l_populations[0],l_populations[0],l_populations[0],)
+    pop0 = l_populations[0]
+    cmd = 'cat ../pops/%s/%s.hwe.SNPs ../pops/%s/%s.lmiss.SNPs' %(
+        pop0,pop0,pop0,pop0,)
     cmd += ' | sort > SNPQC.SNPs.comm'
     execmd(cmd)
     cmd = 'cp SNPQC.SNPs.comm SNPQC.SNPs.union'
     execmd(cmd)
-    for population in l_populations:
-        pop = population
-        print 'table', population
-        s_sample += '%20s\t' %(population)
-        s_SNP += '%20s\t' %(population)
+    for pop in l_populations:
+        print 'table', pop
+        s_sample += '%20s\t' %(pop)
+        s_SNP += '%20s\t' %(pop)
 
         ##
         ## samples
@@ -1893,24 +1953,26 @@ def tables(l_populations):
         for i_suffix in xrange(len(l_suffixes_sample)):
             suffix = l_suffixes_sample[i_suffix]
             if i_suffix == 0 or suffix == 'sampleQC':
-                cmd = 'echo "" > %s.%s.samples.concatenated.sorted' %(population,suffix,)
+                cmd = 'echo "" > %s.%s.samples.concatenated.sorted' %(pop,suffix,)
             else:
                 cmd = 'cat'
                 for i_suffix2 in xrange(i_suffix):
                     suffix2 = l_suffixes_sample[i_suffix2]
                     cmd += ' ../pops/%s/%s.%s.samples' %(
-                        population,population,suffix2,)
-                cmd += ' | sort > %s.%s.samples.concatenated.sorted' %(population,suffix,)
+                        pop,pop,suffix2,)
+                cmd += ' | sort > %s.%s.samples.concatenated.sorted' %(pop,suffix,)
             execmd(cmd)
             cmd = 'cat ../pops/%s/%s.%s.samples' %(
-                population,population,suffix,)
-            cmd += ' | sort > %s.%s.samples.sorted' %(population,suffix,)
+                pop,pop,suffix,)
+            cmd += ' | sort > %s.%s.samples.sorted' %(pop,suffix,)
             execmd(cmd)
 ##            cmd = 'cat pops/%s/%s.%s.samples | wc -l' %(
 ##                population,population,suffix,)
             cmd = 'comm -23 %s.%s.samples.sorted %s.%s.samples.concatenated.sorted | wc -l' %(
-                population,suffix,population,suffix,)
+                pop,suffix,pop,suffix,)
             l += ['%s' %(os.popen(cmd).read().strip()),]
+            os.remove('%s.%s.samples.sorted' %(pop,suffix,))
+            os.remove('%s.%s.samples.concatenated.sorted' %(pop,suffix,))
         s_sample += '\t'.join(l)
         s_sample += '\n'
 
@@ -1918,14 +1980,16 @@ def tables(l_populations):
         ## SNPs
         ##
         l = []
-        cmd = 'cat ../pops/%s/%s.bim | wc -l' %(population,population,)
+        cmd = 'cat ../pops/%s/%s.bim | wc -l' %(pop,pop,)
+        execmd(cmd,bool_exe=False)
         l += ['%s' %(os.popen(cmd).read().strip()),]
         for suffix in [
 ##            'X.SNPs','autosomes.SNPs',
             'lmiss.SNPs','hwe.SNPs','SNPQC.bim',
             ]:
             cmd = 'cat ../pops/%s/%s.%s | wc -l' %(
-                population,population,suffix,)
+                pop,pop,suffix,)
+            execmd(cmd,bool_exe=False,)
             l += ['%s' %(os.popen(cmd).read().strip()),]
         s_SNP += '\t'.join(l)
         s_SNP += '\n'
@@ -1934,13 +1998,20 @@ def tables(l_populations):
         ## imiss/het
         ##
         for k in d_tables.keys():
-            cmd = 'cat ../pops/%s/%s.table | awk "NR>1"' %(pop,k,)
+            fn = '../pops/%s/%s.table' %(pop,k,)
+            if not os.path.isfile(fn):
+                print fn
+                stop
+            if k in ['het',]: ## no header
+                cmd = 'cat %s' %(fn)
+            else:
+                cmd = 'cat %s | awk "NR>1"' %(fn)
             d_tables[k] += os.popen(cmd).read()
 
         ##
         ## SNP intersection/union
         ##
-        cmd = 'cat ../pops/%s/%s.lmiss.SNPs ../pops/%s/%s.hwe.SNPs' %(
+        cmd = 'cat ../pops/%s/%s.hwe.SNPs ../pops/%s/%s.lmiss.SNPs' %(
             pop,pop,pop,pop,)
         cmd += ' | sort > SNPQC.SNPs'
         execmd(cmd)
@@ -1967,10 +2038,16 @@ def tables(l_populations):
     fd.write(s_SNP)
     fd.close()
 
-    print 'fgrep -f sexchecksamples ../pops/*/*.imiss.samples'
-    print 'fgrep -f sexchecksamples ../pops/*/*.het.samples'
-    print 'cat SNPQC.SNPs.comm | wc -l'
-    print 'cat SNPQC.SNPs.union | wc -l'
+    print 'fgrep -f agv.sexcheck.samples ../pops/*/*.imiss.samples'
+    print 'fgrep -f agv.sexcheck.samples ../pops/*/*.het.samples'
+
+    cmd = 'cat SNPQC.SNPs.comm | wc -l'
+    print cmd
+    print os.popen(cmd).read()
+    cmd = 'cat SNPQC.SNPs.union | wc -l'
+    print cmd
+    print os.popen(cmd).read()
+
     print 'wc -l ../pops/*/*.sampleQC.fam'
     print 'wc -l ../pops/*/*.SNPQC.fam'
 
@@ -2188,167 +2265,52 @@ def MDS_plot(population,QC,bool_excl_discordant,prefix,prefix_out,):
     return
 
 
-def init():
-
-    l_populations = [
-        'Ethiopia', ## 'Amhara', 'Somali', 'Oromo',
-        'Barundi', 'Wolof', ## name changed by tc9
-        'Fula', 'Igbo', 'Jola', 'Kalenjin', 'Kikuyu', 'Mandinka', 'Sotho', 
-        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
-        'Ga-Adangbe_quad','Ga-Adangbe_octo',
-        'Baganda_octo', 'Baganda_quad', 'Banyarwanda_octo', 'Banyarwanda_quad',
-        'Zulu_quad','Zulu_octo',
-##        'CHD','MKK', ## too few samples
-        ]
-    l_populations.sort()
-
-    l_populations = [
-        u'Muganda', u'KIKUYU', u'Mandinka', u'ZULU', u'KALENJIN', u'Fula', u'Murundi', u'Munyarwanda', u'Sotho', u'Wolloff', u'Jola', u'GA-ADANGBE',
-        u'IBO',
-        'Ethiopia', ## SOMALI,AMHARA,OROMO
-        ## 1000g
-        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
-    ##    'MKK', ## 31 samples
-    ##    'CHD', ## 1 sample
-        ]
-
-    d_populations = {
-        ## Uganda (East)
-        u'Muganda':'Baganda', u'Murundi':'Barundi', u'Munyarwanda':'Banyarwanda',
-        ## Kenya (East)
-        u'KALENJIN':'Kalenjin', u'KIKUYU':'Kikuyu',
-        ## South Africa (South)
-        u'ZULU':'Zulu', u'Sotho':'Sotho',
-        ## Nigeria (West)
-        u'IBO':'Igbo',
-        ## Ghana (West)
-        u'GA-ADANGBE':'Ga-Adangbe',
-        ## West
-        u'Mandinka':'Mandinka', u'Wolloff':'Wolof', u'Fula':'Fula', u'Jola':'Jola',
-        ## Ethiopia
-        'Ethiopia':'Ethiopia', ## SOMALI,AMHARA,OROMO
-        ## 1000g
-        'YRI': 'YRI', 'CHB': 'CHB', 'ASW': 'ASW', 'TSI': 'TSI', 'CDX': 'CDX', 'CLM': 'CLM', 'CEU': 'CEU', 'KHV': 'KHV', 'PEL': 'PEL', 'LWK': 'LWK', 'MXL': 'MXL', 'CHS': 'CHS', 'GBR': 'GBR', 'ACB': 'ACB', 'IBS': 'IBS', 'FIN': 'FIN', 'JPT': 'JPT', 'PUR': 'PUR', 'GIH': 'GIH',
-        }
-
-    d_pops2coords = {
-        ## http://en.wikipedia.org/wiki/Jola_people
-        ## http://en.wikipedia.org/wiki/Casamance
-        ## http://en.wikipedia.org/wiki/Ziguinchor
-        'Jola':[12.561944,-16.283889,],
-        ## http://en.wikipedia.org/wiki/Wolof_people
-        ## http://en.wikipedia.org/wiki/Senegal
-        ## http://en.wikipedia.org/wiki/Dakar
-        'Wolof':[14.692778,-17.446667,],
-        ## http://en.wikipedia.org/wiki/Baganda
-        ## http://en.wikipedia.org/wiki/Kampala
-        'Baganda':[0.313611,32.581111,],
-        ## http://en.wikipedia.org/wiki/Barundi
-        ## http://en.wikipedia.org/wiki/Burundi
-        'Barundi':[-3.5,30,],
-        ## http://en.wikipedia.org/wiki/Kalenjin_people
-        ## http://en.wikipedia.org/wiki/Rift_Valley_Province
-        ## http://en.wikipedia.org/wiki/Nakuru
-        'Kalenjin':[-0.3,36.066667,],
-        ## http://en.wikipedia.org/wiki/Kikuyu_people
-        ## http://en.wikipedia.org/wiki/Mount_Kenya
-        'Kikuyu':[-0.150833,37.3075,],
-        ## http://en.wikipedia.org/wiki/Zulu_people
-        ## http://en.wikipedia.org/wiki/KwaZulu-Natal
-        ## http://en.wikipedia.org/wiki/Pietermaritzburg
-        'Zulu':[-29.616667,30.383333,],
-        ## http://en.wikipedia.org/wiki/Sotho_people
-        ## http://en.wikipedia.org/wiki/Lesotho
-        ## http://en.wikipedia.org/wiki/Maseru
-        'Sotho':[-29.31,27.48,],
-        ## http://en.wikipedia.org/wiki/Igbo_people#Nigeria
-        ## http://en.wikipedia.org/wiki/Enugu
-        'Igbo':[6.452667,7.510333,],
-        ## http://en.wikipedia.org/wiki/Ga-Adangbe_people
-        ## http://en.wikipedia.org/wiki/Accra
-        'Ga-Adangbe':[5.55,-0.2,],
-        ## http://en.wikipedia.org/wiki/Mandinka_people
-        ## http://en.wikipedia.org/wiki/The_Gambia
-        'Mandinka':[13.466667,-16.6,],
-        ## http://en.wikipedia.org/wiki/Fula_people
-        ## http://en.wikipedia.org/wiki/Guinea
-        ## http://en.wikipedia.org/wiki/Fouta_Djallon
-        ## http://en.wikipedia.org/wiki/Lab%C3%A9
-        'Fula':[11.316667,-12.283333,],
-        ## Ethiopia
-        ## http://en.wikipedia.org/wiki/Somali_people
-        ## http://en.wikipedia.org/wiki/Amhara_people
-        ## http://en.wikipedia.org/wiki/Oromo_people
-        ## http://en.wikipedia.org/wiki/Oromia_Region
-        ## http://en.wikipedia.org/wiki/Addis_Ababa
-        'Ethiopia':[9.03,38.74,],
-        ## http://en.wikipedia.org/wiki/Luhya_people
-        ## http://en.wikipedia.org/wiki/Kitale (too far North according to Louise)
-        ## http://en.wikipedia.org/wiki/Western_Province_(Kenya)
-##        'LWK':[1.016667,35,],
-        'LWK':[0.5,34.583333,],
-        ## http://en.wikipedia.org/wiki/Yoruba_people#Demographics
-        ## http://en.wikipedia.org/wiki/Lagos_State,_Nigeria
-        ## http://en.wikipedia.org/wiki/Lagos
-        'YRI':[6.453056,3.395833,],
-        ## http://en.wikipedia.org/wiki/Banyarwanda
-        ## http://en.wikipedia.org/wiki/Umutara_Province
-        ## http://en.wikipedia.org/wiki/Nyagatare
-        'Banyarwanda':[-1.3,30.325,],
-        }
-
-    return l_populations, d_populations, d_pops2coords
-
-
-def init_MDS(d_populations):
+def init_MDS(l_populations_all):
 
     ##
     ## 0) define population sets
     ##
-    l_Africa_South = ['Sotho',]
+    l_Africa_South = ['Sotho','Zulu_quad','Zulu_octo',]
     l_Africa_West = [
         'Wolof','Mandinka','Jola','Fula',
+        'Ga-Adangbe_quad','Ga-Adangbe_octo',
         ## Central...
-        'YRI','Igbo',]
+        'YRI','Igbo',
+        ]
     l_Africa_East = [
         'Barundi','LWK','Kalenjin','Kikuyu',
         'Ethiopia', ## SOMALI,AMHARA,OROMO
-        ]
-    l_populations_all = d_populations.values()
-    ## append
-    l_populations_BBGZ = [
         'Baganda_quad','Baganda_octo',
         'Banyarwanda_quad','Banyarwanda_octo',
-        'Ga-Adangbe_quad','Ga-Adangbe_octo',
-        'Zulu_quad','Zulu_octo',
         ]
-    l_Africa_South += ['Zulu_quad','Zulu_octo',]
-    l_Africa_West += ['Ga-Adangbe_quad','Ga-Adangbe_octo',]
-    l_Africa_East += [
+
+    l_BBGZ = [
+        ## South
+        'Zulu_quad','Zulu_octo',
+        ## East
         'Baganda_quad','Baganda_octo',
-        'Banyarwanda_quad','Banyarwanda_octo',]
-    l_populations_Africa = l_Africa_South+l_Africa_East+l_Africa_West
-    l_populations_all += list(l_populations_BBGZ)
-    ## remove
-    l = ['Baganda','Zulu','Banyarwanda','Ga-Adangbe',]
-    for pop in l: l_populations_all.remove(pop)
-    l_populations_BBGZ1000G = list(
-        list(set(l_populations_all)-set(l_populations_Africa))+['YRI','LWK',]+list(l_populations_BBGZ)
-        )
-    l_Africa_exclEthiopia = list(l_populations_Africa)
+        'Banyarwanda_quad','Banyarwanda_octo',
+        ## West
+        'Ga-Adangbe_quad','Ga-Adangbe_octo',
+        ]
+        
+    l_Africa = l_Africa_South+l_Africa_East+l_Africa_West
+
+    l_Africa_exclEthiopia = list(l_Africa)
     l_Africa_exclEthiopia.remove('Ethiopia')
+
     l_Africa_East_exclEthiopia = list(l_Africa_East)
     l_Africa_East_exclEthiopia.remove('Ethiopia')
+
     l_Africa_exclEthiopiaZuluSotho = list(l_Africa_East+l_Africa_West)
     l_Africa_exclEthiopiaZuluSotho.remove('Ethiopia')
 
-    l_1000g = list(set(l_populations_all)-set(l_populations_Africa))+['YRI','LWK',]
+    l_1000g = list(set(l_populations_all)-set(l_Africa))+['YRI','LWK',]
 
     d_l_popset2bfiles = {
-        'Africa1000G':l_populations_all,
-        'Africa':l_populations_Africa,
-        'BBGZ':l_populations_BBGZ,
-##        'BBGZ1000G':l_populations_BBGZ,
+        'Africa1000G':list(l_populations_all),
+        'Africa':l_Africa,
+        'BBGZ':l_BBGZ,
 ##        'Africa_exclEthiopia':l_Africa_exclEthiopia,
 ##        'Africa_exclEthiopiaZuluSotho':l_Africa_exclEthiopiaZuluSotho,
 ##        'Africa_South':l_Africa_South,
@@ -2579,6 +2541,124 @@ def Africa_map_init():
 ##    s += '"volcanoes.txt" w labels lc rgb "#202020" pt 66 ps 3,'
 
     return s
+
+
+def init():
+
+    fn = 'ldregions.SNPs'
+    if not os.path.isfile(fn):
+        print 'not found', fn
+        sys.exit(0)
+
+    l_populations = [
+        'Ethiopia', ## 'Amhara', 'Somali', 'Oromo',
+        'Barundi', 'Wolof', ## name changed by tc9
+        'Fula', 'Igbo', 'Jola', 'Kalenjin', 'Kikuyu', 'Mandinka', 'Sotho', 
+        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
+        'Ga-Adangbe_quad','Ga-Adangbe_octo',
+        'Baganda_octo', 'Baganda_quad', 'Banyarwanda_octo', 'Banyarwanda_quad',
+        'Zulu_quad','Zulu_octo',
+##        'CHD', ## 1 sample
+##        'MKK', ## 31 samples
+        ]
+    l_populations.sort()
+
+##    l_populations = [
+##        u'Muganda', u'KIKUYU', u'Mandinka', u'ZULU', u'KALENJIN', u'Fula', u'Murundi', u'Munyarwanda', u'Sotho', u'Wolloff', u'Jola', u'GA-ADANGBE',
+##        u'IBO',
+##        'Ethiopia', ## SOMALI,AMHARA,OROMO
+##        ## 1000g
+##        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
+##    ##    'MKK', ## 31 samples
+##    ##    'CHD', ## 1 sample
+##        ]
+
+##    d_populations = {
+##        ## Uganda (East)
+##        u'Muganda':'Baganda', u'Murundi':'Barundi', u'Munyarwanda':'Banyarwanda',
+##        ## Kenya (East)
+##        u'KALENJIN':'Kalenjin', u'KIKUYU':'Kikuyu',
+##        ## South Africa (South)
+##        u'ZULU':'Zulu', u'Sotho':'Sotho',
+##        ## Nigeria (West)
+##        u'IBO':'Igbo',
+##        ## Ghana (West)
+##        u'GA-ADANGBE':'Ga-Adangbe',
+##        ## West
+##        u'Mandinka':'Mandinka', u'Wolloff':'Wolof', u'Fula':'Fula', u'Jola':'Jola',
+##        ## Ethiopia
+##        'Ethiopia':'Ethiopia', ## SOMALI,AMHARA,OROMO
+##        ## 1000g
+##        'YRI': 'YRI', 'CHB': 'CHB', 'ASW': 'ASW', 'TSI': 'TSI', 'CDX': 'CDX', 'CLM': 'CLM', 'CEU': 'CEU', 'KHV': 'KHV', 'PEL': 'PEL', 'LWK': 'LWK', 'MXL': 'MXL', 'CHS': 'CHS', 'GBR': 'GBR', 'ACB': 'ACB', 'IBS': 'IBS', 'FIN': 'FIN', 'JPT': 'JPT', 'PUR': 'PUR', 'GIH': 'GIH',
+##        }
+
+    d_pops2coords = {
+        ## http://en.wikipedia.org/wiki/Jola_people
+        ## http://en.wikipedia.org/wiki/Casamance
+        ## http://en.wikipedia.org/wiki/Ziguinchor
+        'Jola':[12.561944,-16.283889,],
+        ## http://en.wikipedia.org/wiki/Wolof_people
+        ## http://en.wikipedia.org/wiki/Senegal
+        ## http://en.wikipedia.org/wiki/Dakar
+        'Wolof':[14.692778,-17.446667,],
+        ## http://en.wikipedia.org/wiki/Baganda
+        ## http://en.wikipedia.org/wiki/Kampala
+        'Baganda':[0.313611,32.581111,],
+        ## http://en.wikipedia.org/wiki/Barundi
+        ## http://en.wikipedia.org/wiki/Burundi
+        'Barundi':[-3.5,30,],
+        ## http://en.wikipedia.org/wiki/Kalenjin_people
+        ## http://en.wikipedia.org/wiki/Rift_Valley_Province
+        ## http://en.wikipedia.org/wiki/Nakuru
+        'Kalenjin':[-0.3,36.066667,],
+        ## http://en.wikipedia.org/wiki/Kikuyu_people
+        ## http://en.wikipedia.org/wiki/Mount_Kenya
+        'Kikuyu':[-0.150833,37.3075,],
+        ## http://en.wikipedia.org/wiki/Zulu_people
+        ## http://en.wikipedia.org/wiki/KwaZulu-Natal
+        ## http://en.wikipedia.org/wiki/Pietermaritzburg
+        'Zulu':[-29.616667,30.383333,],
+        ## http://en.wikipedia.org/wiki/Sotho_people
+        ## http://en.wikipedia.org/wiki/Lesotho
+        ## http://en.wikipedia.org/wiki/Maseru
+        'Sotho':[-29.31,27.48,],
+        ## http://en.wikipedia.org/wiki/Igbo_people#Nigeria
+        ## http://en.wikipedia.org/wiki/Enugu
+        'Igbo':[6.452667,7.510333,],
+        ## http://en.wikipedia.org/wiki/Ga-Adangbe_people
+        ## http://en.wikipedia.org/wiki/Accra
+        'Ga-Adangbe':[5.55,-0.2,],
+        ## http://en.wikipedia.org/wiki/Mandinka_people
+        ## http://en.wikipedia.org/wiki/The_Gambia
+        'Mandinka':[13.466667,-16.6,],
+        ## http://en.wikipedia.org/wiki/Fula_people
+        ## http://en.wikipedia.org/wiki/Guinea
+        ## http://en.wikipedia.org/wiki/Fouta_Djallon
+        ## http://en.wikipedia.org/wiki/Lab%C3%A9
+        'Fula':[11.316667,-12.283333,],
+        ## Ethiopia
+        ## http://en.wikipedia.org/wiki/Somali_people
+        ## http://en.wikipedia.org/wiki/Amhara_people
+        ## http://en.wikipedia.org/wiki/Oromo_people
+        ## http://en.wikipedia.org/wiki/Oromia_Region
+        ## http://en.wikipedia.org/wiki/Addis_Ababa
+        'Ethiopia':[9.03,38.74,],
+        ## http://en.wikipedia.org/wiki/Luhya_people
+        ## http://en.wikipedia.org/wiki/Kitale (too far North according to Louise)
+        ## http://en.wikipedia.org/wiki/Western_Province_(Kenya)
+##        'LWK':[1.016667,35,],
+        'LWK':[0.5,34.583333,],
+        ## http://en.wikipedia.org/wiki/Yoruba_people#Demographics
+        ## http://en.wikipedia.org/wiki/Lagos_State,_Nigeria
+        ## http://en.wikipedia.org/wiki/Lagos
+        'YRI':[6.453056,3.395833,],
+        ## http://en.wikipedia.org/wiki/Banyarwanda
+        ## http://en.wikipedia.org/wiki/Umutara_Province
+        ## http://en.wikipedia.org/wiki/Nyagatare
+        'Banyarwanda':[-1.3,30.325,],
+        }
+
+    return l_populations, d_pops2coords
 
 
 if __name__ == '__main__':

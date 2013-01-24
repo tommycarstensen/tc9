@@ -175,10 +175,23 @@ def prep1000g(bfile,fp_1000g,):
 def strand_bim_nonintersection(bfile,strand,):
 
     ## parse strand rsIDs
-    cmd = "cat %s.sorted | awk '{print $1}' > %s.SNPs" %(strand,strand,)
+    cmd = 'cat %s.sorted' %(strand)
+    cmd += " | awk '{"
+####    cmd += 'sub(/X/,23,$2);sub(/Y/,24,$2);sub(/XY/,25,$2);sub(/MT/,26,$2);'
+####    cmd += 'print $1":"$2":"$3}'"
+    cmd += 'print $1'
+    cmd += "}'"
+####    cmd += ' | sort'
+    cmd += ' > %s.SNPs' %(strand,)
     execmd(cmd)
     ## parse bim rsIDs
-    cmd = "cat %s.bim.sorted | awk '{print $2}' > %s.bim.SNPs" %(bfile,bfile,)
+    cmd = 'cat %s.bim.sorted' %(bfile)
+    cmd += " | awk '{"
+####    cmd += 'print $2":"$1":"$4'
+    cmd += 'print $2'
+    cmd += "}'"
+####    cmd += ' | sort'
+    cmd += ' > %s.bim.SNPs' %(bfile)
     execmd(cmd)
     ## bim not strand
     cmd = 'comm -23 %s.bim.SNPs %s.SNPs > bim_not_strand.SNPs' %(bfile,strand,)
@@ -189,6 +202,7 @@ def strand_bim_nonintersection(bfile,strand,):
 
     os.remove('%s.SNPs' %(strand))
     os.remove('%s.bim.SNPs' %(bfile))
+
 
     return
 
