@@ -14,7 +14,6 @@ from scipy import stats
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
-## todo 2013-01-18: add option to do --options bfile.options
 ## todo 2013-01-23: get rid of any references to uganda_gwas and agv in final version
 
 class main:
@@ -1799,10 +1798,7 @@ it's ugly and I will not understand it 1 year form now.'''
 ##        cmd += 'if [ ! -s %s.SNPQC.bed ]; then\n' %(bfile)
         cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
-        if plink_cmd == 'indep-pairwise':
-            cmd += 'sleep 600;'
-        else:
-            cmd += 'sleep 300;'
+        cmd += 'sleep 300;'
         cmd += '/software/bin/python-2.7.3 %s/QC.py' %(
             os.path.dirname(sys.argv[0]),
             )
@@ -2415,16 +2411,12 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def check_file_in(self,fp_in,):
 
-        minutes = 5
-        if '.prune.in' in fp_in:
-            minutes = 10
-
         bool_check = True
         if not os.path.isfile(fp_in):
             bool_check = False
 ##        elif not os.path.getsize(fp_in) > 0:
 ##            bool_check = False
-        elif not time.time()-os.path.getmtime(fp_in) > minutes*60:
+        elif not time.time()-os.path.getmtime(fp_in) > 5*60:
             bool_check = False
 
         return bool_check
@@ -2978,7 +2970,7 @@ it's ugly and I will not understand it 1 year form now.'''
             ]
         cmd = '\n##\n## loop 2 (count lines)\n##\n'
         cmd += 'nlines=0\n'
-        cmd += 'for i in $(seq -f "%02g" 0 $(($cnt-1))); do\n'
+        cmd += 'for chrom in {1..22}; do\n\n'
         for fn in l_fn:
             cmd += 'if [ ! -s %s ]; then\n' %(fn)
             cmd += 'break\nfi\n\n'
@@ -2987,7 +2979,7 @@ it's ugly and I will not understand it 1 year form now.'''
         for fn in l_fn:
             cmd += ' %s' %(fn)
         cmd += ' | wc -l'
-        cmd += ')-2\n'
+        cmd += ')\n'
         cmd += '\ndone\n'
         l_cmds += [cmd]
 
@@ -3868,16 +3860,23 @@ maybe I should rename it.'''
             metavar='FILE',
             )
 
+        parser.add_option(
+            '-o', '--options',
+            dest='options',
+            help='Specify an options input file.',
+            metavar='FILE',
+            )
+
         parser.add_option("-v", '--verbose', action="store_true", dest="verbose", default=True)
         parser.add_option("-q", '--silent', '--quiet', action="store_false", dest="verbose")
 
         ## parse option arguments
         (opts, args) = parser.parse_args()
 
-        if opts.bfile is None:
-            parser.error('--bfile not specified')
-        if opts.project is None:
-            parser.error('--project not specified')
+        if opts.bfile is None and opts.options is None:
+            parser.error('--bfile or --options not specified')
+        if opts.project is None and opts.options is None:
+            parser.error('--project or --options not specified')
 
         return opts
 
@@ -3890,24 +3889,60 @@ maybe I should rename it.'''
 
         opts = self.parse_options()
 
-        self.bfile = opts.bfile
-        self.project = str(opts.project)
-        self.bool_verbose = self.verbose = bool(opts.verbose)
-        ## indep-pairwise
-        self.indepWindow = int(opts.indepWindow)
-        self.indepShift = int(opts.indepShift)
-        self.Rsquared = float(opts.indepRsquared)
-        ## het
-        self.threshold_het_stddev = int(opts.threshold_het_stddev)
-        ## freq
-        self.maf_min = float(opts.threshold_maf_min)
-        ## hwe
-        self.hwe_min = float(opts.threshold_hwe_min)
-        ## genome
-        self.pi_hat_max = float(opts.threshold_pi_hat_max)
-        ## missing
-        self.threshold_imiss = float(opts.threshold_imiss_min)
-        self.threshold_lmiss = float(opts.threshold_lmiss_min)
+        if opts.options:
+            if not os.path.isfile(opts.options):
+                print 'does not exist:', opts.options
+                sys.exit(0)
+            fd = open(opts.options,'r')
+            lines = fd.readlines()
+            fd.close()
+            d = {}
+            for line in lines:
+                l = line.strip().split()
+                k = l[0]
+                v = l[1]
+                d[k] = v
+                continue
+            self.bfile = d['bfile']
+            self.project = d['project']
+            if d['verbose'] in ['1','True','yes','y',]:
+                self.bool_verbose = True
+            elif d['verbose'] in ['0','False','no','n',]:
+                self.bool_verbose = False
+            ## indep-pairwise
+            self.indepWindow = int(d['indepWindow'])
+            self.indepShift = int(d['indepShift'])
+            self.Rsquared = float(d['indepRsquared'])
+            ## het
+            self.threshold_het_stddev = int(d['threshold_het_stddev'])
+            ## freq
+            self.maf_min = float(d['threshold_maf_min'])
+            ## hwe
+            self.hwe_min = float(d['threshold_hwe_min'])
+            ## genome
+            self.pi_hat_max = float(d['threshold_pi_hat_max'])
+            ## missing
+            self.threshold_imiss = float(d['threshold_imiss_min'])
+            self.threshold_lmiss = float(d['threshold_lmiss_min'])
+        else:
+            self.bfile = opts.bfile
+            self.project = str(opts.project)
+            self.bool_verbose = self.verbose = bool(opts.verbose)
+            ## indep-pairwise
+            self.indepWindow = int(opts.indepWindow)
+            self.indepShift = int(opts.indepShift)
+            self.Rsquared = float(opts.indepRsquared)
+            ## het
+            self.threshold_het_stddev = int(opts.threshold_het_stddev)
+            ## freq
+            self.maf_min = float(opts.threshold_maf_min)
+            ## hwe
+            self.hwe_min = float(opts.threshold_hwe_min)
+            ## genome
+            self.pi_hat_max = float(opts.threshold_pi_hat_max)
+            ## missing
+            self.threshold_imiss = float(opts.threshold_imiss_min)
+            self.threshold_lmiss = float(opts.threshold_lmiss_min)
 
         ##
         ## other options
