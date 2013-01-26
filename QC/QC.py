@@ -15,7 +15,6 @@ sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
 ## todo 2013-01-18: add option to do --options bfile.options
-## todo 2013-01-23: add option to run --indep-pairwise in parallel per chromosome with --chr option (remember check every 10 mins)
 ## todo 2013-01-23: get rid of any references to uganda_gwas and agv in final version
 
 class main:
@@ -378,7 +377,7 @@ class main:
         
         if os.path.isfile(fn_table): return
 
-        cmd = '''awk 'NR>1{print $5}' %s.sampleQC.frq''' %(bfile,)
+        cmd = "awk 'NR>1{print $5}' %s.sampleQC.frq" %(bfile,)
         if self.verbose == True:
             print cmd
         l_frq = [float(s) for s in os.popen(cmd).readlines()]
@@ -389,15 +388,8 @@ class main:
         s = '%s' %(bfile)
         for score in l_scores:
             score /= 100
-            try:
-                n = int(len(l_frq)*stats.percentileofscore(l_frq, score, 'weak',))/100
-            except:
-                print score
-                for frq in l_frq:
-                    if type(frq) == str:
-                        print frq
-                n = int(len(l_frq)*stats.percentileofscore(l_frq, score, 'weak',))/100
-                sys.exit(0)
+            ## N.B. "kind" works with Python 2.7.3 but not Python 2.5.2
+            n = int(len(l_frq)*stats.percentileofscore(l_frq, score, kind='weak',))/100
             if self.verbose == True:
                 print score, n
             s += '\t%i' %(n)
@@ -981,6 +973,7 @@ class main:
 
     def scatter_mds_excl_1000g(self,bfile,):
 
+##        mds_prefix = '%s.posthardy' %(bfile)
         mds_prefix = '%s.prehardy' %(bfile)
         fn = '%s.mds' %(mds_prefix)
         if os.path.isfile('%s.pc1.pc2.mds.png' %(fn)):
@@ -1735,10 +1728,10 @@ it's ugly and I will not understand it 1 year form now.'''
 
             if (
                 self.bool_run_all == True
-                and
-                ## only rerun after completing a step in the "genome loop"
-                ## not simply after exiting the "genome loop"
-                plink_cmd != 'genome'
+##                and
+##                ## only rerun after completing a step in the "genome loop"
+##                ## not simply after exiting the "genome loop"
+##                plink_cmd not in ['genome','indep-pairwise',]
                 ):
                 cmd += self.cmd_rerun(bfile,plink_cmd,)
 
@@ -1843,9 +1836,11 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if '--out' in plink_cmd_full:
             l = plink_cmd_full.split()
-            if plink_cmd == 'genome':
+            if plink_cmd in ['genome','indep-pairwise',]:
                 s = l[l.index('--out')+1]
-                out_prefix = s[s.index('/')+1:-6]
+                if plink_cmd == 'genome': i2 = -len('.$i.$j')
+                elif plink_cmd == 'indep-pairwise': i2 = -len('.$chrom')
+                out_prefix = s[s.index('/')+1:i2]
             else:
                 out_prefix = l[l.index('--out')+1]
         elif '--bfile' in plink_cmd_full:
@@ -1878,6 +1873,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## and worst case scenario output being corrupted
         if bool_file_out == False:
             fn_log = '%s.log' %(out_prefix)
+
             if os.path.isfile(fn_log):
                 if time.time()-os.path.getmtime(fn_log) < 5*60:
                     bool_file_out = True
@@ -1893,19 +1889,28 @@ it's ugly and I will not understand it 1 year form now.'''
                     lines = fd.readlines()
                     fd.close()
 
-                    if 'Analysis finished: ' not in lines[-2]:
+                    if len(lines) == 0:
                         bool_file_out = True
                         fn_out = fn_log
                         pass
+                    elif 'Analysis finished: ' not in lines[-2]:
+                        bool_file_out = True
+                        fn_out = fn_log
+                        pass
+
                     pass
+
                 pass
+
             ##
             ## create the output so another process doesn't think it's not created
             ##
             else:
+
                 fd = open(fn_log,'w')
                 fd.close()
                 pass
+
             pass
                 
         if bool_file_out == True:
@@ -2021,11 +2026,17 @@ it's ugly and I will not understand it 1 year form now.'''
         if plink_cmd not in ['hardy']:
             cmd += '--nonfounders \\\n'
 
-        if plink_cmd == 'genome':
+        if plink_cmd in ['genome','indep-pairwise',]:
             ## backslash causes trouble when using bash -c 'command \ --option'
             cmd = cmd.replace('\\\n','')
+            ## genome
             cmd = cmd.replace('$i','$0')
             cmd = cmd.replace('$j','$1')
+            ## indep-pairwise
+            cmd = cmd.replace('$chrom','$0')
+        elif '$' in cmd:
+            print cmd
+            stop
 
         return cmd
 
@@ -2196,11 +2207,11 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
         s = s_indep_pairwise
         s += '--read-freq %s.sampleQC.frq \\\n' %(bfile)
-        s += '--out %s.prehardy \\\n' %(bfile,) ## non-parallel
-##        s += '--out prune/%s.prehardy.$0 \\\n' %(bfile,) ## parallel
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
         s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
-##        s += '--chr $0 \\\n' %(bfile) ## parallel
+##        s += '--out %s.prehardy \\\n' %(bfile,) ## non-parallel
+        s += '--out prune/%s.prehardy.$chrom \\\n' %(bfile,) ## parallel
+        s += '--chr $chrom \\\n' ## parallel
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
@@ -2226,36 +2237,36 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--remove %s.genome.prehardy.EIGENSOFT.samples \\\n' %(bfile,)
         l_plink_cmds += [s]
 
-        ##
-        ## 5) SNP QC, post Hardy, MDS plot without 1000G
-        ##
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
-        s = '--freq \\\n'
-        s += '--out %s.SNPQC \\\n' %(bfile,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
-        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
-        l_plink_cmds += [s]
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
-        s = s_indep_pairwise
-        s += '--read-freq %s.SNPQC.frq \\\n' %(bfile,)
-        s += '--out %s.posthardy \\\n' %(bfile,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
-        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
-        l_plink_cmds += [s]
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
-        s = self.write_genome_cmd(bfile, 'posthardy', 'SNPQC', bfile,)
-        l_plink_cmds += [s]
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
-        s = s_cluster+'--read-genome %s.posthardy.genome \\\n' %(bfile,)
-        s += '--bfile %s \\\n' %(bfile,)
-        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
-        s += '--extract %s.posthardy.prune.in \\\n' %(bfile,)
-        s += '--out %s.posthardy \\\n' %(bfile,)
-        l_plink_cmds += [s]
+##        ##
+##        ## 5) SNP QC, post Hardy, MDS plot without 1000G
+##        ##
+##
+##        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
+##        s = '--freq \\\n'
+##        s += '--out %s.SNPQC \\\n' %(bfile,)
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+##        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
+##        l_plink_cmds += [s]
+##
+##        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
+##        s = s_indep_pairwise
+##        s += '--read-freq %s.SNPQC.frq \\\n' %(bfile,)
+##        s += '--out %s.posthardy \\\n' %(bfile,)
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+##        s += '--exclude %s.SNPQC.exclLRLD.SNPs \\\n' %(bfile,)
+##        l_plink_cmds += [s]
+##
+##        ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#genome
+##        s = self.write_genome_cmd(bfile, 'posthardy', 'SNPQC', bfile,)
+##        l_plink_cmds += [s]
+##
+##        ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
+##        s = s_cluster+'--read-genome %s.posthardy.genome \\\n' %(bfile,)
+##        s += '--bfile %s \\\n' %(bfile,)
+##        s += '--remove %s.SNPQC.samples \\\n' %(bfile,)
+##        s += '--extract %s.posthardy.prune.in \\\n' %(bfile,)
+##        s += '--out %s.posthardy \\\n' %(bfile,)
+##        l_plink_cmds += [s]
 
         ##
         ## 7) post SNP QC, make-bed
@@ -2295,7 +2306,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--out %s.X.females \\\n' %(bfile,)
         s += '--remove %s.genome.prehardy.EIGENSOFT.samples \\\n' %(bfile,)
         s += '--extract %s.X.SNPs \\\n' %(bfile)
-        s += '--exclude %s.X.females.lmiss.SNPs \\\n' %(bfile,)
+        s += '--exclude %s.X.females.lmiss.SNPs \\\n' %(bfile,) ## CHANGE!!!xxx
         s += '--filter-females \\\n'
         l_plink_cmds += [s]
 
@@ -2437,8 +2448,8 @@ it's ugly and I will not understand it 1 year form now.'''
         elif plink_cmd == 'genome':
             l_cmds = self.genome_before(bfile,in_prefix,out_prefix,)
 
-##        elif plink_cmd == 'indep-pairwise': ## parallel
-##            l_cmds = self.indep_pairwise_before(bfile,in_prefix,out_prefix,)
+        elif plink_cmd == 'indep-pairwise': ## parallel
+            l_cmds = self.indep_pairwise_before(bfile,out_prefix,)
 
 ##        elif plink_cmd == 'hardy':
 ##            l_cmds = self.hardy_before(bfile,out_prefix,)
@@ -2470,8 +2481,8 @@ it's ugly and I will not understand it 1 year form now.'''
         elif plink_cmd == 'genome':
             l_cmds = self.genome_after(bfile,in_prefix,out_prefix,)
 
-##        elif plink_cmd == 'indep-pairwise': ## parallel
-##            l_cmds = self.indep_pairwise_after(bfile,in_prefix,out_prefix,)
+        elif plink_cmd == 'indep-pairwise': ## parallel
+            l_cmds = self.indep_pairwise_after(bfile,out_prefix,)
 
         elif plink_cmd == 'hardy':
             l_cmds = self.hardy_after(bfile,out_prefix,)
@@ -2536,6 +2547,12 @@ it's ugly and I will not understand it 1 year form now.'''
 ########                bfile,self.fn1000g,bfile,)
 
             ##
+            ## EIGENSOFT after HWE
+            ##
+            cmd_EIGENSOFT = self.EIGENSOFT(bfile,bool_removal=False,)
+            cmd += '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
+
+            ##
             ## fi
             ##
             cmd += '\nfi\n'
@@ -2564,7 +2581,7 @@ it's ugly and I will not understand it 1 year form now.'''
         return l_cmds
 
 
-    def EIGENSOFT(self,bfile,):
+    def EIGENSOFT(self,bfile,bool_removal=True,):
 
         ## http://computing.bio.cam.ac.uk/local/doc/eigenstrat.txt
         ## http://helix.nih.gov/Applications/README.eigenstrat
@@ -2611,7 +2628,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 print cmd
                 stop
 
-            self.write_EIGENSOFT_parameter_file(bfile)
+            self.write_EIGENSOFT_parameter_file(bfile,bool_removal,)
 
             ##
             ## command to be appended to shell script
@@ -2694,20 +2711,24 @@ it's ugly and I will not understand it 1 year form now.'''
             ##
             ## parse outliers
             ##
-            ## print EIGENSOFT sample names to file
-            cmd += 'cat %s.EIGENSOFT.outlier' %(bfile)
-            cmd += " | awk '{print $3}'"
-            cmd += ''' | awk 'BEGIN{FS=":"}{print $2}' '''
-            cmd += ' > %s.outlier.EIGENSOFTsamples' %(bfile)
-            ## convert EIGENSOFT sample names to original sample names
-            cmd += ' ; fgrep -w -f %s.outlier.EIGENSOFTsamples %s.recoded.txt' %(bfile,bfile)
-            cmd += " | awk '{print $1,$2}'"
-            cmd += ' > %s.EIGENSOFT.samples' %(bfile)
+            if bool_outlier == True:
+                ## print EIGENSOFT sample names to file
+                cmd += 'cat %s.EIGENSOFT.outlier' %(bfile)
+                cmd += " | awk '{print $3}'"
+                cmd += ''' | awk 'BEGIN{FS=":"}{print $2}' '''
+                cmd += ' > %s.outlier.EIGENSOFTsamples' %(bfile)
+                ## convert EIGENSOFT sample names to original sample names
+                cmd += ' ; fgrep -w -f %s.outlier.EIGENSOFTsamples %s.recoded.txt' %(bfile,bfile)
+                cmd += " | awk '{print $1,$2}'"
+                cmd += ' > %s.EIGENSOFT.samples' %(bfile)
 
-            cmd += '\n\n'
+                cmd += '\n\n'
+
+                ## clean-up
+                cmd += 'rm %s.outlier.EIGENSOFTsamples\n\n' %(bfile)
 
             ## clean-up
-            cmd += 'rm %s.outlier.EIGENSOFTsamples %s.recoded.txt\n\n' %(bfile,bfile)
+            cmd += 'rm %s.recoded.txt\n\n' %(bfile)
             
         else:
 
@@ -2740,7 +2761,7 @@ it's ugly and I will not understand it 1 year form now.'''
 ##        return l_cmds
 
 
-    def write_EIGENSOFT_parameter_file(self,bfile):
+    def write_EIGENSOFT_parameter_file(self,bfile,bool_removal,):
 
         ## http://helix.nih.gov/Applications/README.popgen
         ## http://computing.bio.cam.ac.uk/local/doc/popgen.txt
@@ -2758,7 +2779,8 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         ## numoutlieriter: maximum number of outlier removal iterations.
         ## Default is 5.  To turn off outlier removal, set this parameter to 0.
-##        par += 'numoutlieriter: 5\n'
+        if bool_removal == False:
+            par += 'numoutlieriter: 0\n'
         ##
         ## outliersigmathresh: number of standard deviations which an individual must 
         ## exceed, along one of the top (numoutlierevec) principal components, in
@@ -2812,9 +2834,10 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = '\n##\n## loop 1 (plink execution)\n##\n'
         cmd += 'for chrom in {1..22}\ndo\n'
         cmd += '## continue if output exists\n'
-        cmd += 'if [ -s prune/%s.$chrom.prune.in ]\nthen continue\nfi\n\n' %(
-            out_prefix,
-            )
+        cmd += 'if ['
+        cmd += ' -f prune/%s.$chrom.prune.in -o' %(out_prefix)
+        cmd += ' -f prune/%s.$chrom.log' %(out_prefix)
+        cmd += ' ]\nthen continue\nfi\n\n'
         ## initiate command
         cmd += "cmd='\n"
         l_cmds += [cmd]
@@ -2935,7 +2958,9 @@ it's ugly and I will not understand it 1 year form now.'''
         ## terminate command
         cmd += "\n'\n\n"
         ## evaluate command
-        cmd_LSF = self.append_LSF(bfile,'genome',JOBID='%s.indep-pairwise.${chrom}' %(out_prefix),)
+        cmd_LSF = self.append_LSF(
+            bfile,'indep-pairwise',JOBID='%s.indep-pairwise.${chrom}' %(out_prefix),
+            )
 ##        cmd += 'echo $cmd\n'
         cmd += '''cmd="%sbash -c '$cmd' $chrom"\n''' %(cmd_LSF)
         cmd += 'echo $cmd\n'
@@ -2946,16 +2971,17 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += 'if [ -f %s.prune.in ];then\nexit\nfi\n' %(out_prefix)
         l_cmds += [cmd]
 
-        ## count lines
+        ## count observed lines
         l_fn = [
             'prune/%s.$chrom.prune.in' %(out_prefix),
             'prune/%s.$chrom.prune.out' %(out_prefix),
             ]
         cmd = '\n##\n## loop 2 (count lines)\n##\n'
         cmd += 'nlines=0\n'
-        cmd += 'for i in $(seq -f "%02g" 0 $(($cnt-1)))\ndo\n'
-        cmd += 'if [ ! -s %s ]\nthen\n' %(fn)
-        cmd += 'break\nfi\n\n'
+        cmd += 'for i in $(seq -f "%02g" 0 $(($cnt-1))); do\n'
+        for fn in l_fn:
+            cmd += 'if [ ! -s %s ]; then\n' %(fn)
+            cmd += 'break\nfi\n\n'
         cmd += 'let nlines=$nlines+$('
         cmd += 'cat'
         for fn in l_fn:
@@ -2965,40 +2991,35 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += '\ndone\n'
         l_cmds += [cmd]
 
-        ## expected lines
+        ## calculate expected lines
         cmd = 'n=$('
         cmd += 'cat %s.sampleQC.frq' %(bfile)
-        cmd += " | awk '{if($1==22&&$5>0.05) print}'"
+        cmd += " | awk 'NR>1{if($5>=0.05) print}'"
         cmd += ' | wc -l'
         cmd += ')'
+        l_cmds += [cmd]
 
         ##
         ## concatenanate lines if they are all present
         ## and do some additional stuff if they are...
         ##
         cmd = '##\n## concatenate lines if they are all present\n##\n'
-        cmd += 'echo actual $nlines expected $(($n*($n-1)/2))\n'
-        cmd += 'if [ $nlines -ne $(($n*($n-1)/2)) ];then\nexit\nfi\n'
+        cmd += 'echo actual $nlines expected $n\n'
+        cmd += 'if [ $nlines -ne $n ];then\nexit\nfi\n'
         ## exit after count if file out exists
-        cmd += 'if [ -f %s.genome ];then\nexit\nfi\n' %(out_prefix)
+        cmd += 'if [ -f %s.prune.in ];then\nexit\nfi\n' %(out_prefix)
         l_cmds += [cmd]
-        yyy
 
-        ## initiate .prune.in file with header
-        header = 'xxx'
-        xxx
         cmd = '\n##\n## loop 3 (concatenate files)\n##\n'
-        cmd += 'echo "%s" > %s.prune.in\n' %(header,out_prefix,)
-        ## loop .genome files
+        ## loop .prune.in files
         cmd += 'for chrom in {1..22}\ndo\n'
         ## append to .genome file
-        cmd += "cat prune/%s.$chrom.prune.in | awk 'NR>1' >> %s.prune.in\n" %(
+        cmd += "cat prune/%s.$chrom.prune.in >> %s.prune.in\n" %(
             out_prefix,out_prefix,
             )
         cmd += '\ndone\n\n'
 
         if self.bool_run_all == True:
-            xxx
             cmd += self.cmd_rerun(bfile,'indep-pairwise',)
 
         l_cmds += [cmd]
@@ -3247,6 +3268,9 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += 'rm %s.X.%s.imiss\n' %(bfile,sex,)
             cmd += 'fi\n'
             l_cmds += [cmd]
+
+##        cmd = 'if [ -s %s.X.males.lmiss.SNPs -a -s %s.X.females.lmiss.SNPs ]\n' %(
+##            bfile,bfile,) ## CHANGE!!!xxx
 
         return l_cmds
 
