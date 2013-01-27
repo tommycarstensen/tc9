@@ -25,9 +25,9 @@ def main():
         '../preQC/omni2.5-8_agv_20120910_gtu_exclconsent_commonID_flipped_commonpos',
         ]
 
-    if False:
-        tables(l_populations)
+    if True:
         plots(l_populations)
+        tables(l_populations)
         sys.exit(0)
 
     ## 15) analyze discordance
@@ -1834,6 +1834,14 @@ def plots(l_populations):
 
     print 'plots'
 
+    ##
+    ## heterozygosities
+    ##
+    plot_heterozygosities(l_populations)
+
+    ##
+    ##
+    ##
     execmd('cp ../pops/%s/%s.autosomes.SNPs agv.autosomes.SNPs' %(
         l_populations[0],l_populations[0],))
 
@@ -1865,6 +1873,9 @@ def plots(l_populations):
         fd = open('agv.%s' %(suffix),'w')
         fd.close()
 
+        ##
+        ## add header if one exists
+        ##
         if not suffix in ['fam',] and not '.samples' in suffix:
 ##            cmd = 'head -1 %s.%s > agv.%s' %(l_populations[0],suffix,suffix,)
             if suffix in ['imiss','het','sexcheck',]:
@@ -1906,6 +1917,9 @@ def plots(l_populations):
 ##    instanceQC.histogram_frq('agv')
 ##    instanceQC.histogram_hwe('agv')
 
+    ##
+    ## Venn diagram of excluded samples
+    ##
     l_het = os.popen('cat agv.het.samples').read().split()
     l_imiss = os.popen('cat agv.imiss.samples').read().split()
     l_sexcheck = os.popen('cat agv.sexcheck.samples').read().split()
@@ -1913,6 +1927,105 @@ def plots(l_populations):
         l1=l_imiss,l2=l_het,l3=l_sexcheck,
         suffix='agv',
         text1='call rate',text2='heterozygosity',text3='sex',
+        )
+
+    return
+
+
+def plot_heterozygosities(l_populations):
+
+    
+##    saturation = 240
+##    luminance = 120
+##    l = [
+##        '%s %i %i %i %i\n' %(
+##            l_populations[i],i,
+##            int( (240.*i)/(len(l_populations)-1) ), saturation, luminance,
+##            )
+##        for i in xrange(len(l_populations))
+##        ]
+
+    ##
+    ## assign number (z) to each population (key) and sort populations alphabetically
+    ##
+    fd = open('populations.sorted','w')
+    fd.writelines(
+        ['%s %i\n' %(l_populations[i],i) for i in xrange(len(l_populations))])
+    fd.close()
+    cmd = 'sort -k1,1 populations.sorted -o populations.sorted'
+    execmd(cmd)
+
+    ##
+    ## assign population (key) and heterozygosity (y) to each sample
+    ##
+    cmd = "awk '"
+    cmd += ' FNR>1{'
+    cmd += ' split(FILENAME,a,"/"); pop=a[3]; het=$5; IID=$2; print pop,het,IID'
+    cmd += " }'"
+    cmd += ' ../pops/*/*.het'
+    ## sort by sample ID
+    cmd += ' | sort -k3,3'
+    ## sort 
+    cmd += ' > agv.het.sorted'
+    execmd(cmd)
+
+    ##
+    ## exclude low sample call rates and heterozygosity outliers
+    ## before assigning numbers
+    ## outer join
+    ##
+    cmd = 'cat agv.imiss.samples agv.het.samples | sort -u > agv.imiss.het.samples'
+    execmd(cmd)
+    cmd = 'join -1 3 -2 2 -v1 agv.het.sorted agv.imiss.het.samples'
+    ## sort by population for inner join
+    cmd += ' | sort -k2,2'
+    cmd += ' > agv.het.joined1'
+    execmd(cmd)
+
+    ##
+    ## assign population number (z) and heterozygosity (y) to each sample
+    ## and add number (x) to each sample
+    ## inner join
+    ##
+    cmd = 'join -1 2 -2 1 agv.het.joined1 populations.sorted'
+    ## sort by pop ID and sample ID for NR=x
+    cmd += ' | sort -k4n,4 -k2,2'
+    cmd += " | awk '"
+    cmd += ' {print NR,$0}'
+    cmd += " '"
+    cmd += " | sed 's/ /\\t/g' "
+    cmd += ' > agv.het.joined2'
+    execmd(cmd)
+
+    cmd = 'cat agv.het.joined2'
+    cmd += " | awk '"
+    cmd += ' BEGIN{i1=1}'
+    cmd += ' {if(NR==1) pop=$2}'
+    cmd += ' {if($2!=pop) {i2=NR-1; print "\\""pop"\\"",0.5* ( i1+i2 ) ; i1=NR ; pop=$2}}'
+    cmd += ' END{i2=NR; print "\\""pop"\\"",0.5* ( i1+i2 )}'
+    cmd += "'"
+    s_xtics = ', '.join(os.popen(cmd).read().split('\n'))[:-2].replace('_',' ')
+   
+
+    lines = []
+    ## http://www.gnuplotting.org/using-a-palette-as-line-color/
+    lines += ['h1 = 0/360.\n']
+    lines += ['h2 = 320/360.\n']
+    lines += ['set palette model HSV functions (1-gray)*(h2-h1)+h1,1,0.5\n']
+    lines += ['set boxwidth 1.0 relative\n']
+    lines += ['set style fill solid 1.0\n']
+##    lines += ['unset xtics\n']
+    ## hide cbrange
+    lines += ['unset colorbox\n']
+    lines += ['set xtics (%s)\n' %(s_xtics)] ## or xtic(col) http://stackoverflow.com/questions/4805930/making-x-axis-tics-from-column-in-data-file-in-gnuplot
+    lines += ['set xtics rotate by -45 left autojustify\n']
+    lines += ['set bmargin 8\n']
+    ## http://gnuplot.sourceforge.net/demo_cvs/varcolor.html
+    ## "2D plots cannot color by Z value" unless lc pal z instead of lc pal
+    lines += ['plot "agv.het.joined2" u 1:4:5 w boxes lc pal z notitle\n']
+    gnuplot.plot_and_convert(
+        lines,'het_impulses',bool_remove=False,
+        ylabel='heterozygosity',
         )
 
     return
@@ -2551,46 +2664,29 @@ def init():
         sys.exit(0)
 
     l_populations = [
+        ## Africa West
+        'Wolof','Mandinka','Jola','Fula',
+        ## Africa Central/West
+        'Ga-Adangbe_quad','Ga-Adangbe_octo','YRI','Igbo',
+        ## Africa East
+        'Barundi', 'Banyarwanda_quad', 'Banyarwanda_octo',
+        'Baganda_quad', 'Baganda_octo', 'LWK', 'Kalenjin', 'Kikuyu',
         'Ethiopia', ## 'Amhara', 'Somali', 'Oromo',
-        'Barundi', 'Wolof', ## name changed by tc9
-        'Fula', 'Igbo', 'Jola', 'Kalenjin', 'Kikuyu', 'Mandinka', 'Sotho', 
-        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
-        'Ga-Adangbe_quad','Ga-Adangbe_octo',
-        'Baganda_octo', 'Baganda_quad', 'Banyarwanda_octo', 'Banyarwanda_quad',
-        'Zulu_quad','Zulu_octo',
+        ## Africa South
+        'Sotho','Zulu_quad','Zulu_octo',
+        ## Out of Africa
+        'ASW','ACB',
+        ## Europe
+        'IBS','TSI','CEU','GBR','FIN',
+        ## Asia
+        'CDX','CHB','CHS','KHV','JPT',
+        ## North America
+        'GIH',
+        ## South America
+        'PEL','MXL','CLM','PUR',
 ##        'CHD', ## 1 sample
 ##        'MKK', ## 31 samples
         ]
-    l_populations.sort()
-
-##    l_populations = [
-##        u'Muganda', u'KIKUYU', u'Mandinka', u'ZULU', u'KALENJIN', u'Fula', u'Murundi', u'Munyarwanda', u'Sotho', u'Wolloff', u'Jola', u'GA-ADANGBE',
-##        u'IBO',
-##        'Ethiopia', ## SOMALI,AMHARA,OROMO
-##        ## 1000g
-##        'YRI','TSI','PUR','PEL','MXL','LWK','KHV','JPT','IBS','GIH','GBR','FIN','CLM','CHS','CHB','CEU','CDX','ASW','ACB',
-##    ##    'MKK', ## 31 samples
-##    ##    'CHD', ## 1 sample
-##        ]
-
-##    d_populations = {
-##        ## Uganda (East)
-##        u'Muganda':'Baganda', u'Murundi':'Barundi', u'Munyarwanda':'Banyarwanda',
-##        ## Kenya (East)
-##        u'KALENJIN':'Kalenjin', u'KIKUYU':'Kikuyu',
-##        ## South Africa (South)
-##        u'ZULU':'Zulu', u'Sotho':'Sotho',
-##        ## Nigeria (West)
-##        u'IBO':'Igbo',
-##        ## Ghana (West)
-##        u'GA-ADANGBE':'Ga-Adangbe',
-##        ## West
-##        u'Mandinka':'Mandinka', u'Wolloff':'Wolof', u'Fula':'Fula', u'Jola':'Jola',
-##        ## Ethiopia
-##        'Ethiopia':'Ethiopia', ## SOMALI,AMHARA,OROMO
-##        ## 1000g
-##        'YRI': 'YRI', 'CHB': 'CHB', 'ASW': 'ASW', 'TSI': 'TSI', 'CDX': 'CDX', 'CLM': 'CLM', 'CEU': 'CEU', 'KHV': 'KHV', 'PEL': 'PEL', 'LWK': 'LWK', 'MXL': 'MXL', 'CHS': 'CHS', 'GBR': 'GBR', 'ACB': 'ACB', 'IBS': 'IBS', 'FIN': 'FIN', 'JPT': 'JPT', 'PUR': 'PUR', 'GIH': 'GIH',
-##        }
 
     d_pops2coords = {
         ## http://en.wikipedia.org/wiki/Jola_people
