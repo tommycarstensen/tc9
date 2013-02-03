@@ -8,6 +8,8 @@
 
 ## built-ins
 import math, os, sys
+## New in version 2.7
+import argparse
 
 class main():
 
@@ -105,13 +107,13 @@ class main():
         ##
         ## Input file options
         ## http://mathgen.stats.ox.ac.uk/impute/ALL_1000G_phase1integrated_v3_impute.tgz
-        s_haps = self.hap
-        s_legend = self.legend
+        s_haps = self.fp_impute2_hap
+        s_legend = self.fp_impute2_legend
 
         lines += ['if [ $CHROMOSOME=="X" ]\nthen']
-        lines += ['map=%s' %(self.map.replace('$CHROMOSOME','$CHROMOSOME_PAR1',),)]
+        lines += ['map=%s' %(self.fp_impute2_map.replace('$CHROMOSOME','$CHROMOSOME_PAR1',),)]
         lines += ['else']
-        lines += ['map=%s' %(self.map)]
+        lines += ['map=%s' %(self.fp_impute2_map)]
         lines += ['fi']
         
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-g
@@ -212,8 +214,8 @@ class main():
 
         cmd += 'if [ ! -s out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl.00\nthen\n'
         
-##        s += 'java -Xmx4000m -jar /nfs/team149/Software/usr/share/beagle_3.3.2.jar '
-        cmd += 'java -Xmx16000m Djava.io.tmpdir=out_BEAGLE -jar /nfs/team149/Software/usr/share/beagle_3.3.2.jar '
+##        s += 'java -Xmx4000m -jar %s ' %(self.fp_software_beagle)
+        cmd += 'java -Xmx16000m Djava.io.tmpdir=out_BEAGLE -jar %s ' %(self.fp_software_beagle)
 
 ##like=<unphased likelihood data file> where <unphased likelihood data file> is the name of 
 ##a genotype likelihoods file for unphased, unrelated data (see Section 2.2).   You may use 
@@ -365,7 +367,7 @@ class main():
             memory_MB*1000, memory_MB, memory_MB,
             )
         ## project
-        s += ' -P %s' %(self.s_project)
+        s += ' -G %s' %(self.project)
         ## stdout
 ##        s += '-o out/UnifiedGenotyper_$(date +%Y%m%d)_$(date +%H%M%S).out.%J.%I '
         s += ' -o stdout/%s' %(prefix_out,)
@@ -777,52 +779,194 @@ echo $CHROMOSOME
         return
 
 
+    def parse_arguments(self,):
+
+        ## http://docs.python.org/2/library/argparse.html#module-argparse
+        ## New in version 2.7
+        ## optparse deprecated since version 2.7
+        parser = argparse.ArgumentParser()
+
+        ##
+        ## add arguments
+        ##
+
+        parser.add_argument(
+            '--bam','--bams','--bamdir',
+            dest='fp_bams',
+            help='Path to directory containing improved BAMs',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--GATK',
+            dest='fp_GATK',
+            help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--FASTA','--reference','--reference-sequence','--reference_sequence',
+            dest='fp_FASTA_reference_sequence',
+            help='File path to reference sequence in FASTA format (e.g. /lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--project','-P','-G',
+            dest='project',
+            help='Project',
+            metavar='STRING',default=None,
+            required = True,
+            )
+
+        ##
+        ## VariantRecalibrator resources
+        ##
+
+        parser.add_argument(
+            '--resources','--VariantRecalibrator',
+            dest='fp_resources',
+            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
+##        parser.add_argument(
+##            '--hapmap',
+##            dest='fp_resource_hapmap',
+##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/hapmap_3.3.b37.sites.vcf)',
+##            metavar='FILE',default=None,
+##            required = False,
+##            )
+##
+##        parser.add_argument(
+##            '--omni',
+##            dest='fp_resource_omni',
+##            help='File path to omni vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/1000G_omni2.5.b37.sites.vcf)',
+##            metavar='FILE',default=None,
+##            required = False,
+##            )
+##
+##        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+##        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
+##        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
+####        s_help += '\nYou can get the vcf file with this command:'
+####        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
+##        parser.add_argument(
+##            '--dbsnp',
+##            dest='fp_vcf_dbsnp',
+##            help=s_help,
+##            metavar='FILE',default=None,
+##            required = True,
+##            )
+
+        ##
+        ## BEAGLE
+        ##
+        parser.add_argument(
+            '--beagle','--BEAGLE','--BEAGLEjar',
+            dest='fp_software_beagle',
+            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        ##
+        ## IMPUTE2
+        ##
+        parser.add_argument(
+            '--impute2','--IMPUTE2','--IMPUTE2jar',
+            dest='fp_software_impute2',
+            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--hap','--impute2-hap',
+            dest='fp_impute2_hap',
+            help='File path to directory containing hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--legend','--impute2-legend',
+            dest='fp_impute2_legend',
+            help='File path to directory containing legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--map','--impute2-map',
+            dest='fp_impute2_map',
+            help='File path to directory containing map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+##        ## IMPUTE2 input files
+##        self.fp_impute2_map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
+##        error_input(self.fp_impute2_map)
+
+        ##
+        ##
+        ##
+        
+        ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
+        ## parse arguments to argparse NameSpace
+        namespace_args = parser.parse_args()
+
+        ## http://docs.python.org/2/library/functions.html#vars
+        for k,v in vars(namespace_args).items():
+            setattr(self,k,v)
+            continue
+
+
+        if self.fp_GATK is None and self.fp_options is None:
+            parser.error('--GATK or --arguments')
+
+        bool_not_found = False
+        for k,v in vars(namespace_args).items():
+            if k[:3] != 'fp_':
+                continue
+            fp = v
+            ## argument not specified
+            if fp == None: continue
+            if fp == self.fp_bams:
+                f = os.path.isdir
+            else:
+                f = os.path.isfile
+            if not f(fp):
+                print 'file path does not exist:', fp
+                bool_not_found = True
+        if bool_not_found == True:
+            sys.exit(0)
+
+        return
+
+
     def __init__(self,):
+
+        ##
+        ## parse command line arguments
+        ##
+        self.parse_arguments()
 
         ##
         ## GATK resource bundle
         ## http://www.broadinstitute.org/gsa/wiki/index.php/GATK_resource_bundle
         ##
-
-        ## curl -u gsapubftp-anonymous ftp.broadinstitute.org/bundle/1.5/b37/human_g1k_v37.fasta.gz -o human_g1k_v37.fasta.gz; gunzip human_g1k_v37.fasta.gz
-        self.fp_FASTA_reference_sequence = '/lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta'
-        error_input(self.fp_FASTA_reference_sequence)
-        if not '--bamdir' in sys.argv:
-            print 'specify --bamdir (e.g. \
-\n/lustre/scratch111/projects/uganda/release/20120610/chromosome_bams \
-\nor\n/lustre/scratch111/projects/uganda/release/downsample/20120921/chromosome_bams \
-\n)'
-            sys.exit(0)
-        self.dn_BAM_input_file = sys.argv[sys.argv.index('--bamdir')+1]
-##        self.dn_BAM_input_file = '/lustre/scratch111/projects/uganda/release/20120610/chromosome_bams'
-
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-##        self.dbsnp = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf'
-        ## curl -u gsapubftp-anonymous ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz
-        self.dbsnp = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/ALL.wgs.dbsnp.build135.snps.sites.vcf'
-        error_input(self.dbsnp)
-
-        ## VariantRecalibrator
-        self.vcf_hapmap = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/hapmap_3.3.b37.sites.vcf'
-        error_input(self.vcf_hapmap)
-        self.vcf_omni25 = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/1000G_omni2.5.b37.sites.vcf'
-        error_input(self.vcf_omni25)
-        self.vcf_dbsnp = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf'
-        error_input(self.vcf_dbsnp)
-
-        ## IMPUTE2 input files
-        self.hap = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz'
-        error_input(self.hap)
-        self.legend = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz'
-        error_input(self.legend)
-        self.map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
-        error_input(self.map)
-
-        ##
-        ## software paths
-        ##
-        self.fp_GATK = '/software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar'
-        error_input(self.fp_GATK)
 
         ## A node on the cluster does approximately 4Mbp in 8 hours;
         ## i.e. UnifiedGenotyper, ugandan dataset, chromosome1=249Mbp=3.1weeks=504hours,
@@ -832,10 +976,6 @@ echo $CHROMOSOME
         ## todo: collect stats...
         ##
         ## the same variable is also used for IMPUTE2, so I decided to lower it from 10Mbp to 5Mbp
-        self.bps_per_interval = 1.*10**6
-        self.bps_per_interval = 1000.*10**6
-        self.bps_per_interval = 100.*10**6
-        self.bps_per_interval = 10.*10**6
         self.bps_per_interval = 10.*10**6
         self.bps_per_interval_IMPUTE2 = 5.*10**6
 
@@ -916,18 +1056,6 @@ echo $CHROMOSOME
             'UnifiedGenotyper':2000,
             'VariantRecalibrator':12000,
             }
-
-        ## at which steps should a break be inserted
-        ## i.e. when should a new shell script be submitted to the cluster
-        ## in order to avoid hitting the wall time
-        ## i.e. which of the steps are the time consuming ones
-        ## I'm not using this at the moment, but I should...
-        self.l_breaks = ['UnifiedGenotyper',]
-
-        ##
-        ##
-        ##
-        self.s_project = 'uganda'
 
         ##
         ## binary options
@@ -1177,6 +1305,8 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
 
     def UnifiedGenotyper(self,l_chromosomes,d_chromosome_lengths,):
 
+        
+
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
 
         lines = ['#!/bin/bash']
@@ -1219,6 +1349,7 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         lines += [' --out %s \\' %(fp_out)]
 
         lines += [' --input_file %s/chrom$CHROMOSOME.bam \\' %(instance_main.dn_BAM_input_file,)]
+        xxx_this_needs_to_accept_Martins_per_sample_bams_instead
 
         ##
         ## CommandLineGATK, optional
@@ -1291,23 +1422,15 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         lines += ['fi']
         ## end loops
         lines += ['done\ndone']
-        s = instance_main.generate_bsub_line(
-            'CombineVariants',
-            bool_wait = False,
-            )
-        lines += [s]
+##        s = instance_main.generate_bsub_line(
+##            'CombineVariants',
+##            bool_wait = False,
+##            )
+##        lines += [s]
 
         s = '\n'.join(lines)+'\n\n'
 
         instance_main.write_shell('shell/UnifiedGenotyper.sh',s,)
-
-        return
-
-
-    def __init__(self,):
-
-        self.fp_GATK = '/software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar'
-        error_input(self.fp_GATK)
 
         return
 
