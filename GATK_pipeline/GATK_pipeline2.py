@@ -7,7 +7,7 @@
 ## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
 
 ## built-ins
-import math, os, sys
+import math, os, sys, time
 ## New in version 2.7
 import argparse
 
@@ -15,35 +15,38 @@ class main():
 
     def main(self):
 
+        self.init()
+
+        self.check_logs()
+
         ## parse chromsome lengths from reference sequence
-        d_chromosome_lengths = self.parse_chromosome_lengths()
+        d_chrom_lens = self.parse_chrom_lens()
 
         ## define list of chromosomes
-        l_chromosomes = [str(i) for i in xrange(1,22+1,)]+['X','Y',]
+        l_chroms = [str(i) for i in xrange(1,22+1,)]+['X','Y',]
 
         ##
         ## write shell scripts
         ##
-        instance_GATK = GATK()
+        self.main_UnifiedGenotyper(l_chroms,d_chrom_lens,)
+        sys.exit()
 
-        instance_GATK.UnifiedGenotyper(l_chromosomes,d_chromosome_lengths,)
+        self.main_CombineVariants(l_chroms,d_chrom_lens,)
 
-        instance_GATK.CombineVariants(l_chromosomes,d_chromosome_lengths,)
+        self.main_VariantRecalibrator()
 
-        instance_GATK.VariantRecalibrator()
+        instance_main.main_determine_TS_level()
 
-        instance_main.determine_TS_level()
+        self.main_ApplyRecalibration()
 
-        instance_GATK.ApplyRecalibration()
-
-        instance_GATK.ProduceBeagleInput()
+        self.main_ProduceBeagleInput()
 
         self.BEAGLE()
 
-        self.IMPUTE2(d_chromosome_lengths,)
+        self.IMPUTE2(d_chrom_lens,)
 
         s = '#!/bin/bash\n'
-        s += 'for CHROMOSOME in {1..22} X Y\ndo\n'
+        s += 'for chrom in {1..22} X Y\ndo\n'
         s += './shell/UnifiedGenotyper $CHROMOSOME\n'
         s += 'done'
         self.write_shell('shell/init.sh',s,)
@@ -54,14 +57,43 @@ class main():
             )
         stop
 
-##        self.bsub_all_chromosomes_all_steps(d_array,d_shell,)
+##        self.bsub_all_chroms_all_steps(d_array,d_shell,)
 
         print 'Execute shell/init.sh to start.'
 
         return
 
 
+    def check_logs(self,):
+
+        bool_error = False
+        l_fn = os.listdir('stderr')
+        for fn in l_fn:
+            if os.path.getsize('stderr/%s' %(fn)) > 0:
+                fd = open('stderr/%s' %(fn),'r')
+                s = fd.read()
+                fd.close()
+                print s
+                print 'stderr/%s' %(fn)
+                bool_error = True
+                break
+
+        if bool_error == True:
+            sys.exit(0)
+
+        return
+
+
+    def init(self,):
+
+        self.mkdirs()
+
+        return
+
+
     def determine_TS_level(self,):
+
+        make_this_a_shell_script_instead
 
         ## http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration
         ## "I took called variants until I found 99% of my known variable sites"
@@ -75,17 +107,15 @@ class main():
         ## output
         lines += ['--output out_Tommy/determine_TS_level.txt \\']
 
-        s = '\n'.join(lines)+'\n\n'
-
-        self.write_shell('shell/determine_TS_level.sh',s,)
+        self.write_shell('shell/determine_TS_level.sh',lines,)
 
         return s
 
 
-    def IMPUTE2(self,d_chromosome_lengths,):
+    def IMPUTE2(self,d_chrom_lens,):
 
 ##        intervals_IMPUTE2 = int(math.ceil(
-##            d_chromosome_lengths[chromosome]
+##            d_chrom_lens[chrom]
 ##            /self.bps_per_interval_IMPUTE2
 ##            ))
 
@@ -119,16 +149,16 @@ class main():
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-g
         fn_genotype    = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
 ##        ## Strand alignment options
-##        s_strand       = '/lustre/scratch107/projects/agv/imputation/trial3/mock_strand_file/strand_file_chr%s.txt' %(chromosome)
+##        s_strand       = '/lustre/scratch107/projects/agv/imputation/trial3/mock_strand_file/strand_file_chr%s.txt' %(chrom)
 
         ## IMPUTE2 requires that you specify an analysis interval
         ## in order to prevent accidental whole-chromosome analyses.
         ## If you want to impute a region larger than 7 Mb
         ## (which is not generally recommended),
         ## you must activate the -allow_large_regions flag.
-        lines += ['max=$((($LSB_JOBINDEX+0)*5000000))']
-        lines += ['if test $max -ge $LENCHROMOSOME']
-        lines += ['then max=$LENCHROMOSOME']
+        lines += ['posmax=$((($LSB_JOBINDEX+0)*5000000))']
+        lines += ['if test $posmax -ge $LENCHROMOSOME']
+        lines += ['then posmax=$LENCHROMOSOME']
         lines += ['fi\n']
         s = '\n'.join(lines)
 
@@ -145,7 +175,7 @@ class main():
         ## Ask Deepti whether a different recombination map file should be used
         s += '-m $map \\'
         ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html#-int
-        s += '-int $((($LSB_JOBINDEX-1)*%i+1)) $max \\' %(5000000)
+        s += '-int $((($LSB_JOBINDEX-1)*%i+1)) $posmax \\' %(5000000)
 
         ##
         ## Basic options
@@ -171,8 +201,13 @@ class main():
         return s
 
 
-    def write_shell(self,fp,s,):
+    def write_shell(self,fp,lines,):
 
+        if type(lines) != list:
+            print type(lines)
+            stop
+
+        s = '\n'.join(lines)+'\n\n'
         fd = open(fp,'w')
         fd.write(s)
         fd.close()
@@ -236,7 +271,7 @@ class main():
 ## marker identifiers, positions, and alleles described in Section 2.4.
 ## The markers argument is optional if you specify only one Beagle file,
 ## and is required if you specify more than one Beagle file.
-##        s += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr%s.phase1_release_v3.20101123.filt.markers ' %(chromosome)
+##        s += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr%s.phase1_release_v3.20101123.filt.markers ' %(chrom)
         cmd += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.markers '
 ####missing=<missing code> where <missing code> is the character or sequence of characters used to represent a missing allele (e.g. missing=-1 or missing=?).
 #### The missing argument is required.
@@ -318,12 +353,12 @@ class main():
 
 ##        ## gen2ped (gen and sample to ped and map)
 ##        ## http://www.well.ox.ac.uk/~cfreeman/software/gwas/gtool.html
-##        out_prefix = 'out_GTOOL/gtool.%s' %(chromosome)
+##        out_prefix = 'out_GTOOL/gtool.%s' %(chrom)
 ##        cmd += 'gtool=/nfs/team149/Software/usr/share/gtool/gtool'
 ##        cmd += '$gtool -G '
 ##        ## in
-##        cmd += '--g out_BEAGLE/BeagleOutput.%s.gen ' %(chromosome)
-##        cmd += '--s out_BEAGLE/chromosome%s.sample ' %(chromosome)
+##        cmd += '--g out_BEAGLE/BeagleOutput.%s.gen ' %(chrom)
+##        cmd += '--s out_BEAGLE/chromosome%s.sample ' %(chrom)
 ##        ## out
 ##        cmd += '--ped %s.ped ' %(out_prefix)
 ##        cmd += '--map %s.map ' %(out_prefix)
@@ -336,86 +371,7 @@ class main():
         return cmd
 
 
-    def generate_bsub_line(
-        self,
-        prefix_out,
-        prefix_shell = None, ## also boolean for write to file or not
-        ## job array options
-        job_array_intervals = None,
-        ## other options
-        s_queue = 'normal',
-        memory_MB = 4000,
-        ## wait for previous job if run in sequence?
-        bool_wait = True,
-        ):
-
-        ## initiate line
-        s = 'bsub'
-
-        ##  job name, initiate
-        s += ' -J"%s' %(prefix_out)
-        ## job array
-        if job_array_intervals:
-            s += '[1-%i]' %(job_array_intervals,)
-        ## job name, terminate
-        s += '"'
-
-        ## queue
-        s += " -q %s" %(s_queue)
-        ## memory
-        s += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
-            memory_MB*1000, memory_MB, memory_MB,
-            )
-        ## project
-        s += ' -G %s' %(self.project)
-        ## stdout
-##        s += '-o out/UnifiedGenotyper_$(date +%Y%m%d)_$(date +%H%M%S).out.%J.%I '
-        s += ' -o stdout/%s' %(prefix_out,)
-        if job_array_intervals:
-##            s += '.%J.%I' ## job ID and job array index
-            s += '.%I' ## job ID and job array index
-        s += '.out'
-        ## stderr
-##        s += '-e err/UnifiedGenotyper_$(date +%Y%m%d)_$(date +%H%M%S).err.%J.%I '
-        s += ' -e stderr/%s' %(prefix_out,)
-        if job_array_intervals:
-##            s += '.%J.%I' ## job ID and job array index
-            s += '.%I' ## job ID and job array index
-        s += '.err'
-
-        ## sequential
-        if bool_wait == True:
-            s += ' -w "done($LSB_JOBID)"'
-        
-        ## command / shell script
-        s += ' ./shell/%s.sh' %(prefix_out,)
-        ## EOL
-        s += '\n'
-
-        if prefix_shell:
-            ## initiate shell script
-            lines = ['#!/bin/bash']
-            ## append bsub line to shell script
-            lines += [s]
-
-            ## append new line breaks
-            lines = [line+'\n' for line in lines]
-
-            fp = 'shell/%s.sh' %(prefix_shell,)
-            fd = open(fp,'w')
-            fd.writelines(lines)
-            fd.close()
-
-            os.system('chmod +x %s' %(fp)) ## only works in unix environment...
-##        ## Execute by owner
-##        os.chmod(fn,stat.S_IEXEC)
-##        ## Read, write, and execute by group
-##        os.chmod(fn,stat.S_IRWXG)
-
-        return s
-
-
-    def bsub_all_chromosomes_all_steps(self,d_array,d_shell,):
+    def bsub_all_chroms_all_steps(self,d_array,d_shell,):
 
         self.write_nonarray_scripts(d_shell,)
 
@@ -550,7 +506,7 @@ class main():
 
     def write_array_scripts_chromosome(self,d_shell,):
 
-        instance_GATK = GATK()
+        self = GATK()
 
         chromosome_prefix = ''
         
@@ -584,7 +540,7 @@ echo $CHROMOSOME
                 s_condition = s_condition.replace('.$CHROMOSOME','')
             s += s_condition
             if step == 'ApplyRecalibration':
-                s += instance_GATK.ApplyRecalibration(chromosome_prefix)
+                s += self.ApplyRecalibration(chromosome_prefix)
             elif step == 'BEAGLE':
                 s += self.BEAGLE('$CHROMOSOME')
             else:
@@ -635,14 +591,14 @@ echo $CHROMOSOME
         for step in self.l_steps_array_subchromosome:
 
             s = '#!/bin/sh\n\n'
-            for chromosome in ['X','Y',]+range(1,22+1,):
+            for chrom in ['X','Y',]+range(1,22+1,):
 ##                if chromosome != 22: continue ## tmp
-                chromosome = str(chromosome)
+                chrom = str(chromosome)
 ##                ## replace if statements with dictionary...
 ##                if step == 'UnifiedGenotyper':
-##                    fp = 'out_GATK/UnifiedGenotyper.%s.vcf.1' %(chromosome)
+##                    fp = 'out_GATK/UnifiedGenotyper.%s.vcf.1' %(chrom)
 ##                elif step == 'IMPUTE2':
-##                    fp = 'out_IMPUTE2/chromosome%s.impute2.1' %(chromosome)
+##                    fp = 'out_IMPUTE2/chromosome%s.impute2.1' %(chrom)
 ##                else:
 ##                    print step
 ##                    print self.d_file_outputs[step]
@@ -666,7 +622,7 @@ echo $CHROMOSOME
 ##                if step != 'IMPUTE2': ## tmpxxx
 ##                    s += self.check_input_output_shell(step,bool_input=False,chromosome=chromosome,)
                 s += self.check_input_output_shell(step,bool_input=False,chromosome=chromosome,)
-                s += '%s\n' %(d_array[step][chromosome])
+                s += '%s\n' %(d_array[step][chrom])
 ####                if self.l_steps.index(step) != 0:
 ####                    s += 'fi\n'
                 s += 'fi\n'
@@ -739,9 +695,9 @@ echo $CHROMOSOME
         return s
 
 
-    def parse_chromosome_lengths(self):
+    def parse_chrom_lens(self):
 
-        d_chromosome_lengths = {}
+        d_chrom_lens = {}
 
         ## 1000G chromosome ranges
         fn = '%s.fai' %(self.fp_FASTA_reference_sequence)
@@ -750,25 +706,25 @@ echo $CHROMOSOME
         fd.close()
         for line in lines:
             l = line.strip().split()
-            chromosome = l[0]
-            chromosome_length = int(l[1])
+            chrom = l[0]
+            chrom_len = int(l[1])
 ##            if not chromosome in ['X','Y',]:
-##                chromosome = int(chromosome)
-            d_chromosome_lengths[chromosome] = chromosome_length
+##                chrom = int(chromosome)
+            d_chrom_lens[chrom] = chrom_len
             ## break, when we reach the Y chromosome
-            if chromosome == 'Y':
+            if chrom == 'Y':
                 break
         
-        return d_chromosome_lengths
+        return d_chrom_lens
 
 
     def mkdirs(self):
 
-
         l_dn = [
             'stdout','stderr',
             'shell',
-            'out_GATK','out_BEAGLE','out_Tommy','out_IMPUTE2',
+            'out_BEAGLE','out_Tommy','out_IMPUTE2',
+            'out_UnifiedGenotyper',
             ]
 
         ## create subdirs
@@ -849,19 +805,19 @@ echo $CHROMOSOME
 ##            metavar='FILE',default=None,
 ##            required = False,
 ##            )
-##
-##        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-##        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
-##        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
-####        s_help += '\nYou can get the vcf file with this command:'
-####        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
-##        parser.add_argument(
-##            '--dbsnp',
-##            dest='fp_vcf_dbsnp',
-##            help=s_help,
-##            metavar='FILE',default=None,
-##            required = True,
-##            )
+
+        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
+        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
+##        s_help += '\nYou can get the vcf file with this command:'
+##        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
+        parser.add_argument(
+            '--dbsnp',
+            dest='fp_vcf_dbsnp',
+            help=s_help,
+            metavar='FILE',default=None,
+            required = True,
+            )
 
         ##
         ## BEAGLE
@@ -956,6 +912,375 @@ echo $CHROMOSOME
         return
 
 
+    def ProduceBeagleInput(self,):
+
+        '''this walker takes approximately 5-10 minutes per chromosome to run'''
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
+        ## "After variants are called and possibly filtered,
+        ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
+        ## and will produce a likelihood file in BEAGLE format.
+
+        lines = ['#!/bin/bash']
+
+        lines += self.GATK_initiate('ProduceBeagleInput',)
+
+        fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
+
+        ## GATKwalker, required, out
+        lines += ['--out %s \\' %(fp_out,)]
+        ## GATKwalker, required, in
+        lines += [
+            '--variant out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf \\'
+            ]
+
+        ## split bgl by chromosome
+        cmd = 'cat %s ' %(fp_out)
+        cmd += '''awk -v FS=":" 'NR>1'''
+        cmd += '''{print>"out_GATK/ProduceBeagleInput."$1".bgl"}' '''
+        lines += [cmd]
+
+        s = '\n'.join(lines)+'\n\n'
+
+        instance_main.write_shell('shell/ProduceBeagleInput.sh',s,)
+
+        return s
+
+
+    def ApplyRecalibration(self,):
+
+        '''
+Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
+http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
+http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
+http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
+"For new approach: just cut at 99% sensitivity"
+http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
+http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
+##
+http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
+'''
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
+
+        fp_in = 'out_Tommy/determine_TS_level.txt'
+
+        lines = ['ts_filter_level=($(cat %s))\n' %(fp_in)]
+
+        lines += self.GATK_initiate('ApplyRecalibration',)
+
+        fp_out = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered'
+
+        ## GATKwalker, required, in
+        lines += ['--input out_CombineVariants/CombineVariants%s.vcf \\']
+        ## GATKwalker, required, out
+        lines += ['--out %s \\' %(fp_out,)]
+        ## GATKwalker, required, in
+        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator%s.recal \\']
+        lines += ['--tranches_file out_VariantRecalibrator/VariantRecalibrator.tranches \\']
+        ## GATKwalker, optional, in
+        ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
+        ## default is 99.00
+##        lines += ['--ts_filter_level 99.0 \\']
+        lines += ['--ts_filter_level $ts_filter_level \\']
+
+        s = '\n'.join(lines)+'\n\n'
+
+        instance_main.write_shell('shell/ApplyRecalibration.sh',s,)
+
+        return s
+
+
+    def VariantRecalibrator(self,):
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
+
+        lines = self.GATK_initiate('VariantRecalibrator',)
+
+        ## GATKwalker, required, in
+        lines += ['--input out_CombineVariants/CombineVariants.vcf \\']
+        ## GATKwalker, required, out
+        lines += ['--recal_file out_GATK/VariantRecalibrator.recal \\']
+        lines += ['--tranches_file out_GATK/VariantRecalibrator.tranches \\']
+        ## GATKwalker, required, in (ask Deepti about this...)
+        lines += ['--use_annotation QD --use_annotation HaplotypeScore\
+        --use_annotation MQRankSum --use_annotation ReadPosRankSum --use_annotation MQ\
+        --use_annotation FS --use_annotation DP \\']
+        ## GATKwalker, optional, in
+        ## Ugandan QCed to be added..!
+        lines += ['-resource:hapmap,known=false,training=true,truth=true,prior=15.0 \
+%s \\' %(instance_main.vcf_hapmap)] ## ask Deepti where the master copy is located (GATK resource bundle)
+        lines += ['-resource:omni,known=false,training=true,truth=false,prior=12.0 \
+%s \\' %(instance_main.vcf_omni25)] ## ask Deepti which vcf file to use as input
+        lines += ['-resource:dbsnp,known=true,training=false,truth=false,prior=8.0 \
+%s \\' %(instance_main.fp_vcf_dbsnp)] ## ask Deepti which vcf file to use as input
+
+        l_TStranches = [100,]
+        l_TStranches += [99+i/10. for i in range(9,0,-1,)]
+        l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
+        s_TStranches = ''
+        for TStranche in l_TStranches:
+            s_TStranches += '--TStranche %.1f ' %(TStranche)
+        lines += ['%s \\' %(s_TStranches)]
+
+        ## GATKwalker, optional, out
+##        ## generating the VariantRecalibrator.plots.R.pdf file is time consuming, when you are eager to see your results...
+##        lines += ['--rscript_file out_GATK/VariantRecalibrator.%s.plots.R \\' %(chromosome,)]
+
+        s = '\n'.join(lines)
+
+        instance_main.write_shell('shell/VariantRecalibrator.sh',s,)
+
+        return s
+
+
+    def GATK_initiate(self,analysis_type,):
+
+        s = 'cmd="'
+        ## run GATK
+        s += 'java '
+        ## set maximum heap size
+        if analysis_type == 'VariantRecalibrator':
+            s += '-Xmx12g ' ## Max Memory :     11856 MB
+        elif analysis_type == 'ApplyRecalibration':
+            s += '-Xmx62g ' ## 28GB not enough
+        else:
+            s += '-Xmx4g '
+##        s += '-Xmx4g '
+        s += '-jar %s \\' %(instance_main.fp_GATK)
+        lines = [s]
+
+        ## CommandLineGATK, required, in
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--analysis_type
+        lines += ['--analysis_type %s \\' %(analysis_type)]
+        ## CommandLineGATK, optional, in
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
+        lines += ['--reference_sequence %s \\' %(instance_main.fp_FASTA_reference_sequence)]
+
+        return lines
+
+
+    def CombineVariants(self,l_chroms,d_chrom_lens,):
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantutils_CombineVariants.html
+
+        '''
+It takes a while to run, so it really shouldn't be run sequentially for each chromosome...
+It takes 5.5 hours to run for the entire Uganda exome (100 samples)
+'''
+
+        lines = ['#!/bin/bash']
+
+        lines += self.GATK_initiate('CombineVariants',)
+
+        ##
+        ## required
+        ##
+
+        ## Input VCF file
+        for chrom in l_chroms:
+            intervals = int(math.ceil(
+                d_chrom_lens[chrom]
+                /
+                instance_main.bps_per_interval))
+            for interval in range(1,intervals+1,):
+                lines += [
+                    '--variant out_GATK/UnifiedGenotyper.%s.vcf.%i \\' %(
+                        chromosome, interval,
+                        )
+                    ]
+
+        lines += ['--out out_GATK/CombineVariants.vcf \\']
+
+        s = '\n'.join(lines)
+
+        instance_main.write_shell('shell/CombineVariants.sh',s,)
+
+        return s
+
+
+    def main_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
+
+        fn_touch = 'UnifiedGenotyper.touch'
+        if os.path.isfile(fn_touch):
+            if time.time()-os.path.getmtime(fn_touch) < 5*60:
+                return
+        os.system('touch %s' %(fn_touch))
+
+        analysis_type = 'UnifiedGenotyper'
+        fp_out = 'out_%s/%s.%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
+            analysis_type,instance_main.project,analysis_type,)
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
+
+        ## initiate shell script
+        lines = ['#!/bin/bash']
+
+        ## commands prior to GATK command
+        lines += self.init_UnifiedGenotyper(
+            l_chroms,d_chrom_lens,)
+
+        ## initiate GATK command
+        lines += self.GATK_initiate('UnifiedGenotyper',)
+
+        ## append GATK command options
+        lines += self.UnifiedGenotyper(fp_out,)
+
+        ## terminate shell script
+        lines += self.term_UnifiedGenotyper()
+
+        ## write shell script
+        instance_main.write_shell('shell/UnifiedGenotyper.sh',lines,)
+
+        ## execute shell script
+        memMB = 4000
+        for chrom in l_chroms:
+            if os.path.isfile('stdout/%s.UnifiedGenotyper.%s.1.out' %(
+                self.project,chrom,)):
+                continue
+            print fp_out
+            fp_out_chrom = fp_out.replace('$LSB_JOBINDEX','1')
+            fp_out_chrom = fp_out_chrom.replace('$CHROMOSOME',chrom)
+            if os.path.isfile(fp_out_chrom):
+                continue
+            intervals = int(math.ceil(
+                d_chrom_lens[chrom]/instance_main.bps_per_interval))
+            cmd = 'bsub -J"%s[%i-%i]" -q normal' %('UG',1,intervals,)
+            cmd += ' -G %s' %(instance_main.project)
+            cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
+                memMB,memMB,memMB,)
+            cmd += ' -o stdout/UnifiedGenotyper.%s.%%I.out' %(chrom)
+            cmd += ' -e stderr/UnifiedGenotyper.%s.%%I.err' %(chrom)
+            cmd += ' ./shell/UnifiedGenotyper.sh %s' %(chrom)
+            print cmd
+            os.system(cmd)
+            sys.exit(0)
+
+        return
+
+
+    def UnifiedGenotyper(self,fp_out,):
+
+        lines = []
+
+        ##
+        ## required
+        ##
+        ## File to which variants should be written
+        lines += [' --out %s \\' %(fp_out)]
+
+        ##
+        ## append input files
+        ##
+        l = os.listdir(instance_main.fp_bams)
+        for s in l:
+            if s[-4:] != '.bam':
+                continue
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+            lines += [' --input_file %s/%s \\' %(
+                instance_main.fp_bams,s,)]
+
+        ##
+        ## CommandLineGATK, optional
+        ##
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
+        lines += [
+            '--intervals $CHROMOSOME:$((($LSB_JOBINDEX-1)*%i+1))-$posmax \\' %(
+                int(instance_main.bps_per_interval),)]
+
+        ##
+        ## UnifiedGenotyper, optional
+        ##
+        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+        lines += [' --dbsnp %s \\' %(instance_main.fp_vcf_dbsnp)]
+        ## Selecting an appropriate quality score threshold
+        ## A common question is the confidence score threshold
+        ## to use for variant detection. We recommend:
+        ## Deep (> 10x coverage per sample) data:
+        ## we recommend a minimum confidence score threshold of Q30.
+        ## Shallow (< 10x coverage per sample) data:
+        ## because variants have by necessity lower quality
+        ## with shallower coverage we recommend
+        ## a minimum confidence score of Q4 in projects
+        ## with 100 samples or fewer
+        ## and Q10 otherwise.
+        lines += [' -stand_call_conf 4 \\'] ## ask Deepti if OK
+        lines += [' -stand_emit_conf 4 \\'] ## ask Deepti if OK
+        lines += [' --output_mode EMIT_VARIANTS_ONLY \\'] ## default value EMIT_VARIANTS_ONLY
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
+        s_annotation = ''
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
+        s_annotation += ' --annotation DepthOfCoverage'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
+        s_annotation += ' -A FisherStrand'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
+        s_annotation += ' -A HaplotypeScore'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
+        s_annotation += ' -A MappingQualityRankSumTest'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
+        s_annotation += ' -A QualByDepth'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
+        s_annotation += ' -A RMSMappingQuality'
+        s_annotation += ' -A ReadPosRankSumTest'
+        lines += [s_annotation]
+
+        return lines
+
+
+    def term_UnifiedGenotyper(self,):
+
+        ## cont cmd
+        lines = [';']
+        s = '/software/bin/python-2.7.3'
+        s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
+        s += ' --options %s.options' %(instance_main.project)
+        lines += [s]
+        ## term cmd
+        lines += ['"']
+
+        lines += ['echo $cmd']
+        lines += ['eval $cmd']
+
+        return lines
+
+
+    def init_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
+
+        lines = []
+
+        lines += ['\n## parse chromosome from command line']
+        lines += ['CHROMOSOME=$1']
+
+        lines += ['\n## define arrays']
+        lines += ['CHROMOSOMES=(%s)' %(' '.join(l_chroms))]
+        lines += ['LENCHROMOSOMES=(%s)' %(' '.join(
+            [str(d_chrom_lens[chrom]) for chrom in l_chroms],
+            ),)]
+
+        lines += ['\n## find chromosome index in array of chromosomes']
+        lines += ['for ((index=0; index<${#CHROMOSOMES[@]}; index++))\ndo']
+        lines += ['if [ "${CHROMOSOMES[$index]}" = "$CHROMOSOME" ]\nthen']
+        lines += ['break\nfi\ndone\n']
+
+        lines += ['\n## find length of current chromosome passed via the command line']
+        lines += ['LENCHROMOSOME=${LENCHROMOSOMES[$index]}\n']
+
+        ##
+        ## do not allow interval to exceed the length of the chromosome
+        ## otherwise it will raise an I/O error (v. 1.4-15)
+        ##
+        lines += ['posmax=$((($LSB_JOBINDEX+0)*%i))' %(int(
+            instance_main.bps_per_interval
+            ))]
+        lines += ['if test $posmax -gt $LENCHROMOSOME']
+        lines += ['then posmax=$LENCHROMOSOME']
+        lines += ['fi\n']
+
+        return lines
+
+
     def __init__(self,):
 
         ##
@@ -963,23 +1288,17 @@ echo $CHROMOSOME
         ##
         self.parse_arguments()
 
-        ##
-        ## GATK resource bundle
-        ## http://www.broadinstitute.org/gsa/wiki/index.php/GATK_resource_bundle
-        ##
-
         ## A node on the cluster does approximately 4Mbp in 8 hours;
         ## i.e. UnifiedGenotyper, ugandan dataset, chromosome1=249Mbp=3.1weeks=504hours,
         ## so do intervals of 4Mbp to avoid cluster time out after 12 hours
         ## this should be set as a flag with optparse as it differs from dataset to dataset...
         ## this one varies from chromosome to chromosome...
+        ## this variable should be dependent on the number of samples (and the coverage / number of variants... ???)
         ## todo: collect stats...
         ##
         ## the same variable is also used for IMPUTE2, so I decided to lower it from 10Mbp to 5Mbp
         self.bps_per_interval = 10.*10**6
         self.bps_per_interval_IMPUTE2 = 5.*10**6
-
-        self.mkdirs()
 
         ## sequential order in which to run GATK walkers and other steps
         self.l_steps = [
@@ -1033,18 +1352,6 @@ echo $CHROMOSOME
                 ],
             }
 
-        self.d_dir_outputs = {
-            'UnifiedGenotyper':'out_GATK',
-            'CombineVariants':'out_GATK',
-            'VariantRecalibrator':'out_GATK',
-            'determine_TS_level':'out_Tommy',
-            'ApplyRecalibration':'out_GATK',
-            'ProduceBeagleInput':'out_GATK',
-            'BEAGLE':'out_BEAGLE',
-##            'BeagleOutputToVCF':'out_GATK',
-            'IMPUTE2':'out_IMPUTE2',
-            }
-
         self.d_queues = {
             'BEAGLE':'long'
             }
@@ -1073,13 +1380,7 @@ echo $CHROMOSOME
         ## not currently used, but will be implemented...
         self.bool_send_mail_upon_job_completion = True
 
-        for k in self.d_dir_outputs.keys():
-            self.d_dir_outputs[k] = self.d_dir_outputs[k]
-
         return
-
-
-class GATK():
 
 
     def BeagleOutputToVCF(self,chromosome,):
@@ -1117,340 +1418,6 @@ class GATK():
         s = '\n'.join(lines)+'\n\n'
 
         return s
-
-
-    def ProduceBeagleInput(self,):
-
-        '''this walker takes approximately 5-10 minutes per chromosome to run'''
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
-        ## "After variants are called and possibly filtered,
-        ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
-        ## and will produce a likelihood file in BEAGLE format.
-
-        lines = ['#!/bin/bash']
-
-        lines += self.GATK_initiate('ProduceBeagleInput',)
-
-        fp_out = 'out_GATK/ProduceBeagleInput.bgl'
-
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += [
-            '--variant out_GATK/ApplyRecalibration.recalibrated.filtered.vcf \\'
-            ]
-
-        ## split bgl by chromosome
-        cmd = 'cat %s ' %(fp_out)
-        cmd += '''awk -v FS=":" 'NR>1'''
-        cmd += '''{print>"out_GATK/ProduceBeagleInput."$1".bgl"}' '''
-        lines += [cmd]
-
-        s = '\n'.join(lines)+'\n\n'
-
-        instance_main.write_shell('shell/ProduceBeagleInput.sh',s,)
-
-        return s
-
-
-    def ApplyRecalibration(self,):
-
-        '''
-Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
-http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
-http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
-http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
-"For new approach: just cut at 99% sensitivity"
-http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
-http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
-##
-http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
-'''
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
-
-        fp_in = 'out_Tommy/determine_TS_level.txt'
-
-        lines = ['ts_filter_level=($(cat %s))\n' %(fp_in)]
-
-        lines += self.GATK_initiate('ApplyRecalibration',)
-
-        fp_out = 'out_GATK/ApplyRecalibration.recalibrated.filtered'
-
-        ## GATKwalker, required, in
-        lines += ['--input out_GATK/CombineVariants%s.vcf \\']
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += ['--recal_file out_GATK/VariantRecalibrator%s.recal \\']
-        lines += ['--tranches_file out_GATK/VariantRecalibrator.tranches \\']
-        ## GATKwalker, optional, in
-        ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
-        ## default is 99.00
-##        lines += ['--ts_filter_level 99.0 \\']
-        lines += ['--ts_filter_level $ts_filter_level \\']
-
-        s = '\n'.join(lines)+'\n\n'
-
-        instance_main.write_shell('shell/ApplyRecalibration.sh',s,)
-
-        return s
-
-
-    def VariantRecalibrator(self,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
-
-        lines = self.GATK_initiate('VariantRecalibrator',)
-
-        ## GATKwalker, required, in
-        lines += ['--input out_GATK/CombineVariants.vcf \\']
-        ## GATKwalker, required, out
-        lines += ['--recal_file out_GATK/VariantRecalibrator.recal \\']
-        lines += ['--tranches_file out_GATK/VariantRecalibrator.tranches \\']
-        ## GATKwalker, required, in (ask Deepti about this...)
-        lines += ['--use_annotation QD --use_annotation HaplotypeScore\
-        --use_annotation MQRankSum --use_annotation ReadPosRankSum --use_annotation MQ\
-        --use_annotation FS --use_annotation DP \\']
-        ## GATKwalker, optional, in
-        ## Ugandan QCed to be added..!
-        lines += ['-resource:hapmap,known=false,training=true,truth=true,prior=15.0 \
-%s \\' %(instance_main.vcf_hapmap)] ## ask Deepti where the master copy is located (GATK resource bundle)
-        lines += ['-resource:omni,known=false,training=true,truth=false,prior=12.0 \
-%s \\' %(instance_main.vcf_omni25)] ## ask Deepti which vcf file to use as input
-        lines += ['-resource:dbsnp,known=true,training=false,truth=false,prior=8.0 \
-%s \\' %(instance_main.vcf_dbsnp)] ## ask Deepti which vcf file to use as input
-
-        l_TStranches = [100,]
-        l_TStranches += [99+i/10. for i in range(9,0,-1,)]
-        l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
-        s_TStranches = ''
-        for TStranche in l_TStranches:
-            s_TStranches += '--TStranche %.1f ' %(TStranche)
-        lines += ['%s \\' %(s_TStranches)]
-
-        ## GATKwalker, optional, out
-##        ## generating the VariantRecalibrator.plots.R.pdf file is time consuming, when you are eager to see your results...
-##        lines += ['--rscript_file out_GATK/VariantRecalibrator.%s.plots.R \\' %(chromosome,)]
-
-        s = '\n'.join(lines)
-
-        instance_main.write_shell('shell/VariantRecalibrator.sh',s,)
-
-        return s
-
-
-    def GATK_initiate(self,analysis_type,):
-
-        ## run GATK
-        s = 'java '
-        ## set maximum heap size
-        if analysis_type == 'VariantRecalibrator':
-            s += '-Xmx12g ' ## Max Memory :     11856 MB
-        elif analysis_type == 'ApplyRecalibration':
-            s += '-Xmx62g ' ## 28GB not enough
-        else:
-            s += '-Xmx4g '
-##        s += '-Xmx4g '
-        s += '-jar %s \\' %(self.fp_GATK)
-        lines = [s]
-
-        ## CommandLineGATK, required, in
-        lines += ['--analysis_type %s \\' %(analysis_type)]
-        ## CommandLineGATK, optional, in
-        lines += ['--reference_sequence %s \\' %(instance_main.fp_FASTA_reference_sequence)]
-
-        return lines
-
-
-    def CombineVariants(self,l_chromosomes,d_chromosome_lengths,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantutils_CombineVariants.html
-
-        '''
-It takes a while to run, so it really shouldn't be run sequentially for each chromosome...
-It takes 5.5 hours to run for the entire Uganda exome (100 samples)
-'''
-
-        lines = ['#!/bin/bash']
-
-        lines += self.GATK_initiate('CombineVariants',)
-
-        ##
-        ## required
-        ##
-
-        ## Input VCF file
-        for chromosome in l_chromosomes:
-            intervals = int(math.ceil(
-                d_chromosome_lengths[chromosome]
-                /
-                instance_main.bps_per_interval))
-            for interval in range(1,intervals+1,):
-                lines += [
-                    '--variant out_GATK/UnifiedGenotyper.%s.vcf.%i \\' %(
-                        chromosome, interval,
-                        )
-                    ]
-
-        lines += ['--out out_GATK/CombineVariants.vcf \\']
-
-        s = '\n'.join(lines)
-
-        instance_main.write_shell('shell/CombineVariants.sh',s,)
-
-        return s
-
-
-    def UnifiedGenotyper(self,l_chromosomes,d_chromosome_lengths,):
-
-        
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
-
-        lines = ['#!/bin/bash']
-
-        ## parse chromosome from command line
-        lines += ['CHROMOSOME=$1\n']
-
-        ## define arrays
-        lines += ['CHROMOSOMES=(%s)' %(' '.join(l_chromosomes))]
-        lines += ['LENCHROMOSOMES=(%s)\n' %(' '.join(
-            [str(d_chromosome_lengths[chromosome]) for chromosome in l_chromosomes],
-            ),)]
-
-        ## find index of chromosome in array of chromosomes
-        lines += ['for ((index=0; index<${#CHROMOSOMES[@]}; index++))\ndo']
-        lines += ['if [ "${CHROMOSOMES[$index]}" = "$CHROMOSOME" ]\nthen']
-        lines += ['break\nfi\ndone\n']
-
-        ## find length of current chromosome passed via the command line
-        lines += ['LENCHROMOSOME=${LENCHROMOSOMES[$index]}\n']
-
-        ##
-        ## do not allow interval to exceed the length of the chromosome
-        ## otherwise it will raise an I/O error (v. 1.4-15)
-        ##
-        lines += ['max=$((($LSB_JOBINDEX+0)*%i))' %(int(
-            instance_main.bps_per_interval
-            ))]
-        lines += ['if test $max -gt $LENCHROMOSOME']
-        lines += ['then max=$LENCHROMOSOME']
-        lines += ['fi\n']
-
-        lines += self.GATK_initiate('UnifiedGenotyper',)
-
-        ##
-        ## required
-        ##
-        ## File to which variants should be written
-        fp_out = 'out_GATK/UnifiedGenotyper.$CHROMOSOME.vcf.$LSB_JOBINDEX'
-        lines += [' --out %s \\' %(fp_out)]
-
-        lines += [' --input_file %s/chrom$CHROMOSOME.bam \\' %(instance_main.dn_BAM_input_file,)]
-        xxx_this_needs_to_accept_Martins_per_sample_bams_instead
-
-        ##
-        ## CommandLineGATK, optional
-        ##
-
-        lines += [
-            '--intervals $CHROMOSOME:$((($LSB_JOBINDEX-1)*%i+1))-$max \\' %(
-                int(instance_main.bps_per_interval),
-                )
-            ]
-
-        ##
-        ## UnifiedGenotyper, optional
-        ##
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        lines += [' --dbsnp %s \\' %(instance_main.dbsnp)]
-        ## Selecting an appropriate quality score threshold
-        ## A common question is the confidence score threshold
-        ## to use for variant detection. We recommend:
-        ## Deep (> 10x coverage per sample) data:
-        ## we recommend a minimum confidence score threshold of Q30.
-        ## Shallow (< 10x coverage per sample) data:
-        ## because variants have by necessity lower quality
-        ## with shallower coverage we recommend
-        ## a minimum confidence score of Q4 in projects
-        ## with 100 samples or fewer
-        ## and Q10 otherwise.
-        lines += [' -stand_call_conf 4 \\'] ## ask Deepti if OK
-        lines += [' -stand_emit_conf 4 \\'] ## ask Deepti if OK
-        lines += [' --output_mode EMIT_VARIANTS_ONLY \\'] ## default value EMIT_VARIANTS_ONLY
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
-        s_annotation = ''
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
-        s_annotation += ' --annotation DepthOfCoverage'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
-        s_annotation += ' -A FisherStrand'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
-        s_annotation += ' -A HaplotypeScore'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
-        s_annotation += ' -A MappingQualityRankSumTest'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
-        s_annotation += ' -A QualByDepth'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
-        s_annotation += ' -A RMSMappingQuality'
-        s_annotation += ' -A ReadPosRankSumTest'
-        lines += [s_annotation]
-
-        ## execute next step
-        fp = 'out_GATK/UnifiedGenotyper.$CHROMOSOME.vcf.$INDEX.idx'
-        seconds = 300
-        lines += ['\nsleep %i' %(seconds)]
-        ## initiate loops
-        lines += ['for ICHROMOSOME in {0..24}\ndo']
-        lines += ['CHROMOSOME=CHROMOSOMES[$ICHROMOSOME]']
-        lines += ['LENCHROMOSOME=LENCHROMOSOMES[$ICHROMOSOME]']
-        lines += ['let INDEXMAX=($LENCHROMOSOME+%i-1)/%i' %(
-            instance_main.bps_per_interval, instance_main.bps_per_interval,
-            )]
-        lines += ['for $JOBARRAY_INDEX in {1..$INDEXMAX}\ndo']
-        ## check file existence
-        lines += ['if [ !-s %s ]' %(fp)]
-        lines += ['then\nexit']
-        lines += ['fi']
-        ## check file modification time
-        lines += ['t1=$(stat -c%%Y "%s")' %(fp)]
-        lines += ['t2=$(date +%%s)']
-        lines += ['if [ $(($t2-$t1)) -lt %i ]' %(seconds)]
-        lines += ['then\nexit']
-        lines += ['fi']
-        ## end loops
-        lines += ['done\ndone']
-##        s = instance_main.generate_bsub_line(
-##            'CombineVariants',
-##            bool_wait = False,
-##            )
-##        lines += [s]
-
-        s = '\n'.join(lines)+'\n\n'
-
-        instance_main.write_shell('shell/UnifiedGenotyper.sh',s,)
-
-        return
-
-
-def error_input(fp_in):
-
-    if '$CHROMOSOME' in fp_in:
-        for chromosome in xrange(1,22+1,):
-            chromosome = str(chromosome)
-            if not os.path.isfile(fp_in.replace('$CHROMOSOME',chromosome,)):
-                print 'Input file is missing:'
-                print fp_in
-                sys.exit(0)
-    else:
-        if not os.path.isfile(fp_in):
-            print 'Input file is missing:'
-            print fp_in
-            sys.exit(0)
-
-    return
 
 
 if __name__ == '__main__':
