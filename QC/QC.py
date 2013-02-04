@@ -14,7 +14,7 @@ from scipy import stats
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
-## todo 2013-01-23: get rid of any references to uganda_gwas and agv in final version
+## todo 2013-01-23: get rid of any references to uganda_gwas and agv and tc9 in final version
 
 class main:
 
@@ -37,6 +37,28 @@ class main:
 
         if self.verbose == True: print '############ tabulate ############'
         self.plink_tables(bfile,)
+
+        return
+
+
+    def histogram_snpweight(self,bfile,):
+
+        '''This function is not called from anywhere at the moment...'''
+
+        for pc in xrange(1,11):
+            gnuplot.histogram2(
+                '%s.posthardy.EIGENSOFT.snpweight' %(bfile),
+##                'tmp6.snpweight',
+                prefix_out = '%s.posthardy.EIGENSOFT.%i.snpweight' %(bfile,pc,),
+                x_step=0.05,
+                column='$%i' %(3+pc),
+                xlabel='snpweight',
+                title='%s\\nPC %i' %(
+                    bfile.replace('_','\\\\_'),
+                    pc,
+                    ),
+                color = 'cyan',
+                )
 
         return
 
@@ -133,6 +155,9 @@ class main:
         cmd += '> %s.qq.hwe.dat' %(bfile)
         self.execmd(cmd)
 
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.scatter_plot_2d(
             '%s.qq.hwe' %(bfile),
 ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
@@ -144,6 +169,7 @@ class main:
             title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
+            bool_timestamp=bool_timestamp,
             )
 
         ##
@@ -165,6 +191,9 @@ class main:
                 bfile,suffix,color,)
         line_plot = line_plot[:-1]+'\n'
 
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.scatter_plot_2d(
             '%s.hwe.scatter' %(bfile),
             column1 = '$7', column2 = '$8',
@@ -176,6 +205,7 @@ class main:
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             prefix_out = '%s.hwe.scatter' %(bfile),
+            bool_timestamp=bool_timestamp,
             )
 
         os.remove('%s.hwe.in' %(bfile))
@@ -254,7 +284,7 @@ class main:
             [['imiss'],self.table_imiss,],
             [['het'],self.table_het,],
             [['sexcheck'],self.table_sexcheck,],
-            [['preIBD.frq'],self.table_frq,],
+            [['postIBD.frq'],self.table_frq,],
             [['SNPQC.lmiss'],self.table_lmiss,],
             [['prehardy.genome'],self.table_genome,],
             [['hwe','X.females.hwe',],self.table_hwe,],
@@ -870,13 +900,8 @@ class main:
             [['het'],self.histogram_het,],
             [['postIBD.frq'],self.histogram_frq,],
             [['prehardy.genome'],self.histogram_genome,],
-            [
-                [
-                    'imiss','het',
-                    'sexcheck', ## red dots...
-                    ],
-                self.scatter_het_call,
-                ],
+            [['imiss','het','sexcheck',],self.scatter_het_call,],
+            [['postIBD.frq','hwe',],self.scatter_frq_hwe,],
             [['hwe',],self.histogram_hwe,],
             [['hwe',],self.scatter_hwe,],
 ##            [['SNPQC.lmiss','frq',],self.scatter_lmiss_frq,],
@@ -884,8 +909,8 @@ class main:
 ##            [['prehardy.mds',],self.scatter_mds_excl_1000g,],
             [['posthardy.mds',],self.scatter_mds_excl_1000g,],
             [['%s.mds' %(self.fn1000g),],self.scatter_mds_incl_1000g,],
-            [['%s.EIGENSOFT.evec' %(self.fn1000g),],self.scatter_PCA,],
             [['posthardy.EIGENSOFT.evec',],self.scatter_PCA,],
+            [['%s.EIGENSOFT.evec' %(self.fn1000g),],self.scatter_PCA,],
             ]:
             bool_continue = False
             for in_suffix in l_suffixes_in:
@@ -967,6 +992,9 @@ class main:
 
         n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
 
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.histogram2(
 ##                '%s.hwe' %(bfile),
             '%s.hwe.dat' %(bfile),
@@ -981,6 +1009,7 @@ class main:
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             color = 'yellow',
+            bool_timestamp = True,
             )
 
         os.remove('%s.hwe.dat' %(bfile))
@@ -991,6 +1020,7 @@ class main:
     def scatter_PCA(self,bfile,affix,):
 
         prefix = '%s.%s' %(bfile,affix,)
+
         fn = '%s.EIGENSOFT.evec' %(prefix)
         if os.path.isfile('%s.pc1.pc2.png' %(fn)):
             return
@@ -1060,8 +1090,8 @@ class main:
         ##
         ## specify colors
         ##
-        l_colors = [[17*i,17*i,17*i] for i in range(12)]
-        l_colors += [
+        l_colors1 = [[17*i,17*i,17*i] for i in range(12)]
+        l_colors2 = [
             [255,0,0,],
             [255,51,0,],
             [255,102,0,],
@@ -1093,6 +1123,7 @@ class main:
             [255,0,102,],
             [255,0,51,],
             ]
+        l_colors = l_colors2+l_colors1
 
         ## point types
         l_pt = [5,7,9,11]
@@ -1118,9 +1149,16 @@ class main:
 ##    ####        line_plot += ' )\n'
 ##            line_plot += 'unset colorbox\n'
             line_plot += 'plot'
+            i_style = 0
             for i_pop in xrange(len(l_pops)):
                 pop = l_pops[i_pop]
-                color = l_colors[i_pop]
+                cmd = '''awk '{if($3=="%s")''' %(pop)
+                cmd += " print $0}'"
+                cmd += ' %s.joined' %(fn)
+                print cmd
+                if int(os.popen('%s | wc -l' %(cmd)).read()) == 0: continue
+                color = l_colors[i_style]
+                i_style += 1
                 line_plot += ''' "< awk '{if($3==\\"%s\\")''' %(pop)
                 line_plot += " print $0}'"
                 line_plot += ' %s.joined"' %(fn)
@@ -1129,12 +1167,28 @@ class main:
                 line_plot += ' u %i:%i' %(pc1+3,pc2+3,)
 ##                line_plot += ' u %i:%i:%i' %(pc1+3,pc2+3,2,)
                 line_plot += ' ps 2'
-##                line_plot += ' pt %i' %(l_pt[i_pop%len(l_pt)])
+                line_plot += ' pt %i' %(l_pt[i_style%len(l_pt)])
 ##                ## http://gnuplot.sourceforge.net/demo_cvs/varcolor.html
 ##                line_plot += ' lc pal z'
                 line_plot += ' lc rgb "#%s"' %("".join(map(chr, color)).encode('hex'))
                 line_plot += ' t "%s", ' %(pop)
+                continue
+            ##
+            ## add labels
+            ##
+            line_plot += ' "< cat %s.joined' %(fn)
+            line_plot += ''' | awk -v pop=%s -F ':' '{print $1,$0}' | awk '{if($6>0.05||$6<-0.05)''' %(pop)
+            line_plot += ''' print $4$0}'"'''
+##            line_plot += ' u %i:%i:($%i+0.02) w labels' %(1+pc1+3,1+pc2+3,1,)
+            line_plot += ' u %i:%i:%i w labels' %(1+pc1+3,1+pc2+3,1,)
+            line_plot += ' font "Helvetica,20" noenhanced'
+            line_plot += ' notitle'
+            line_plot += ' lc rgb "#000000", '
+            ## EOL
             line_plot = line_plot[:-2]+'\n'
+
+            if self.bool_verbose == True: bool_timestamp = True
+            else: bool_timestamp = False
 
             gnuplot.scatter_plot_2d(
                 '%s.evec' %(bfile),
@@ -1146,11 +1200,12 @@ class main:
                     ),
                 prefix_out='%s.pc%i.pc%i' %(fn,pc1,pc2,),
                 lines_extra=['set key out\n'],
-    ##            bool_remove = False,
+##                bool_remove = False,
                 path_gnuplot='/nfs/team149/Software/bin/gnuplot',
+                bool_timestamp=bool_timestamp,
                 )
 
-        os.remove('%s.joined' %(fn))
+##        os.remove('%s.joined' %(fn))
 
         return
 
@@ -1160,7 +1215,7 @@ class main:
 ##        mds_prefix = '%s.posthardy' %(bfile)
         mds_prefix = '%s.posthardy' %(bfile)
         fn = '%s.mds' %(mds_prefix)
-        if os.path.isfile('%s.pc1.pc2.mds.png' %(fn)):
+        if os.path.isfile('%s.1.2.mds.png' %(fn)):
             return
 
         '''this function needs to be rewritten.
@@ -1313,30 +1368,30 @@ it's ugly and I will not understand it 1 year form now.'''
                 ## finalize plot line
                 line_plot = line_plot[:-1]+'\n'
 
+                if self.bool_verbose == True:
+                    bool_timestamp = True
+
                 gnuplot.scatter_plot_2d(
                     '%s.mds' %(bfile),
         ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
         ##            s_plot = s_plot,
                     line_plot = line_plot,
 ##                    column1 = 4, column2 = 5,
-                    xlabel = 'C%i' %(pc1),
-                    ylabel = 'C%i' %(pc2),
+                    xlabel = 'D%i' %(pc1),
+                    ylabel = 'D%i' %(pc2),
                     title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                         bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                         ),
-                    prefix_out='%s.pc%i.pc%i.mds' %(fn,pc1,pc2,),
+                    prefix_out='%s.%i.%i.mds' %(fn,pc1,pc2,),
                     lines_extra=['set key out\n'],
 ##                    bool_remove=False,
+                    bool_timestamp=bool_timestamp,
                     )
 
         return
 
 
     def add_MDS_outlier_labels(self,bfile,array_components,l_IIDs,pc1,pc2,line_plot,):
-
-##        sys.path.append('/nfs/users/nfs_t/tc9/github/tc9/math')
-##        import statistics
-##        instance_tests = statistics.tests()
 
         u = array_components[:,pc1-1]
         v = array_components[:,pc2-1]
@@ -1384,7 +1439,7 @@ it's ugly and I will not understand it 1 year form now.'''
         '''this function needs to be rewritten.
 it's ugly and I will not understand it 1 year form now.'''
 
-        if os.path.isfile('%s.%s.mds.1.2.mds.png' %(bfile,self.fn1000g,)):
+        if os.path.isfile('%s.%s.mds.1.2.png' %(bfile,self.fn1000g,)):
             return
 
         if not os.path.isdir('mds'):
@@ -1501,10 +1556,10 @@ it's ugly and I will not understand it 1 year form now.'''
                 pop = l_pops[i_pop]
                 fn_mds_pop = 'mds/%s_%s.mds' %(bfile,pop)
                 if not os.path.isfile(fn_mds_pop):
-                    print 'skipping', pop
+                    print 'mds skipping', pop
                     continue
                 if os.path.getsize(fn_mds_pop) == 0:
-                    print 'skipping', pop
+                    print 'mds skipping', pop
                     continue
                 if pop in d_colors.keys():
                     color = d_colors[pop]
@@ -1535,19 +1590,80 @@ it's ugly and I will not understand it 1 year form now.'''
             n_samples -= 1
             cmd = 'cat %s.%s.prune.in | wc -l' %(bfile,self.fn1000g,)
             n_SNPs = int(os.popen(cmd).read())
+
+            if self.bool_verbose == True:
+                bool_timestamp = True
+
             gnuplot.scatter_plot_2d(
                 '%s.%s.mds' %(bfile,self.fn1000g,),
     ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
     ##            s_plot = s_plot,
                 line_plot = line_plot,
                 column1 = 4-1+c1, column2 = 4-1+c2,
-                xlabel = 'C%i' %(c1),
-                ylabel = 'C%i' %(c2),
+                xlabel = 'D%i' %(c1),
+                ylabel = 'D%i' %(c2),
                 title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                     bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                     ),
                 prefix_out = '%s.%s.mds.%i.%i' %(bfile,self.fn1000g,c1,c2,),
+                bool_timestamp=bool_timestamp,
                 )
+
+        return
+
+
+    def calc_samples(self,bfile,fn_subtract,):
+
+        n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())-1
+        cmd = 'cat %s | wc -l' %(fn_subtract)
+        n_samples -= int(os.popen(cmd).read())
+
+        return n_samples
+
+
+    def scatter_frq_hwe(self,bfile,): ## perhaps do contour instead...
+
+        if os.path.isfile('%s.frq.hwe.png' %(bfile)):
+            return
+
+        n_samples = self.calc_samples(bfile,'%s.sampleQC.IBD.samples' %(bfile))
+        n_SNPs = int(os.popen('cat %s.postIBD.frq | wc -l' %(bfile)).read())-1
+
+        ## sort and join SNPs
+        cmd = "sed '1d' %s.postIBD.frq | sort -k2,2 > %s.postIBD.frq.sorted" %(bfile,bfile,)
+        self.execmd(cmd)
+        cmd = "cat %s.hwe | awk '{if(NR%%3==2) print}' | sort -k2,2" %(bfile,)
+        cmd += " | awk '{logp=-log($9)/log(10); print $2,logp}'"
+        cmd += " > %s.hwe.sorted" %(bfile,)
+        self.execmd(cmd)
+        cmd = 'join -1 2 -2 1 -o 0,1.5,2.2'
+        cmd += ' %s.postIBD.frq.sorted %s.hwe.sorted' %(bfile,bfile)
+        cmd += ' > %s.frq.hwe.joined' %(bfile)
+        self.execmd(cmd)
+
+        os.remove('%s.postIBD.frq.sorted' %(bfile))
+        os.remove('%s.hwe.sorted' %(bfile))
+
+        line_plot = 'plot [:][4:8]'
+        line_plot += '"%s.frq.hwe.joined" ' %(bfile)
+        line_plot += 'u 2:3 lc 0 ps 2 pt 7 t ""'
+        line_plot += '\n'
+
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
+        gnuplot.scatter_plot_2d(
+            '%s.frq.hwe' %(bfile),
+##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
+            line_plot = line_plot,
+            column1 = '(1-$6)', column2 = 12,
+            xlabel = 'MAF',
+            ylabel = '-log(p_{HWE})',
+            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
+                ),
+            bool_timestamp=bool_timestamp,
+            )
 
         return
 
@@ -1745,6 +1861,9 @@ it's ugly and I will not understand it 1 year form now.'''
             continue
         line_plot += '\n'
 
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.scatter_plot_2d(
             '%s.het.call' %(bfile),
 ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
@@ -1756,6 +1875,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             lines_extra = l_arrows,
+            bool_timestamp=bool_timestamp,
             )
 
         os.remove('%s.sex.opposite.dat' %(bfile))
@@ -1918,10 +2038,8 @@ it's ugly and I will not understand it 1 year form now.'''
 
             if (
                 self.bool_run_all == True
-##                and
-##                ## only rerun after completing a step in the "genome loop"
-##                ## not simply after exiting the "genome loop"
-##                plink_cmd not in ['genome','indep-pairwise',]
+                and
+                plink_cmd not in ['genome','indep-pairwise',]
                 ):
                 cmd += self.cmd_rerun(bfile,plink_cmd,)
 
@@ -1984,7 +2102,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def cmd_rerun(self,bfile,plink_cmd,nl='\n',):
 
-        cmd = '\n'
+        cmd = '\n##\n## REINITIATE\n##\n'
         cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
         cmd += 'sleep 300;'
@@ -2474,35 +2592,26 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '%s.fam \\\n' %(self.fp1000g,)
         s += '--make-bed \\\n'
         s += '--out %s.%s \\\n' %(bfile,suffix,)
-        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,self.fn1000g,)
-        ## posthardy
-        s += '--bfile %s.postQC.autosomes \\\n' %(bfile,)
+        s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,self.fn1000g,)
+        s += '--bfile %s \\\n' %(bfile,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
-        s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
-##        ## prehardy
-##        s += '--bfile %s.sampleQC \\\n' %(bfile,)
-##        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
-##        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
+        s += '--exclude %s.lmiss.hwe.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
         s = '--freq \\\n'
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
         s += '--out %s.%s \\\n' %(bfile,suffix,)
-        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
-        ## posthardy
+        s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,suffix,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
-##        ## prehardy
-##        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
-##        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#prune
         s = s_indep_pairwise
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
         s += '--read-freq %s.%s.frq \\\n' %(bfile,suffix,)
-        s += '--extract %s.%s.comm.SNPs \\\n' %(bfile,suffix,)
+        s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,suffix,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
         s += '--out prune/%s.%s.$chrom \\\n' %(bfile,suffix,)
@@ -2721,21 +2830,21 @@ it's ugly and I will not understand it 1 year form now.'''
                 [bfile,bfile,],
                 ]:
                 ## 1) sort
-                cmd += "\ncat %s.bim | awk '{print $2}' | sort > %s.SNPs.sorted" %(
+                cmd += "\ncat %s.bim | awk '{if($1>=1&&$1<=22) print $2}' | sort > %s.autosomes.SNPs.sorted" %(
                     fn_in,fn_out,)
 
-            cmd += '\ncomm -12 %s.SNPs.sorted %s.SNPs.sorted > %s.%s.comm.SNPs' %(
+            cmd += '\ncomm -12 %s.autosomes.SNPs.sorted %s.autosomes.SNPs.sorted > %s.%s.autosomes.comm.SNPs' %(
                 bfile,self.fn1000g,bfile,self.fn1000g,)
 
-            cmd += '\nrm %s.SNPs.sorted %s.SNPs.sorted' %(bfile,self.fn1000g,)
+            cmd += '\nrm %s.autosomes.SNPs.sorted %s.autosomes.SNPs.sorted' %(bfile,self.fn1000g,)
 
 ########            cmd += '\nsort %s.posthardy.prune.in' %(bfile)
 ########            cmd += ' > %s.posthardy.prune.in.sorted' %(bfile)
 ########
-########            cmd += '\ncomm -12 %s.posthardy.prune.in.sorted %s.%s.comm.SNPs > %s.%s.prune.in' %(
+########            cmd += '\ncomm -12 %s.posthardy.prune.in.sorted %s.%s.autosomes.comm.SNPs > %s.%s.prune.in' %(
 ########                bfile,bfile,self.fn1000g,bfile,self.fn1000g,)
 ########
-########            cmd += '\nrm %s.%s.comm.SNPs %s.posthardy.prune.in.sorted' %(
+########            cmd += '\nrm %s.%s.autosomes.comm.SNPs %s.posthardy.prune.in.sorted' %(
 ########                bfile,self.fn1000g,bfile,)
 
 ##            ##
@@ -2796,6 +2905,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = ''
         cmd += 'echo EIGENSOFT\n\n'
 
+        ## EIGENSOFT has a 39 character limit for idnames; i.e. 2x19+1
         cmd += 'cat %s.fam' %(prefix_in)
         ## init awk
         cmd += " | awk '{"
@@ -2820,15 +2930,10 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' | wc -l'
         cmd += ')\n'
         cmd += 'if [ $s -gt 0 ]; then\n'
-        cmd += 'echo duplicate sample IDs or bug'
+        cmd += 'echo duplicate sample IDs or bug\n'
         cmd += 'exit\n'
         cmd += 'fi\n'
         cmd += '\n'
-
-        ##
-        ## create population list file
-        ##
-        cmd += 'echo "fou" > %s.EIGENSOFT.poplist\n' %(prefix)
 
         ##
         ## format IIDs of sample removal list
@@ -2850,10 +2955,19 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += '--remove %s.sampleQC.IBD.EIGENSOFTsamples \\\n' %(prefix)
         cmd += '--make-bed \\\n'
         cmd += '--out %s.EIGENSOFT \\\n' %(prefix)
+        ## --pheno %s.pheno FID,IID,phenotype=fou/nof
 ##        cmd += '\nfi'
         cmd += '\n\n'
 
+        ##
+        ## clean up
+        ##
         cmd += 'rm %s.sampleQC.IBD.EIGENSOFTsamples\n\n' %(prefix)
+
+        ##
+        ## create population list file
+        ##
+        cmd += 'echo "fou" > %s.EIGENSOFT.poplist\n' %(prefix)
 
         ##
         ## sort non-founders
@@ -2978,7 +3092,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## outliersigmathresh: number of standard deviations which an individual must 
         ## exceed, along one of the top (numoutlierevec) principal components, in
         ## order for that individual to be removed as an outlier.  Default is 6.0.
-##            par += 'outliersigmathresh: 4\n'
+##            par += 'outliersigmathresh: 6\n'
         ##
         ## outlieroutname: output logfile of outlier individuals removed. If not specified,
             ## smartpca will print this information to stdout, which is the default.
@@ -3009,8 +3123,9 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://helix.nih.gov/Applications/README.convertf
         ##     6th column is case/control status (1 is control, 2 is case) OR
         ##      quantitative trait value OR population group label.
-
         par += 'poplistname: %s.EIGENSOFT.poplist\n' %(prefix)
+        ##
+        par += 'snpweightoutname: %s.EIGENSOFT.snpweight\n' %(prefix)
 
         fd = open('%s.par' %(prefix),'w')
         fd.write(par)
@@ -3585,6 +3700,9 @@ it's ugly and I will not understand it 1 year form now.'''
             s_average = 'N/A'
             s_stddev = 'N/A'
 
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.histogram2(
             '%s.het' %(bfile),
 ##            x_min=het_min,x_max=het_max,#tic_step=0.05,
@@ -3597,6 +3715,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 ),
             lines_extra = l_arrows,
             color = 'red',
+            bool_timestamp = True,
             )
 
         return
@@ -3606,7 +3725,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
 ##awk 'NR>1{if($10!="PI_HAT") print $0;}' $chip.genome > $chip.genome2
 
-        if os.path.isfile('%s.prehardy.genome.png' %(bfile)):
+        if os.path.isfile('%s.prehardy.genome1.png' %(bfile)):
             return
 
         print 'histogram PI_HAT', bfile
@@ -3677,17 +3796,26 @@ it's ugly and I will not understand it 1 year form now.'''
         fd.writelines(l)
         fd.close()
 
-        for prefix,column,xlabel,x_max,x_step in [
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
+        for prefix,column,xlabel,x_min,x_max,x_step,prefix_out in [
             [
                 '%s.prehardy.genome' %(bfile),
-                '$10','PI CIRCUMFLEX',self.pi_hat_max,0.002,
+                '$10','PI CIRCUMFLEX',0,0.1,0.002,
+                '%s.prehardy.genome1' %(bfile),
                 ],
-            ['%s.genome.max' %(bfile),'$1','PI CIRCUMFLEX MAX',1,0.01,],
+            ['%s.genome.max' %(bfile),'$1','PI CIRCUMFLEX MAX',0,1,0.01,'%s.genome.max' %(bfile),],
+            [
+                '%s.prehardy.genome' %(bfile),
+                '$10','PI CIRCUMFLEX',0.1,1,0.002,
+                '%s.prehardy.genome2' %(bfile),
+                ],
             ]:
 
             gnuplot.histogram2(
                 prefix,
-                x_min=0,
+                x_min=x_min,
                 x_step=x_step,
                 x_max=x_max,
                 column=column,
@@ -3696,6 +3824,8 @@ it's ugly and I will not understand it 1 year form now.'''
                     bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                     ),
                 color = 'green',
+                prefix_out=prefix_out,
+                bool_timestamp = True,
                 )
 
         os.remove('%s.genome.max' %(bfile))
@@ -3721,7 +3851,10 @@ it's ugly and I will not understand it 1 year form now.'''
             x_step=.01
         else:
             x_step=.005
-    
+
+        if self.bool_verbose == True:
+            bool_timestamp = True
+
         gnuplot.histogram2(
             '%s.postIBD.frq' %(bfile),
             x_step=x_step,
@@ -3735,6 +3868,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             color = 'blue',
+            bool_timestamp = True,
             )
 
         return
@@ -3764,6 +3898,9 @@ it's ugly and I will not understand it 1 year form now.'''
             x_step = .1
         else:
             x_step = .01
+
+        if self.bool_verbose == True:
+            bool_timestamp = True
     
         gnuplot.histogram2(
             '%s.SNPQC.lmiss' %(bfile),
@@ -3778,6 +3915,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             color = 'purple',
+            bool_timestamp = True,
             )
 
         return
@@ -3804,6 +3942,9 @@ it's ugly and I will not understand it 1 year form now.'''
             self.threshold_imiss,
             min([float(s) for s in os.popen(cmd).readlines()]),
             )
+
+        if self.bool_verbose == True:
+            bool_timestamp = True
    
         gnuplot.histogram2(
             '%s.imiss' %(bfile),
@@ -3818,6 +3959,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 bfile.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             color = 'orange',
+            bool_timestamp = True,
             )
 
         return
@@ -3948,7 +4090,7 @@ it's ugly and I will not understand it 1 year form now.'''
         l_indexes = []
         l_cmd = cmd.split()
 
-        if '%' in cmd:
+        if '%' in cmd and ".hwe | awk '{if(NR" not in cmd:
             print cmd
             stop
 
@@ -3963,6 +4105,7 @@ it's ugly and I will not understand it 1 year form now.'''
         for index in l_indexes:
             if not os.path.isfile(cmd.split()[index]):
                 print cmd
+                print inspect.stack()[1][3]
                 print 'does not exist:', cmd.split()[index]
                 sys.exit(0)
 
@@ -4196,8 +4339,6 @@ maybe I should rename it.'''
 
         self.dn1000g = '/lustre/scratch107/projects/uganda_gwas/users/tc9/QC'
         self.fn1000g = '1000G_True' ## quad, build37, excl "chip effect" SNPs
-##        self.dn1000g = '/lustre/scratch107/projects/agv/users/tc9/QC/'
-##        self.fn1000g = 'omni25_b37_1kg'
         self.fp1000g = os.path.join(self.dn1000g,self.fn1000g,)
 
         ## dg11 2012oct09 06:32
