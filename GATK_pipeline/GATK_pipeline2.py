@@ -11,6 +11,27 @@ import math, os, sys, time
 ## New in version 2.7
 import argparse
 
+##
+## todo20120724: tc9: split chromosomes into smaller parts before BEAGLE step
+## to avoid requesting 16gb of memory as those nodes are limited
+##
+
+##
+## todo20120816: tc9: automate split bgl file step
+## between producebeagleinput and BEAGLE
+##
+
+##
+## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
+## and for better variant calling? cf. slide 14 of https://www.dropbox.com/sh/e31kvbg5v63s51t/ajQmlTL6YH/ReduceReads.pdf
+## "VQSR Filters are highly empowered by calling all samples together"
+## "Reduced BAMs provides better results for large scale analysis projects ( > 100 samples) because it doesn't require batching."
+## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
+## "Even for single samples ReduceReads cuts the memory requirements, IO burden, and CPU costs of downstream tools significantly (10x or more) and so we recommend you preprocess analysis-ready BAM files with ReducedReads."
+##
+
+## todo20130204: tc9: make memory sample size dependent... only tested on 3 datasets with 100 samples each...
+
 class main():
 
     def main(self):
@@ -683,6 +704,7 @@ echo $CHROMOSOME
             'shell',
             'out_BEAGLE','out_Tommy','out_IMPUTE2',
             'out_UnifiedGenotyper',
+            'out_VariantRecalibrator',
             ]
 
         ## create subdirs
@@ -846,7 +868,7 @@ echo $CHROMOSOME
         
         ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
         ## parse arguments to argparse NameSpace
-        namespace_args = parser.parse_args()
+        self.namespace_args = namespace_args = parser.parse_args()        
 
         ## http://docs.python.org/2/library/functions.html#vars
         for k,v in vars(namespace_args).items():
@@ -865,7 +887,7 @@ echo $CHROMOSOME
                 continue
             fp = v
             ## argument not specified
-            if fp == None: continue
+            if fp == None or fp == 'None': continue
             if fp == self.fp_bams:
                 f = os.path.isdir
             else:
@@ -876,7 +898,7 @@ echo $CHROMOSOME
         if bool_not_found == True:
             sys.exit(0)
 
-        if self.fp_arguments == None:
+        if self.fp_arguments == None or self.fp_arguments == 'None':
             self.fp_arguments = '%s.arguments' %(self.project)
             fd = open(self.fp_arguments,'w')
             fd.write(s_arguments)
@@ -998,17 +1020,15 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                     chrom,interval,
                     )
                 l_vcfs_in += [fp_in]
-        print 'in', len(l_vcfs_in)
-        print 'out', l_vcfs_out
-        if len(set(l_vcfs_in)-set(l_vcfs_out)) > 0:
-            sys.exit(0)
 
         ##
         ##
         ##
         T = analysis_type = 'VariantRecalibrator'
+        fp_out = 'xxx'
 
-        self.touch(analysis_type)
+        bool_return = self.touch(analysis_type)
+##        if bool_return == True: return
 
         lines = self.GATK_initiate('VariantRecalibrator',)
 
@@ -1042,9 +1062,17 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
+        lines += self.term_cmd(analysis_type,fp_out,)
+
         self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
-        return s
+        J = 'VR'
+##        std_suffix = '%s.%s.out' %(self.project,analysis_type,)
+        cmd = self.bsub_cmd(analysis_type,J,memMB=13000,)
+##        os.system(cmd)
+        print cmd
+
+        return
 
 
     def GATK_initiate(self,analysis_type,):
@@ -1075,13 +1103,15 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
     def touch(self,analysis_type):
 
+        bool_return = False
         fn_touch = '%s.touch' %(analysis_type)
         if os.path.isfile(fn_touch):
-            if time.time()-os.path.getmtime(fn_touch) < 60*60:
-                return
+##            if time.time()-os.path.getmtime(fn_touch) < 60*60:
+                print 'in progress:', analysis_type
+                bool_return = True
         os.system('touch %s' %(fn_touch))
 
-        return
+        return bool_return
 
 
     def main_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
@@ -1090,7 +1120,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         T = analysis_type = 'UnifiedGenotyper'
 
-        self.touch(analysis_type)
+        bool_return = self.touch(analysis_type)
+##        if bool_return == True: return
 
         fp_out = 'out_%s/%s.%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
             analysis_type,self.project,analysis_type,)
@@ -1109,13 +1140,12 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += self.UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.term_UnifiedGenotyper(fp_out)
+        lines += self.term_cmd(analysis_type,fp_out)
 
         ## write shell script
         self.write_shell('shell/UnifiedGenotyper.sh',lines,)
 
         ## execute shell script
-        memMB = 4000
         for chrom in l_chroms:
             fp_stdout = 'stdout/%s.UnifiedGenotyper.%s.1.out' %(
                 self.project,chrom,)
@@ -1125,22 +1155,39 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             fp_out_chrom = fp_out_chrom.replace('$CHROMOSOME',chrom)
             if os.path.isfile(fp_out_chrom):
                 continue
-            print fp_stdout, fp_out_chrom
-            stop
             intervals = int(math.ceil(
                 d_chrom_lens[chrom]/self.bps_per_interval))
-            cmd = 'bsub -J"%s%s[%i-%i]" -q normal' %(
-                'UG',chrom,1,intervals,)
-            cmd += ' -G %s' %(self.project)
-            cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
-                memMB,memMB,memMB,)
-            cmd += ' -o stdout/%s.UnifiedGenotyper.%s.%%I.out' %(self.project,chrom)
-            cmd += ' -e stderr/%s.UnifiedGenotyper.%s.%%I.err' %(self.project,chrom)
-            cmd += ' ./shell/UnifiedGenotyper.sh %s' %(chrom)
-            print cmd
+
+            J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
+            std_suffix = '%s.%s.%s.%%I' %(self.project,analysis_type,chrom)
+            cmd = self.bsub_cmd(
+                analysis_type,J,std_suffix=std_suffix,memMB=2000,)
             os.system(cmd)
 
         return
+
+
+    def bsub_cmd(
+        self,
+        analysis_type,
+        J,
+        queue='normal',memMB=4000,
+        std_suffix=None,
+        chrom=None,
+        ):
+
+        if not std_suffix:
+            std_suffix = '%s.%s' %(self.project,analysis_type,)
+
+        cmd = 'bsub -J"%s" -q %s' %(J,queue,)
+        cmd += ' -G %s' %(self.project)
+        cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
+            memMB,memMB,memMB,)
+        cmd += ' -o stdout/%s.out' %(std_suffix)
+        cmd += ' -e stderr/%s.err' %(std_suffix)
+        cmd += ' ./shell/%s.sh %s' %(analysis_type,chrom,)
+
+        return cmd
 
 
     def UnifiedGenotyper(self,fp_out,):
@@ -1213,13 +1260,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return lines
 
 
-    def term_UnifiedGenotyper(self,fp_out,):
+    def term_cmd(self,analysis_type,fp_out,):
 
         ## cont cmd
-        lines = [';echo %s > UnifiedGenotyper.touch;' %(fp_out)]
+        lines = [';echo %s >> %s.touch;' %(fp_out,analysis_type,)]
         s = '/software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
-        s += ' --args %s' %(self.fp_arguments)
+        for k,v in vars(self.namespace_args).items():
+            s += ' --%s %s' %(k,v)
         lines += [s]
         ## term cmd
         lines += ['"']
@@ -1407,52 +1455,3 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 if __name__ == '__main__':
     self = main()
     self.main()
-
-##
-## todo: instead of running step by step, run chromosome by chromosome to ensure all steps are finished before proceeding
-## no instead create a job array for each chromosome!!!
-## multiple bsubs in one shell script will be submitted simultaneously... hmmm..
-## if submitted to job small jobs will be run sequentially... too risky a way of queuing...
-## see this great page referenced on the farm e-mail list:
-## http://apps.sanger.ac.uk/ext-docs/lsf-7.0.6/admin/jobdependencies.html
-##
-
-##
-## todo20120628: tc9: add some check that the output was generated before proceeding
-##
-
-##
-## todo20120628: tc9: add the option of reading parameters from parameter file and/or command line
-## make sure that chosen parameters are written to a parameter.out file
-##
-
-##
-## todo20120717: tc9: option to clean up files from previous steps?
-##
-
-##
-## todo20120724: tc9: instead of writing multiple shell scripts when doing sub chromosomal operations
-## instead pass the size of each chromosome to a generalized shell script
-##
-
-##
-## todo20120724: tc9: split chromosomes into smaller parts before BEAGLE step to avoid requesting 16gb of memory as those nodes are limited
-##
-
-##
-## todo20120726: tc9: make sure that scripts that simple check for file inputs/outputs are submitted to the "small" queue to ensure immediate processing instead of sitting around pending in the fairshare queing system
-##
-
-##
-## todo20120816: tc9: automate split bgl file step
-## between producebeagleinput and BEAGLE
-##
-
-##
-## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
-## and for better variant calling? cf. slide 14 of https://www.dropbox.com/sh/e31kvbg5v63s51t/ajQmlTL6YH/ReduceReads.pdf
-## "VQSR Filters are highly empowered by calling all samples together"
-## "Reduced BAMs provides better results for large scale analysis projects ( > 100 samples) because it doesn't require batching."
-## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
-## "Even for single samples ReduceReads cuts the memory requirements, IO burden, and CPU costs of downstream tools significantly (10x or more) and so we recommend you preprocess analysis-ready BAM files with ReducedReads."
-##
