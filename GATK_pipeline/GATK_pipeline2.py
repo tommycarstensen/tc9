@@ -29,13 +29,11 @@ class main():
         ## write shell scripts
         ##
         self.main_UnifiedGenotyper(l_chroms,d_chrom_lens,)
+
+        self.main_VariantRecalibrator(l_chroms,d_chrom_lens,)
         sys.exit()
 
-        self.main_CombineVariants(l_chroms,d_chrom_lens,)
-
-        self.main_VariantRecalibrator()
-
-        instance_main.main_determine_TS_level()
+        self.main_determine_TS_level()
 
         self.main_ApplyRecalibration()
 
@@ -385,46 +383,6 @@ class main():
         return
 
 
-    def write_initial_script(self):
-
-        ##
-        ## write bsub wrapper; i.e. initiate submission of sequential steps
-        ##
-        bsub_main = '#!/bin/sh\n\n'
-
-        ##
-        ## 1) initiate with step 1
-        ##
-        bsub_main += self.generate_bsub_line(
-            self.l_steps[0],
-            bool_wait = False,
-            )
-
-        ##
-        ## 2) append a check that all output has been generated before proceeding
-        ##
-        bsub_main += 'python ~/github/ms23/GATK_pipeline/check_output.py\n'
-
-        ##
-        ## 3) append step 2 following step 1
-        ## e.g. CombineVariants following UnifiedGenotyper
-        ##
-        step_next = self.l_steps[0+1]
-        s_queue = 'normal'
-        memory_MB = 4000
-        bsub_line_next = self.generate_bsub_line(
-            step_next,
-            s_queue = s_queue,
-            memory_MB = memory_MB,
-            bool_wait = False,
-            )
-        bsub_main += bsub_line_next
-
-        self.write_shell('bsub.sh',bsub_main,)
-
-        return
-
-
     def write_nonarray_scripts(self,d_shell,):
 
         ##
@@ -604,8 +562,8 @@ echo $CHROMOSOME
 ##                    print self.d_file_outputs[step]
 ##                    stop
 
-##                dn_out = instance_main.d_dir_outputs[step]
-##                fn_out = instance_main.d_file_outputs[step][0].replace('$CHROMOSOME',chromosome).replace('.$LSB_JOBINDEX','')
+##                dn_out = self.d_dir_outputs[step]
+##                fn_out = self.d_file_outputs[step][0].replace('$CHROMOSOME',chromosome).replace('.$LSB_JOBINDEX','')
 ##                fp_out = os.path.join(dn_out,fn_out,)
 ##                if (
 ##                    self.bool_skip_if_output_exists == True
@@ -778,6 +736,13 @@ echo $CHROMOSOME
             required = True,
             )
 
+        parser.add_argument(
+            '--arguments','--args','--options','--opts',
+            dest='fp_arguments',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
         ##
         ## VariantRecalibrator resources
         ##
@@ -893,7 +858,9 @@ echo $CHROMOSOME
             parser.error('--GATK or --arguments')
 
         bool_not_found = False
+        s_arguments = ''
         for k,v in vars(namespace_args).items():
+            s_arguments += '%s %s\n' %(k,v)
             if k[:3] != 'fp_':
                 continue
             fp = v
@@ -908,6 +875,24 @@ echo $CHROMOSOME
                 bool_not_found = True
         if bool_not_found == True:
             sys.exit(0)
+
+        if self.fp_arguments == None:
+            self.fp_arguments = '%s.arguments' %(self.project)
+            fd = open(self.fp_arguments,'w')
+            fd.write(s_arguments)
+            fd.close()
+        else:
+            fd = open(self.fp_arguments,'r')
+            lines = fd.readlines()
+            fd.close()
+            for line in lines:
+                l = line.strip().split()
+                k = l[0]
+                v = l[1]
+                setattr(self,k,v)
+
+        print 'dirname', os.path.dirname(self.fp_bams)
+        print 'basename', os.path.basename(self.fp_bams)
 
         return
 
@@ -942,7 +927,7 @@ echo $CHROMOSOME
 
         s = '\n'.join(lines)+'\n\n'
 
-        instance_main.write_shell('shell/ProduceBeagleInput.sh',s,)
+        self.write_shell('shell/ProduceBeagleInput.sh',s,)
 
         return s
 
@@ -986,34 +971,68 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         s = '\n'.join(lines)+'\n\n'
 
-        instance_main.write_shell('shell/ApplyRecalibration.sh',s,)
+        self.write_shell('shell/ApplyRecalibration.sh',s,)
 
         return s
 
 
-    def VariantRecalibrator(self,):
+    def main_VariantRecalibrator(self,l_chroms,d_chrom_lens):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
+
+        ##
+        ## check input existence
+        ##
+        fd = open('UnifiedGenotyper.touch','r')
+        s = fd.read()
+        fd.close()
+        l_vcfs_out = s.strip().split('\n')
+        
+        l_vcfs_in = []
+        for chrom in l_chroms:
+            intervals = int(math.ceil(
+                d_chrom_lens[chrom]/self.bps_per_interval))
+            for interval in range(1,intervals+1,):
+                fp_in = 'out_%s/%s.%s.%s.%i.vcf' %(
+                    'UnifiedGenotyper',self.project,'UnifiedGenotyper',
+                    chrom,interval,
+                    )
+                l_vcfs_in += [fp_in]
+        print 'in', len(l_vcfs_in)
+        print 'out', l_vcfs_out
+        if len(set(l_vcfs_in)-set(l_vcfs_out)) > 0:
+            sys.exit(0)
+
+        ##
+        ##
+        ##
+        T = analysis_type = 'VariantRecalibrator'
+
+        self.touch(analysis_type)
 
         lines = self.GATK_initiate('VariantRecalibrator',)
 
         ## GATKwalker, required, in
-        lines += ['--input out_CombineVariants/CombineVariants.vcf \\']
+        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
         ## GATKwalker, required, out
-        lines += ['--recal_file out_GATK/VariantRecalibrator.recal \\']
-        lines += ['--tranches_file out_GATK/VariantRecalibrator.tranches \\']
+        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator.recal \\']
+        lines += ['--tranches_file out_VariantRecalibrator/VariantRecalibrator.tranches \\']
         ## GATKwalker, required, in (ask Deepti about this...)
-        lines += ['--use_annotation QD --use_annotation HaplotypeScore\
-        --use_annotation MQRankSum --use_annotation ReadPosRankSum --use_annotation MQ\
-        --use_annotation FS --use_annotation DP \\']
+        lines += [
+            '--use_annotation QD \\',
+            '--use_annotation HaplotypeScore \\',
+            '--use_annotation MQRankSum \\',
+            '--use_annotation ReadPosRankSum \\',
+            '--use_annotation MQ \\',
+            '--use_annotation FS \\',
+            '--use_annotation DP \\',
+            ]
         ## GATKwalker, optional, in
         ## Ugandan QCed to be added..!
-        lines += ['-resource:hapmap,known=false,training=true,truth=true,prior=15.0 \
-%s \\' %(instance_main.vcf_hapmap)] ## ask Deepti where the master copy is located (GATK resource bundle)
-        lines += ['-resource:omni,known=false,training=true,truth=false,prior=12.0 \
-%s \\' %(instance_main.vcf_omni25)] ## ask Deepti which vcf file to use as input
-        lines += ['-resource:dbsnp,known=true,training=false,truth=false,prior=8.0 \
-%s \\' %(instance_main.fp_vcf_dbsnp)] ## ask Deepti which vcf file to use as input
+        fd = open('%s' %(self.fp_resources),'r')
+        lines_resources = fd.readlines()
+        fd.close()
+        lines += ['%s \\' %(line.strip()) for line in lines_resources]
 
         l_TStranches = [100,]
         l_TStranches += [99+i/10. for i in range(9,0,-1,)]
@@ -1023,13 +1042,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
-        ## GATKwalker, optional, out
-##        ## generating the VariantRecalibrator.plots.R.pdf file is time consuming, when you are eager to see your results...
-##        lines += ['--rscript_file out_GATK/VariantRecalibrator.%s.plots.R \\' %(chromosome,)]
-
-        s = '\n'.join(lines)
-
-        instance_main.write_shell('shell/VariantRecalibrator.sh',s,)
+        self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
         return s
 
@@ -1047,7 +1060,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         else:
             s += '-Xmx4g '
 ##        s += '-Xmx4g '
-        s += '-jar %s \\' %(instance_main.fp_GATK)
+        s += '-jar %s \\' %(self.fp_GATK)
         lines = [s]
 
         ## CommandLineGATK, required, in
@@ -1055,63 +1068,32 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['--analysis_type %s \\' %(analysis_type)]
         ## CommandLineGATK, optional, in
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
-        lines += ['--reference_sequence %s \\' %(instance_main.fp_FASTA_reference_sequence)]
+        lines += ['--reference_sequence %s \\' %(self.fp_FASTA_reference_sequence)]
 
         return lines
 
 
-    def CombineVariants(self,l_chroms,d_chrom_lens,):
+    def touch(self,analysis_type):
 
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantutils_CombineVariants.html
+        fn_touch = '%s.touch' %(analysis_type)
+        if os.path.isfile(fn_touch):
+            if time.time()-os.path.getmtime(fn_touch) < 60*60:
+                return
+        os.system('touch %s' %(fn_touch))
 
-        '''
-It takes a while to run, so it really shouldn't be run sequentially for each chromosome...
-It takes 5.5 hours to run for the entire Uganda exome (100 samples)
-'''
-
-        lines = ['#!/bin/bash']
-
-        lines += self.GATK_initiate('CombineVariants',)
-
-        ##
-        ## required
-        ##
-
-        ## Input VCF file
-        for chrom in l_chroms:
-            intervals = int(math.ceil(
-                d_chrom_lens[chrom]
-                /
-                instance_main.bps_per_interval))
-            for interval in range(1,intervals+1,):
-                lines += [
-                    '--variant out_GATK/UnifiedGenotyper.%s.vcf.%i \\' %(
-                        chromosome, interval,
-                        )
-                    ]
-
-        lines += ['--out out_GATK/CombineVariants.vcf \\']
-
-        s = '\n'.join(lines)
-
-        instance_main.write_shell('shell/CombineVariants.sh',s,)
-
-        return s
+        return
 
 
     def main_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
 
-        fn_touch = 'UnifiedGenotyper.touch'
-        if os.path.isfile(fn_touch):
-            if time.time()-os.path.getmtime(fn_touch) < 5*60:
-                return
-        os.system('touch %s' %(fn_touch))
-
-        analysis_type = 'UnifiedGenotyper'
-        fp_out = 'out_%s/%s.%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
-            analysis_type,instance_main.project,analysis_type,)
-
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
+
+        T = analysis_type = 'UnifiedGenotyper'
+
+        self.touch(analysis_type)
+
+        fp_out = 'out_%s/%s.%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
+            analysis_type,self.project,analysis_type,)
 
         ## initiate shell script
         lines = ['#!/bin/bash']
@@ -1127,34 +1109,36 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         lines += self.UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.term_UnifiedGenotyper()
+        lines += self.term_UnifiedGenotyper(fp_out)
 
         ## write shell script
-        instance_main.write_shell('shell/UnifiedGenotyper.sh',lines,)
+        self.write_shell('shell/UnifiedGenotyper.sh',lines,)
 
         ## execute shell script
         memMB = 4000
         for chrom in l_chroms:
-            if os.path.isfile('stdout/%s.UnifiedGenotyper.%s.1.out' %(
-                self.project,chrom,)):
+            fp_stdout = 'stdout/%s.UnifiedGenotyper.%s.1.out' %(
+                self.project,chrom,)
+            if os.path.isfile(fp_stdout):
                 continue
-            print fp_out
             fp_out_chrom = fp_out.replace('$LSB_JOBINDEX','1')
             fp_out_chrom = fp_out_chrom.replace('$CHROMOSOME',chrom)
             if os.path.isfile(fp_out_chrom):
                 continue
+            print fp_stdout, fp_out_chrom
+            stop
             intervals = int(math.ceil(
-                d_chrom_lens[chrom]/instance_main.bps_per_interval))
-            cmd = 'bsub -J"%s[%i-%i]" -q normal' %('UG',1,intervals,)
-            cmd += ' -G %s' %(instance_main.project)
+                d_chrom_lens[chrom]/self.bps_per_interval))
+            cmd = 'bsub -J"%s%s[%i-%i]" -q normal' %(
+                'UG',chrom,1,intervals,)
+            cmd += ' -G %s' %(self.project)
             cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
                 memMB,memMB,memMB,)
-            cmd += ' -o stdout/UnifiedGenotyper.%s.%%I.out' %(chrom)
-            cmd += ' -e stderr/UnifiedGenotyper.%s.%%I.err' %(chrom)
+            cmd += ' -o stdout/%s.UnifiedGenotyper.%s.%%I.out' %(self.project,chrom)
+            cmd += ' -e stderr/%s.UnifiedGenotyper.%s.%%I.err' %(self.project,chrom)
             cmd += ' ./shell/UnifiedGenotyper.sh %s' %(chrom)
             print cmd
             os.system(cmd)
-            sys.exit(0)
 
         return
 
@@ -1172,13 +1156,13 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         ##
         ## append input files
         ##
-        l = os.listdir(instance_main.fp_bams)
+        l = os.listdir(self.fp_bams)
         for s in l:
             if s[-4:] != '.bam':
                 continue
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
             lines += [' --input_file %s/%s \\' %(
-                instance_main.fp_bams,s,)]
+                self.fp_bams,s,)]
 
         ##
         ## CommandLineGATK, optional
@@ -1187,13 +1171,13 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [
             '--intervals $CHROMOSOME:$((($LSB_JOBINDEX-1)*%i+1))-$posmax \\' %(
-                int(instance_main.bps_per_interval),)]
+                int(self.bps_per_interval),)]
 
         ##
         ## UnifiedGenotyper, optional
         ##
         ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        lines += [' --dbsnp %s \\' %(instance_main.fp_vcf_dbsnp)]
+        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
         ## Selecting an appropriate quality score threshold
         ## A common question is the confidence score threshold
         ## to use for variant detection. We recommend:
@@ -1229,13 +1213,13 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         return lines
 
 
-    def term_UnifiedGenotyper(self,):
+    def term_UnifiedGenotyper(self,fp_out,):
 
         ## cont cmd
-        lines = [';']
+        lines = [';echo %s > UnifiedGenotyper.touch;' %(fp_out)]
         s = '/software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
-        s += ' --options %s.options' %(instance_main.project)
+        s += ' --args %s' %(self.fp_arguments)
         lines += [s]
         ## term cmd
         lines += ['"']
@@ -1272,7 +1256,7 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         ## otherwise it will raise an I/O error (v. 1.4-15)
         ##
         lines += ['posmax=$((($LSB_JOBINDEX+0)*%i))' %(int(
-            instance_main.bps_per_interval
+            self.bps_per_interval
             ))]
         lines += ['if test $posmax -gt $LENCHROMOSOME']
         lines += ['then posmax=$LENCHROMOSOME']
@@ -1383,7 +1367,7 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
         return
 
 
-    def BeagleOutputToVCF(self,chromosome,):
+    def BeagleOutputToVCF(self,chrom,):
 
         ## this function is currently not called
 
@@ -1421,8 +1405,8 @@ It takes 5.5 hours to run for the entire Uganda exome (100 samples)
 
 
 if __name__ == '__main__':
-    instance_main = main()
-    instance_main.main()
+    self = main()
+    self.main()
 
 ##
 ## todo: instead of running step by step, run chromosome by chromosome to ensure all steps are finished before proceeding
