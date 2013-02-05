@@ -547,10 +547,11 @@ echo $CHROMOSOME
         l_dn = [
             'stdout','stderr',
             'shell',
-            'out_BEAGLE','out_Tommy','out_IMPUTE2',
             'out_UnifiedGenotyper',
             'out_VariantRecalibrator',
             'out_ApplyRecalibration',
+            'out_ProduceBeagleInput',
+            'out_BEAGLE','out_IMPUTE2',
             ]
 
         ## create subdirs
@@ -706,7 +707,6 @@ echo $CHROMOSOME
 
 ##        ## IMPUTE2 input files
 ##        self.fp_impute2_map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
-##        error_input(self.fp_impute2_map)
 
         ##
         ##
@@ -790,6 +790,7 @@ echo $CHROMOSOME
         ## and will produce a likelihood file in BEAGLE format."
 
         T = analysis_type = 'ProduceBeagleInput'
+        memMB = 6000 ## tmp
 
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
@@ -803,22 +804,23 @@ echo $CHROMOSOME
 
         lines += self.cmd_init(analysis_type,memMB,)
 
-
         ## GATKwalker, required, out
         lines += ['--out %s \\' %(fp_out,)]
         ## GATKwalker, required, in
         lines += ['--variant %s \\' %(fp_in)]
 
         ## split bgl by chromosome
+        lines += [';']
         cmd = 'cat %s ' %(fp_out)
-        cmd += '''awk -v FS=":" 'NR>1'''
-        cmd += '''{print>"out_GATK/ProduceBeagleInput."$1".bgl"}' '''
+        cmd += ''' | awk -v FS=":" 'NR>1'''
+        cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
+        cmd = cmd.replace('"','"\'"\'').replace('$','\\$')
         lines += [cmd]
 
-        s = '\n'.join(lines)+'\n\n'
+##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
+        lines += self.cmd_term(analysis_type,[fp_out],)
 
-        self.write_shell('shell/ProduceBeagleInput.sh',s,)
-        stop
+        self.write_shell('shell/ProduceBeagleInput.sh',lines,)
 
         ## execute shell script
         J = 'PBI'
@@ -826,20 +828,33 @@ echo $CHROMOSOME
 ##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
         os.system(cmd)
 
-        return s
+        return
 
 
     def ApplyRecalibration(self,l_chroms,d_chrom_lens,):
+
+        '''
+Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
+http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
+http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
+http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
+"For new approach: just cut at 99% sensitivity"
+http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
+http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
+##
+http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
+'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
 
         ##
         ## check input existence
         ##
-        fp_in = 'out_VariantRecalibrator/VariantRecalibrator.recal'
+        fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
+        fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
 ##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
 ##        l_fp_in = self.d_out[T_prev]
-        bool_exit = self.check_in('VariantRecalibrator',[fp_in],)
+        bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
             
         ##
         ##
@@ -852,14 +867,53 @@ echo $CHROMOSOME
         l_vcfs_in = self.get_fps_in(
             l_chroms,d_chrom_lens,self.bps_per_interval,)
 
-        fp_out = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
-        if os.path.isfile(fp_out):
+        fp_out_vcf = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
+        fp_out_idx = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf.idx'
+        if os.path.isfile(fp_out_vcf):
             return
 
         ##
         ## initialize shell script
         ##
         lines = ['#!/bin/bash']
+
+        cmd = self.determine_TS_level(fp_in)
+        lines += [cmd]
+
+        memMB = 64000
+        memMB = 4000 ## tmp!!!!
+
+        lines += self.cmd_init(analysis_type,memMB,)
+
+        ## GATKwalker, required, in
+        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
+        ## GATKwalker, required, out
+        lines += ['--out %s \\' %(fp_out[:-4],)]
+        ## GATKwalker, required, in
+        lines += ['--recal_file %s \\' %(fp_in_recal)]
+        lines += ['--tranches_file %s \\' %(fp_in_tranches)]
+        ## GATKwalker, optional, in
+        ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
+        ## default is 99.00
+##        lines += ['--ts_filter_level 99.0 \\']
+        lines += ['--ts_filter_level $ts_filter_level \\']
+
+        lines += self.cmd_term(analysis_type,[fp_out_vcf,fp_out_idx,],)
+
+        self.write_shell('shell/ApplyRecalibration.sh',lines,)
+
+        ##
+        ## execute shell script
+        ##
+        J = 'AR'
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
+        os.system(cmd)
+
+        return
+
+
+    def determine_TS_level(self,fp_in,):
 
         cmd = 'ts_filter_level=$('
         ## loop over lines
@@ -889,51 +943,10 @@ echo $CHROMOSOME
         ## term awk
         cmd += " '"
         cmd += ')'
-        lines += [cmd]
 
-        '''
-Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
-http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
-http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
-http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
-"For new approach: just cut at 99% sensitivity"
-http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
-http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
-##
-http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
-'''
+        cmd = cmd.replace('"','"\'"\'').replace('$','\\$')
 
-        memMB = 64000
-        memMB = 4000 ## tmp!!!!
-
-        lines += self.cmd_init(analysis_type,memMB,)
-
-        ## GATKwalker, required, in
-        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out[:-4],)]
-        ## GATKwalker, required, in
-        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator.recal \\']
-        lines += ['--tranches_file out_VariantRecalibrator/VariantRecalibrator.tranches \\']
-        ## GATKwalker, optional, in
-        ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
-        ## default is 99.00
-##        lines += ['--ts_filter_level 99.0 \\']
-        lines += ['--ts_filter_level $ts_filter_level \\']
-
-        lines += self.cmd_term(analysis_type,fp_out,)
-
-        self.write_shell('shell/ApplyRecalibration.sh',lines,)
-
-        ##
-        ## execute shell script
-        ##
-        J = 'AR'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
-        os.system(cmd)
-
-        return
+        return cmd
 
 
     def get_fps_in(self,l_chroms,d_chrom_lens,bps_per_interval,):
@@ -979,7 +992,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         ## GATK walker
         ##
-        lines = self.cmd_init('VariantRecalibrator',memMB,)
+        lines = self.cmd_init(analysis_type,memMB,)
 
         ## GATKwalker, required, in
         lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
@@ -1011,7 +1024,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
-        lines += self.cmd_term(analysis_type,fp_out,)
+        lines += self.cmd_term(analysis_type,[fp_out],)
 
         self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
@@ -1048,7 +1061,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         fn_touch = '%s.touch' %(analysis_type)
         if os.path.isfile(fn_touch):
 ##            if time.time()-os.path.getmtime(fn_touch) < 60*60:
-                print 'in progress:', analysis_type
+                if self.verbose == True:
+                    print 'in progress or completed:', analysis_type
                 bool_return = True
         os.system('touch %s' %(fn_touch))
 
@@ -1082,7 +1096,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += self.body_UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.cmd_term(analysis_type,fp_out)
+        lines += self.cmd_term(analysis_type,[fp_out],)
 
         ## write shell script
         self.write_shell('shell/UnifiedGenotyper.sh',lines,)
@@ -1202,10 +1216,16 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return lines
 
 
-    def cmd_term(self,analysis_type,fp_out,):
+    def cmd_term(self,analysis_type,l_fp_out,):
+
+        if type(l_fp_out) != list:
+            print l_fp_out
+            stop
 
         ## cont cmd
-        lines = [';echo %s >> %s.touch;' %(fp_out,analysis_type,)]
+        lines = [';']
+        for fp_out in l_fp_out:
+            lines += ['echo %s >> %s.touch;' %(fp_out,analysis_type,)]
         s = '/software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
         for k,v in vars(self.namespace_args).items():
@@ -1298,12 +1318,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             ]
 
         self.d_file_outputs = {
-            'UnifiedGenotyper':['UnifiedGenotyper.$CHROMOSOME.vcf.$LSB_JOBINDEX',],
-            'CombineVariants':['CombineVariants.$CHROMOSOME.vcf',],
-            'VariantRecalibrator':[
-                'VariantRecalibrator.$CHROMOSOME.tranches',
-                'VariantRecalibrator.$CHROMOSOME.recal',
-                ],
             'ApplyRecalibration':[
                 'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf',
                 'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf.idx',
@@ -1339,6 +1353,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         ## not currently used, but will be implemented...
         self.bool_send_mail_upon_job_completion = True
+
+        self.verbose = True
 
         return
 
