@@ -49,16 +49,14 @@ class main():
         ##
         ## write shell scripts
         ##
-        self.main_UnifiedGenotyper(l_chroms,d_chrom_lens,)
+        self.UnifiedGenotyper(l_chroms,d_chrom_lens,)
 
-        self.main_VariantRecalibrator(l_chroms,d_chrom_lens,)
+        self.VariantRecalibrator(l_chroms,d_chrom_lens,)
+
+        self.ApplyRecalibration(l_chroms,d_chrom_lens,)
+
+        self.ProduceBeagleInput()
         sys.exit()
-
-        self.main_determine_TS_level()
-
-        self.main_ApplyRecalibration()
-
-        self.main_ProduceBeagleInput()
 
         self.BEAGLE()
 
@@ -108,27 +106,6 @@ class main():
         self.mkdirs()
 
         return
-
-
-    def determine_TS_level(self,):
-
-        make_this_a_shell_script_instead
-
-        ## http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration
-        ## "I took called variants until I found 99% of my known variable sites"
-
-        lines = ['#!/bin/bash']
-
-        ## 
-        lines += ['python ~/github/ms23/GATK_pipeline/determine_TS_level.py \\']
-        ## input
-        lines += ['--input out_GATK/VariantRecalibrator.tranches \\']
-        ## output
-        lines += ['--output out_Tommy/determine_TS_level.txt \\']
-
-        self.write_shell('shell/determine_TS_level.sh',lines,)
-
-        return s
 
 
     def IMPUTE2(self,d_chrom_lens,):
@@ -437,40 +414,10 @@ class main():
                             s_queue = s_queue,
                             memory_MB = memory_MB,
                             )
-                    else:
-                        if step_next == 'VariantRecalibrator':
-                            fn_out = self.d_file_outputs[step_next][0].replace('.$CHROMOSOME','')
-                            dn_out = self.d_dir_outputs[step_next]
-                            fp_out = os.path.join(dn_out,fn_out,)
-                            s_queue = 'normal'
-                            if os.path.isfile(fp_out):
-                                memory_MB = 4000 ## temporary ugly solution...
-                            else:
-                                memory_MB = 12000
-                        elif step_next == 'ApplyRecalibration':
-##                            ## 32GB not enough
-##                            s_queue = 'long'
-##                            memory_MB = 32000
-                            s_queue = 'hugemem'
-                            memory_MB = 64000
-                        else:
-                            s_queue = 'normal'
-                            memory_MB = 4000
-                        bsub_line_next = self.generate_bsub_line(
-                            step_next,
-                            s_queue = s_queue,
-                            memory_MB = memory_MB,
-                            )
-##                    d_bsub_lines[step_next] = bsub_line_next
             else:
                 bsub_line_next = None
 
-            ## skip array steps
-            if step in self.l_steps_array_subchromosome+self.l_steps_array_chromosome:
-                continue
-
-            s = self.check_input_output_shell(step)
-            s += d_shell[step]
+            s = d_shell[step]
             s += '\n\nfi\n\n'
             self.write_shell_script(
                 step,
@@ -514,13 +461,7 @@ echo $CHROMOSOME
             ## do not execute if file output exists...
             s += '\n\n# do not execute if file output exists and if not previous file output exists\n'
             ## check that file exists and is not empty (-s)
-            s_condition = self.check_input_output_shell(step)
-            if step == 'ApplyRecalibration':
-                s_condition = s_condition.replace('.$CHROMOSOME','')
-            s += s_condition
-            if step == 'ApplyRecalibration':
-                s += self.ApplyRecalibration(chromosome_prefix)
-            elif step == 'BEAGLE':
+            if step == 'BEAGLE':
                 s += self.BEAGLE('$CHROMOSOME')
             else:
                 print step
@@ -571,107 +512,11 @@ echo $CHROMOSOME
 
             s = '#!/bin/sh\n\n'
             for chrom in ['X','Y',]+range(1,22+1,):
-##                if chromosome != 22: continue ## tmp
                 chrom = str(chromosome)
-##                ## replace if statements with dictionary...
-##                if step == 'UnifiedGenotyper':
-##                    fp = 'out_GATK/UnifiedGenotyper.%s.vcf.1' %(chrom)
-##                elif step == 'IMPUTE2':
-##                    fp = 'out_IMPUTE2/chromosome%s.impute2.1' %(chrom)
-##                else:
-##                    print step
-##                    print self.d_file_outputs[step]
-##                    stop
-
-##                dn_out = self.d_dir_outputs[step]
-##                fn_out = self.d_file_outputs[step][0].replace('$CHROMOSOME',chromosome).replace('.$LSB_JOBINDEX','')
-##                fp_out = os.path.join(dn_out,fn_out,)
-##                if (
-##                    self.bool_skip_if_output_exists == True
-##                    and
-##                    os.path.isfile(fp_out)
-##                    and
-##                    os.path.getsize(fp_out) > 0
-##                    ):
-##                    continue
-
-####                if self.l_steps.index(step) != 0:
-####                    s += 'if [ ${LSB_JOBINDEX} -eq 1 ]\n'
-####                    s += 'then\n'
-##                if step != 'IMPUTE2': ## tmpxxx
-##                    s += self.check_input_output_shell(step,bool_input=False,chromosome=chromosome,)
-                s += self.check_input_output_shell(step,bool_input=False,chromosome=chromosome,)
                 s += '%s\n' %(d_array[step][chrom])
-####                if self.l_steps.index(step) != 0:
-####                    s += 'fi\n'
                 s += 'fi\n'
 
-    ##        ## append step following UnifiedGenotyper; e.g. CombineVariants
-    ##        if self.bool_sequential == True:
-    ##            s_UG += d_bsub_lines[
-    ##                self.l_steps[self.l_steps.index('UnifiedGenotyper')+1]
-    ##                ]
-
-            self.write_shell_script(step,s,)
-
         return
-
-
-    def check_input_output_shell(self,step,bool_input=True,chromosome=None,):
-
-        s = ''
-        s += 'if [ '
-        s_output = ' ! -s %s/%s ' %(
-            self.d_dir_outputs[step],
-            self.d_file_outputs[step][0].replace('$LSB_JOBINDEX','1'),
-            )
-        if (
-            step in [
-                'CombineVariants',
-                'VariantRecalibrator',
-                'determine_TS_level',
-                'ProduceBeagleInput',
-                ]
-            ):
-            s_output = s_output.replace('.$CHROMOSOME','')
-        s += s_output
-        ## not first step, so also check for input
-        if self.l_steps.index(step) != 0:
-            s_input = ' -a -s %s/%s ' %(
-                self.d_dir_outputs[self.l_steps[self.l_steps.index(step)-1]],
-                self.d_file_outputs[self.l_steps[self.l_steps.index(step)-1]][0].replace('$LSB_JOBINDEX','1'),
-                )
-            ## ApplyRecalibration (VQSR steps) produces *one* output, when run on all chromosomes simultaneously
-            ## use this single output file to check for input for GATKs ProduceBeagleInput
-            if (
-                step in [
-                    'VariantRecalibrator',
-                    'ProduceBeagleInput',
-                    'determine_TS_level',
-                    ]
-                ):
-                s_input = s_input.replace('.$CHROMOSOME','')
-            s += s_input
-        s += ' ]\n'
-##        if self.l_steps.index(step) == 0:
-##            s += 'if [ ! -s %s/%s ]\n' %(
-##                self.d_dir_outputs[step],
-##                self.d_file_outputs[step][0].replace('$LSB_JOBINDEX','1'),
-##                )
-##        else:
-##            ## if in and not out exists
-##            s += 'if [ ! -s %s/%s -a -s %s/%s ]\n' %(
-##                self.d_dir_outputs[step],
-##                self.d_file_outputs[step][0].replace('$LSB_JOBINDEX','1'),
-##                self.d_dir_outputs[self.l_steps[self.l_steps.index(step)-1]],
-##                self.d_file_outputs[self.l_steps[self.l_steps.index(step)-1]][0].replace('$LSB_JOBINDEX','1'),
-##                )
-        s += 'then\n'
-
-        if chromosome:
-            s = s.replace('$CHROMOSOME',chromosome)
-
-        return s
 
 
     def parse_chrom_lens(self):
@@ -705,6 +550,7 @@ echo $CHROMOSOME
             'out_BEAGLE','out_Tommy','out_IMPUTE2',
             'out_UnifiedGenotyper',
             'out_VariantRecalibrator',
+            'out_ApplyRecalibration',
             ]
 
         ## create subdirs
@@ -727,7 +573,7 @@ echo $CHROMOSOME
         ##
 
         parser.add_argument(
-            '--bam','--bams','--bamdir',
+            '--bam','--bams','--bamdir','--fp_bams',
             dest='fp_bams',
             help='Path to directory containing improved BAMs',
             metavar='FILE',default=None,
@@ -735,7 +581,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--GATK',
+            '--GATK','--fp_GATK',
             dest='fp_GATK',
             help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
             metavar='FILE',default=None,
@@ -743,7 +589,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--FASTA','--reference','--reference-sequence','--reference_sequence',
+            '--FASTA','--reference','--reference-sequence','--reference_sequence','--fp_FASTA_reference_sequence',
             dest='fp_FASTA_reference_sequence',
             help='File path to reference sequence in FASTA format (e.g. /lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta)',
             metavar='FILE',default=None,
@@ -759,7 +605,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--arguments','--args','--options','--opts',
+            '--arguments','--args','--options','--opts','--fp_arguments',
             dest='fp_arguments',
             metavar='FILE',default=None,
             required = False,
@@ -770,7 +616,7 @@ echo $CHROMOSOME
         ##
 
         parser.add_argument(
-            '--resources','--VariantRecalibrator',
+            '--resources','--VariantRecalibrator','--fp_resources',
             dest='fp_resources',
             help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
             metavar='FILE',default=None,
@@ -799,7 +645,7 @@ echo $CHROMOSOME
 ##        s_help += '\nYou can get the vcf file with this command:'
 ##        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
         parser.add_argument(
-            '--dbsnp',
+            '--dbsnp','--fp_vcf_dbsnp',
             dest='fp_vcf_dbsnp',
             help=s_help,
             metavar='FILE',default=None,
@@ -810,7 +656,7 @@ echo $CHROMOSOME
         ## BEAGLE
         ##
         parser.add_argument(
-            '--beagle','--BEAGLE','--BEAGLEjar',
+            '--beagle','--BEAGLE','--BEAGLEjar','--fp_software_beagle',
             dest='fp_software_beagle',
             help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
             metavar='FILE',default=None,
@@ -821,7 +667,7 @@ echo $CHROMOSOME
         ## IMPUTE2
         ##
         parser.add_argument(
-            '--impute2','--IMPUTE2','--IMPUTE2jar',
+            '--impute2','--IMPUTE2','--IMPUTE2jar','--fp_software_impute2',
             dest='fp_software_impute2',
             help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
             metavar='FILE',default=None,
@@ -829,7 +675,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--hap','--impute2-hap',
+            '--hap','--impute2-hap','--fp_impute2_hap',
             dest='fp_impute2_hap',
             help='File path to directory containing hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz)',
             ## Ask Deepti where this is downloaded from
@@ -839,7 +685,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--legend','--impute2-legend',
+            '--legend','--impute2-legend','--fp_impute2_legend',
             dest='fp_impute2_legend',
             help='File path to directory containing legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz)',
             ## Ask Deepti where this is downloaded from
@@ -849,7 +695,7 @@ echo $CHROMOSOME
             )
 
         parser.add_argument(
-            '--map','--impute2-map',
+            '--map','--impute2-map','--fp_impute2_map',
             dest='fp_impute2_map',
             help='File path to directory containing map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt)',
             ## Ask Deepti where this is downloaded from
@@ -919,6 +765,21 @@ echo $CHROMOSOME
         return
 
 
+    def check_in(self,analysis_type,l_fp_in,):
+        
+        fd = open('%s.touch' %(analysis_type),'r')
+        s = fd.read()
+        fd.close()
+        l_fp_out = s.split('\n')
+        bool_exit = False
+        if len(set(l_fp_in)-set(l_fp_out)) > 0:
+            print '%s has not run to completion. Exiting.' %(analysis_type)
+            bool_exit = True
+            sys.exit()
+
+        return bool_exit
+
+
     def ProduceBeagleInput(self,):
 
         '''this walker takes approximately 5-10 minutes per chromosome to run'''
@@ -926,20 +787,27 @@ echo $CHROMOSOME
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
         ## "After variants are called and possibly filtered,
         ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
-        ## and will produce a likelihood file in BEAGLE format.
+        ## and will produce a likelihood file in BEAGLE format."
+
+        T = analysis_type = 'ProduceBeagleInput'
+
+        bool_return = self.touch(analysis_type)
+        if bool_return == True: return
+
+        fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
+
+        fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
+        bool_exit = self.check_in('ApplyRecalibration',[fp_in],)
 
         lines = ['#!/bin/bash']
 
-        lines += self.GATK_initiate('ProduceBeagleInput',)
+        lines += self.cmd_init(analysis_type,memMB,)
 
-        fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
 
         ## GATKwalker, required, out
         lines += ['--out %s \\' %(fp_out,)]
         ## GATKwalker, required, in
-        lines += [
-            '--variant out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf \\'
-            ]
+        lines += ['--variant %s \\' %(fp_in)]
 
         ## split bgl by chromosome
         cmd = 'cat %s ' %(fp_out)
@@ -950,11 +818,78 @@ echo $CHROMOSOME
         s = '\n'.join(lines)+'\n\n'
 
         self.write_shell('shell/ProduceBeagleInput.sh',s,)
+        stop
+
+        ## execute shell script
+        J = 'PBI'
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
+        os.system(cmd)
 
         return s
 
 
-    def ApplyRecalibration(self,):
+    def ApplyRecalibration(self,l_chroms,d_chrom_lens,):
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
+
+        ##
+        ## check input existence
+        ##
+        fp_in = 'out_VariantRecalibrator/VariantRecalibrator.recal'
+##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
+##        l_fp_in = self.d_out[T_prev]
+        bool_exit = self.check_in('VariantRecalibrator',[fp_in],)
+            
+        ##
+        ##
+        ##
+        T = analysis_type = 'ApplyRecalibration'
+
+        bool_return = self.touch(analysis_type)
+        if bool_return == True: return
+
+        l_vcfs_in = self.get_fps_in(
+            l_chroms,d_chrom_lens,self.bps_per_interval,)
+
+        fp_out = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
+        if os.path.isfile(fp_out):
+            return
+
+        ##
+        ## initialize shell script
+        ##
+        lines = ['#!/bin/bash']
+
+        cmd = 'ts_filter_level=$('
+        ## loop over lines
+        cmd += 'cat %s' %(fp_in)
+        ## init awk
+        cmd += " | awk '"
+        ## BEGIN
+        cmd += ' BEGIN{FS=","}'
+        ## skip header and loop over rows
+        cmd += ' NR>3{'
+        ## if below novelTiTv ratio
+        cmd += ' if($5<2.1) {'
+        ## if first line
+        cmd += ' if(NR==4) {print $1; exit}'
+        ## else if not first line
+        cmd += ' else {'
+        cmd += ' novelTiTv2=$5; targetTruthSensitivity2=$1;'
+        cmd += ' dy=(novelTiTv2-novelTiTv1);'
+        cmd += ' dx=(targetTruthSensitivity2-targetTruthSensitivity1);'
+        cmd += ' slope=dy/dx;'
+        cmd += ' intercept=novelTiTv1-slope*targetTruthSensitivity1;'
+        cmd += ' print (2.1-intercept)/slope; exit}'
+        ## else if above novelTiTv ratio
+        cmd += ' } else {targetTruthSensitivity1=$1;novelTiTv1=$5}'
+        ## continue loop over rows
+        cmd += ' }'
+        ## term awk
+        cmd += " '"
+        cmd += ')'
+        lines += [cmd]
 
         '''
 Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
@@ -968,22 +903,17 @@ http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_J
 http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 '''
 
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
+        memMB = 64000
+        memMB = 4000 ## tmp!!!!
 
-        fp_in = 'out_Tommy/determine_TS_level.txt'
-
-        lines = ['ts_filter_level=($(cat %s))\n' %(fp_in)]
-
-        lines += self.GATK_initiate('ApplyRecalibration',)
-
-        fp_out = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered'
+        lines += self.cmd_init(analysis_type,memMB,)
 
         ## GATKwalker, required, in
-        lines += ['--input out_CombineVariants/CombineVariants%s.vcf \\']
+        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
         ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out,)]
+        lines += ['--out %s \\' %(fp_out[:-4],)]
         ## GATKwalker, required, in
-        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator%s.recal \\']
+        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator.recal \\']
         lines += ['--tranches_file out_VariantRecalibrator/VariantRecalibrator.tranches \\']
         ## GATKwalker, optional, in
         ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
@@ -991,52 +921,71 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 ##        lines += ['--ts_filter_level 99.0 \\']
         lines += ['--ts_filter_level $ts_filter_level \\']
 
-        s = '\n'.join(lines)+'\n\n'
+        lines += self.cmd_term(analysis_type,fp_out,)
 
-        self.write_shell('shell/ApplyRecalibration.sh',s,)
+        self.write_shell('shell/ApplyRecalibration.sh',lines,)
 
-        return s
+        ##
+        ## execute shell script
+        ##
+        J = 'AR'
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
+        os.system(cmd)
+
+        return
 
 
-    def main_VariantRecalibrator(self,l_chroms,d_chrom_lens):
+    def get_fps_in(self,l_chroms,d_chrom_lens,bps_per_interval,):
+
+        l_vcfs_in = []
+        for chrom in l_chroms:
+            intervals = int(math.ceil(
+                d_chrom_lens[chrom]/bps_per_interval))
+            for interval in range(1,intervals+1,):
+                fp_in = 'out_%s/%s.%s.%i.vcf' %(
+                    'UnifiedGenotyper','UnifiedGenotyper',
+                    chrom,interval,
+                    )
+                l_vcfs_in += [fp_in]
+
+        return l_vcfs_in
+
+
+    def VariantRecalibrator(self,l_chroms,d_chrom_lens):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
         ##
         ## check input existence
         ##
-        fd = open('UnifiedGenotyper.touch','r')
-        s = fd.read()
-        fd.close()
-        l_vcfs_out = s.strip().split('\n')
-        
-        l_vcfs_in = []
-        for chrom in l_chroms:
-            intervals = int(math.ceil(
-                d_chrom_lens[chrom]/self.bps_per_interval))
-            for interval in range(1,intervals+1,):
-                fp_in = 'out_%s/%s.%s.%s.%i.vcf' %(
-                    'UnifiedGenotyper',self.project,'UnifiedGenotyper',
-                    chrom,interval,
-                    )
-                l_vcfs_in += [fp_in]
+        l_vcfs_in = self.get_fps_in(
+            l_chroms,d_chrom_lens,self.bps_per_interval,)
+        bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
 
         ##
         ##
         ##
         T = analysis_type = 'VariantRecalibrator'
-        fp_out = 'xxx'
+        memMB = 15000
 
         bool_return = self.touch(analysis_type)
-##        if bool_return == True: return
+        if bool_return == True: return
 
-        lines = self.GATK_initiate('VariantRecalibrator',)
+        fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
+        fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
+        fp_out = fp_tranches
+
+        ##
+        ## GATK walker
+        ##
+        lines = self.cmd_init('VariantRecalibrator',memMB,)
 
         ## GATKwalker, required, in
         lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
         ## GATKwalker, required, out
-        lines += ['--recal_file out_VariantRecalibrator/VariantRecalibrator.recal \\']
-        lines += ['--tranches_file out_VariantRecalibrator/VariantRecalibrator.tranches \\']
+        lines += ['--recal_file %s \\' %(fp_recal)]
+        lines += ['--tranches_file %s \\' %(fp_tranches)]
         ## GATKwalker, required, in (ask Deepti about this...)
         lines += [
             '--use_annotation QD \\',
@@ -1062,32 +1011,24 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
-        lines += self.term_cmd(analysis_type,fp_out,)
+        lines += self.cmd_term(analysis_type,fp_out,)
 
         self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
         J = 'VR'
-##        std_suffix = '%s.%s.out' %(self.project,analysis_type,)
-        cmd = self.bsub_cmd(analysis_type,J,memMB=13000,)
-##        os.system(cmd)
-        print cmd
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+        os.system(cmd)
 
         return
 
 
-    def GATK_initiate(self,analysis_type,):
+    def cmd_init(self,analysis_type,memMB,):
 
         s = 'cmd="'
         ## run GATK
         s += 'java '
         ## set maximum heap size
-        if analysis_type == 'VariantRecalibrator':
-            s += '-Xmx12g ' ## Max Memory :     11856 MB
-        elif analysis_type == 'ApplyRecalibration':
-            s += '-Xmx62g ' ## 28GB not enough
-        else:
-            s += '-Xmx4g '
-##        s += '-Xmx4g '
+        s += '-Xmx%im ' %(memMB)
         s += '-jar %s \\' %(self.fp_GATK)
         lines = [s]
 
@@ -1114,17 +1055,18 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return bool_return
 
 
-    def main_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
+    def UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
 
         T = analysis_type = 'UnifiedGenotyper'
+        memMB = 2000
 
         bool_return = self.touch(analysis_type)
-##        if bool_return == True: return
+        if bool_return == True: return
 
-        fp_out = 'out_%s/%s.%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
-            analysis_type,self.project,analysis_type,)
+        fp_out = 'out_%s/%s.$CHROMOSOME.$LSB_JOBINDEX.vcf' %(
+            analysis_type,analysis_type,)
 
         ## initiate shell script
         lines = ['#!/bin/bash']
@@ -1134,13 +1076,13 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             l_chroms,d_chrom_lens,)
 
         ## initiate GATK command
-        lines += self.GATK_initiate('UnifiedGenotyper',)
+        lines += self.cmd_init('UnifiedGenotyper',memMB,)
 
         ## append GATK command options
-        lines += self.UnifiedGenotyper(fp_out,)
+        lines += self.body_UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.term_cmd(analysis_type,fp_out)
+        lines += self.cmd_term(analysis_type,fp_out)
 
         ## write shell script
         self.write_shell('shell/UnifiedGenotyper.sh',lines,)
@@ -1159,9 +1101,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 d_chrom_lens[chrom]/self.bps_per_interval))
 
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
-            std_suffix = '%s.%s.%s.%%I' %(self.project,analysis_type,chrom)
+            std_suffix = '%s.%s.%%I' %(analysis_type,chrom)
             cmd = self.bsub_cmd(
-                analysis_type,J,std_suffix=std_suffix,memMB=2000,)
+                analysis_type,J,std_suffix=std_suffix,memMB=memMB,chrom=chrom,)
             os.system(cmd)
 
         return
@@ -1177,7 +1119,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ):
 
         if not std_suffix:
-            std_suffix = '%s.%s' %(self.project,analysis_type,)
+            std_suffix = '%s' %(analysis_type,)
 
         cmd = 'bsub -J"%s" -q %s' %(J,queue,)
         cmd += ' -G %s' %(self.project)
@@ -1190,7 +1132,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return cmd
 
 
-    def UnifiedGenotyper(self,fp_out,):
+    def body_UnifiedGenotyper(self,fp_out,):
 
         lines = []
 
@@ -1260,7 +1202,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return lines
 
 
-    def term_cmd(self,analysis_type,fp_out,):
+    def cmd_term(self,analysis_type,fp_out,):
 
         ## cont cmd
         lines = [';echo %s >> %s.touch;' %(fp_out,analysis_type,)]
@@ -1337,7 +1279,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             'UnifiedGenotyper',
             'CombineVariants',
             'VariantRecalibrator',
-            'determine_TS_level', ## not a GATK step
             'ApplyRecalibration',
             ## Imputation, BEAGLE
             'ProduceBeagleInput',
@@ -1363,7 +1304,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 'VariantRecalibrator.$CHROMOSOME.tranches',
                 'VariantRecalibrator.$CHROMOSOME.recal',
                 ],
-            'determine_TS_level':['determine_TS_level.$CHROMOSOME.txt',], ## not a GATK step
             'ApplyRecalibration':[
                 'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf',
                 'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf.idx',
@@ -1382,18 +1322,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 'chromosome$CHROMOSOME.impute2.gen.$LSB_JOBINDEX_summary',
                 'chromosome$CHROMOSOME.impute2.gen.$LSB_JOBINDEX',
                 ],
-            }
-
-        self.d_queues = {
-            'BEAGLE':'long'
-            }
-
-        self.d_memory = {
-            'BEAGLE':6000,
-            'determine_TS_level':100,
-            'CombineVariants':4000,
-            'UnifiedGenotyper':2000,
-            'VariantRecalibrator':12000,
             }
 
         ##
@@ -1419,7 +1347,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         ## this function is currently not called
 
-        lines = self.GATK_initiate(analysis_type,)
+        lines = self.cmd_init(analysis_type,memMB,)
 
         ## GATKwalker, required, in
         lines += [
