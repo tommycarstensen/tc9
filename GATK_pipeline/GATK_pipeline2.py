@@ -32,6 +32,8 @@ import argparse
 
 ## todo20130204: tc9: make memory sample size dependent... only tested on 3 datasets with 100 samples each...
 
+## todo20130206: tc9: mention problem with splitting and centromeres/telomers to ms23 and dg11 and come up with a better solution if necessary... for now opt for the quick/easy solution...
+
 class main():
 
     def main(self):
@@ -58,9 +60,9 @@ class main():
         self.ProduceBeagleInput()
 
         self.BEAGLE(l_chroms,)
-        sys.exit() ## tmp
 
         self.IMPUTE2(d_chrom_lens,)
+        sys.exit() ## tmp
 
         s = '#!/bin/bash\n'
         s += 'for chrom in {1..22} X Y\ndo\n'
@@ -108,7 +110,85 @@ class main():
         return
 
 
+    def BEAGLE_unite(self,chrom):
+
+        keyword = re.compile(r'\bBeagleOutput.\w*.bgl.\w*.BeagleInput.\w*.bgl.\w*.gprobs\b')
+        l = os.listdir('out_BEAGLE')
+        for s in l:
+            match = keyword.search(s)
+            if not match:
+                continue
+            print s
+            stop
+        stop2
+
+        return
+
+
+    def gprobs2gen():
+
+        ##
+        ## IMPUTE2 takes gen files...
+        ##
+        ##
+        ## gprobs > gen
+        ##
+        ## skip header
+        s_more = 'more +2 %s' %(fp_gprobs,)
+        ## print columns 1 and 2 when using field separator : (i.e. a replacement of field operator)
+        s_awk1 = "awk -F : '{print $1, $2}'"
+        ## print columns 1 and 2 with default field separator (i.e. append columns)
+        s_awk2 = '''awk '{print $1":"$2, $1":"$2, $0}' '''
+        ## cut out column 3 and do *not* print this column (i.e. remove "marker" from header and chromosomeID from subsequent rows)
+        s_cut = 'cut -d " " -f 3 --complement > out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
+        s_convert = ' | '.join([s_more,s_awk1,s_awk2,s_cut])
+        cmd += '\n'+s_convert+'\n\n'
+##        print s_convert
+##        os.system(s_convert)
+##        stop
+
+        return
+
+
     def IMPUTE2(self,d_chrom_lens,):
+
+        for chrom in l_chroms:
+            BEAGLE_unite(chrom)
+
+        self.gprobs2gen()
+
+        ##
+        ## gprobs > sample
+        ##
+        fp_out = 'out_BEAGLE/chromosome$CHROMOSOME.sample'
+        cmd += '''echo "ID_1 ID_2 missing\n0 0 0" > %s ; \
+        head -1 %s \
+        | sed 's/ /\\n/g' \
+        | fgrep -v "marker" | fgrep -v "allele" \
+        | uniq \
+        | awk '{print $1, $1, "NA"}' \
+        >> %s''' %(
+            fp_out, fp_gprobs, fp_out,
+            )
+        cmd += '\n\n'
+
+##        ## gen2ped (gen and sample to ped and map)
+##        ## http://www.well.ox.ac.uk/~cfreeman/software/gwas/gtool.html
+##        out_prefix = 'out_GTOOL/gtool.%s' %(chrom)
+##        cmd += 'gtool=/nfs/team149/Software/usr/share/gtool/gtool'
+##        cmd += '$gtool -G '
+##        ## in
+##        cmd += '--g out_BEAGLE/BeagleOutput.%s.gen ' %(chrom)
+##        cmd += '--s out_BEAGLE/chromosome%s.sample ' %(chrom)
+##        ## out
+##        cmd += '--ped %s.ped ' %(out_prefix)
+##        cmd += '--map %s.map ' %(out_prefix)
+##        ## parameters
+##        cmd += '--phenotype phenotype_1 --threshold 0.9 --snp'
+##        cmd += '\n'
+
+
+        fp_in = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
 
 ##        intervals_IMPUTE2 = int(math.ceil(
 ##            d_chrom_lens[chrom]
@@ -136,6 +216,8 @@ class main():
         s_haps = self.fp_impute2_hap
         s_legend = self.fp_impute2_legend
 
+        print self.fp_impute2_map
+        stop
         lines += ['if [ $CHROMOSOME=="X" ]\nthen']
         lines += ['map=%s' %(self.fp_impute2_map.replace('$CHROMOSOME','$CHROMOSOME_PAR1',),)]
         lines += ['else']
@@ -143,7 +225,7 @@ class main():
         lines += ['fi']
         
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-g
-        fn_genotype    = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
+        fn_genotype    = '%s' %(fp_in)
 ##        ## Strand alignment options
 ##        s_strand       = '/lustre/scratch107/projects/agv/imputation/trial3/mock_strand_file/strand_file_chr%s.txt' %(chrom)
 
@@ -158,7 +240,10 @@ class main():
         lines += ['fi\n']
         s = '\n'.join(lines)
 
-        s += '/software/hgi/impute2/v2.2.2/bin/impute2 \\'
+        ##
+        ## initiate impute2 command
+        ##
+        s += '%s \\' %(self.fp_software_IMPUTE2)
 
         ##
         ## Required arguments
@@ -212,21 +297,49 @@ class main():
         return
 
 
+    def BEAGLE_parse_input(self,chrom,):
+
+        l_fps = []
+        for fp_in in [self.fp_BEAGLE_phased,self.fp_BEAGLE_markers,]:
+            fd = open(fp_in,'r')
+            lines = fd.readlines()
+            fd.close()
+            for line in lines:
+                l = line.strip().split()
+                if l[0] == chrom:
+                    l_fps += [l[1]]
+                    break
+                elif l[0] == '$CHROM':
+                    l_fps += [l[1].replace('$CHROM',chrom)]
+                    break
+                continue
+
+        fp_phased = l_fps[0]
+        fp_markers = l_fps[1]
+
+        bool_found = True
+        for fp in l_fps:
+            if not os.path.isfile(fp):
+                print fp, 'not found'
+                bool_found = False
+        if bool_found == False:
+            sys.exit()
+
+        return fp_phased, fp_markers
+
+
     def BEAGLE_divide(self,chrom,):
 
         ##
         ## size and edge
         ##
         size = self.i_BEAGLE_size*1000000
-        edge = opts.i_BEAGLE_edge*1000
+        edge = self.i_BEAGLE_edge*1000
 
-        fp_in = opts.fp_in
         fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
+        fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.%s' %(chrom)
 
-        fp_out = opts.fp_out
-        if fp_out == None:
-            fp_out = fp_in
-            pass
+        fp_phased, fp_markers = self.BEAGLE_parse_input(chrom,)
 
         ##
         ## open files
@@ -265,7 +378,7 @@ class main():
             print position, position_init1
             break
 
-        index = 0
+        index = 1 ## LSF does not allow 0 for LSB_JOBINDEX... "Bad job name. Job not submitted."
         for line in fd_bgl:
             l = line.strip().split()
             ## assume markers to be formatted like CHROM:POS
@@ -278,7 +391,8 @@ class main():
                         fd_out = open('%s.like.%i' %(fp_out,index,),'w')
                         fd_out.writelines(lines_out1)
                         fd_out.close()
-                        print position,position_init1,index,len(lines_out1)
+                        print 'pos_curr %9i, pos_init %9i, index %3i, n_lines %5i' %(
+                            position,position_init1,index,len(lines_out1))
                         while True:
                             ## read next line
                             line_markers = fd_markers.readline()
@@ -324,20 +438,20 @@ class main():
 
         ## close after looping over last line
         fd_bgl.close()
-        ## write remaining few lines to output file
-        fd_out = open('%s.%i' %(fp_out,index,),'w')
-        fd_out.writelines(lines_out1)
-        fd_out.close()
+##        ## write remaining few lines to output file
+##        fd_out = open('%s.%i.bgl' %(fp_out,index,),'w')
+##        fd_out.writelines(lines_out1)
+##        fd_out.close()
         print position,position_init1,index,len(lines_out1)
         ## write markers
         lines_out_markers = fd_markers.readlines()
-        fd = open('%s.markers.%i' %(fp_out,index,),'w')
+        fd = open('%s.%i.markers' %(fp_out,index,),'w')
         fd.writelines(lines_out_markers)
         fd.close()
         ## write phased
         lines_phased = fd_phased.readlines()
         lines_out_phased = [header_phased]+lines_phased
-        fd = open('%s.phased.%i' %(fp_out,index,),'w')
+        fd = open('%s.%i.phased' %(fp_out,index,),'w')
         fd.writelines(lines_out_phased)
         fd.close()
 
@@ -345,7 +459,7 @@ class main():
         fd_markers.close()
         fd_phased.close()
 
-        return
+        return index
 
 
     def BEAGLE(self,l_chroms,):
@@ -358,49 +472,82 @@ class main():
         ## it's strongly recommended that BEAGLE be run on a separate chromosome-by-chromosome basis.
         ## In the current use case, BEAGLE uses RAM in a manner approximately proportional to the number of input markers.
 
-        for chrom in l_chroms:
-            self.BEAGLE_divide(chrom)
-
-        stop_make_this_step_similar_to_UG
-        ## use init_UnifiedGenotyper but with different bp interval sizes
-
-        ## "Then run beagle imputation
+        ## dg11: "Then run beagle imputation
         ## (you may have to chunk up for imputation
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        ## initiate command
-        cmd = ''
+        memMB = 5000 ## tmp!!! need to test... think this is spot on though!!!
 
-        ## 
-        cmd += 'CHROMOSOME=$1\n'
+        ##
+        ## check input existence
+        ##
+        fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
+        bool_exit = self.check_in('ProduceBeagleInput',[fp_in,],)
 
-        ## split bgl
-        cmd += 'if [ ! -s in_BEAGLE/BeagleInput.$CHROMOSOME.bgl.00 ]\nthen\n'
-        cmd += 'python ~/github/ms23/conversion/BEAGLE_divide.py '
-        cmd += '-i out_GATK/ProduceBeagleInput.$CHROMOSOME.excluded.bgl '
-        cmd += '-m ../in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.markers '
-        cmd += '-p ../in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.bgl '
-        cmd += '-o in_BEAGLE/BeagleInput.$CHROMOSOME.bgl'
-        cmd += '\nfi\n'
+        ##
+        ## touch
+        ##
+        bool_return = self.touch('BEAGLE')
+        if bool_return == True: return
 
-        ## do not loop over fragments, but submit job array instead
+        ##
+        ## write shell script
+        ##
+        self.BEAGLE_write_shell_script(memMB)
 
-        cmd += 'if [ ! -s out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl.00\nthen\n'
-        
-##        s += 'java -Xmx4000m -jar %s ' %(self.fp_software_beagle)
-        cmd += 'java -Xmx16000m Djava.io.tmpdir=out_BEAGLE -jar %s ' %(self.fp_software_beagle)
+        ##
+        ## chunk up for imputation due to memory requirements...
+        ##
+        d_indexes = {}
+        for chrom in l_chroms:
+            if chrom != '22': continue ## tmp!!!
+            d_chrom_lens = self.parse_chrom_lens()
+            index_max = self.BEAGLE_divide(chrom)
+            d_indexes[chrom] = index_max
+
+        ##
+        ## execute shell script
+        ##
+        for chrom in l_chroms:
+            if chrom != '22': continue ## tmp!!!
+            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,d_indexes[chrom],)
+            cmd = self.bsub_cmd('BEAGLE',J,memMB=memMB,)
+            print cmd
+            os.system(cmd)
+
+        return
+
+
+    def BEAGLE_write_shell_script(self,memMB,):
+
+        fp_out = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl'
+
+        ## initiate shell script
+        lines = ['#!/bin/bash\n']
+
+        ## parse chromosome from command line
+        lines += ['CHROMOSOME=$1\n']
+
+        ## init cmd
+        lines += ['cmd="']
+
+        ##
+        ## initiate BEAGLE
+        ##
+        lines += ['java -Xmx%im Djava.io.tmpdir=out_BEAGLE -jar %s \\' %(
+            memMB,self.fp_software_beagle)]
 
 ##like=<unphased likelihood data file> where <unphased likelihood data file> is the name of 
 ##a genotype likelihoods file for unphased, unrelated data (see Section 2.2).   You may use 
 ##multiple like arguments if data from different cohorts are in different files.
-        cmd += ' like=out_GATK/ProduceBeagleInput.$CHROMOSOME.bgl '
+        lines += [' like=out_ProduceBeagleInput/ProduceBeagleInput.$CHROMOSOME.bgl \\']
 ####arguments for phasing and imputing data ...
 #### Arguments for specifying files
 ## phased=<phased unrelated file> where <phased unrelated file> is the name of a Beagle file
 ## containing phased unrelated data (see Section 2.1).
 ## You may use multiple phased arguments if data from different cohorts are in different files.
-        cmd += ' phased=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.bgl '
+        lines += [' phased=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.bgl \\']
 ####  unphased=<unphased data file>                     (optional)
 ####  phased=<phased data file>                         (optional)
 ####  pairs=<unphased pair data file>                   (optional)
@@ -411,7 +558,7 @@ class main():
 ## The markers argument is optional if you specify only one Beagle file,
 ## and is required if you specify more than one Beagle file.
 ##        s += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr%s.phase1_release_v3.20101123.filt.markers ' %(chrom)
-        cmd += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.markers '
+        lines += [' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.markers \\']
 ####missing=<missing code> where <missing code> is the character or sequence of characters used to represent a missing allele (e.g. missing=-1 or missing=?).
 #### The missing argument is required.
 ##        s += ' missing=? '
@@ -423,7 +570,7 @@ class main():
 ##use a smaller nsamples parameter (e.g. 1 or 2) to reduce computation time.  If you are 
 ##phasing a small sample (say < 200 individuals), you may want to use a larger nsamples
 ##parameter (say 10 or 20) to increase accuracy.
-        cmd += ' nsamples=20 ' %(int(self.i_BEAGLE_nsamples))
+        lines += [' nsamples=%i \\' %(int(self.i_BEAGLE_nsamples))]
 
 ## lowmem=<true/false> where <true/false> is true if a memory-efficient,
 ## but slower, implementation of the sampling algorithm should be used.
@@ -431,83 +578,35 @@ class main():
 ## and the memory usage will be essentially independent of the number of markers. The lowmem argument is optional. The default value is lowmem=false.
 ## For haplotype phase inference and imputation of missing data with default BEAGLE options, memory usage increases with the number of markers. It you need to reduce the amount of memory BEAGLE is using, try one or more of the following techniques:
 ## 1. Use the lowmem=true command line argument (see Section 3.2.2). The lowmem option makes memory requirements essentially independent of the number of markers.
-        cmd += ' lowmem=true '
+        lines += [' lowmem=true \\']
 
         ## non-optional output prefix
-        cmd += ' out=out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl'
+        lines += [' out=%s \\' %(fp_out)]
 
+        ##
         ## terminate BEAGLE
-        cmd += '\n'
-
-        cmd += 'fi\n'
+        ##
+        lines += [';']
 
         ##
         ## gunzip the output files after runs to completion
         ##
-        cmd += '\n\n'
+        l = []
         for suffix in ['dose','phased','gprobs',]:
-            fp = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl'
+            fp = '%s' %(fp_out)
             fp += '.ProduceBeagleInput.$CHROMOSOME.bgl.%s.gz.$LSBJOBINDEX' %(
                 suffix,
                 )
-            s_gunzip = 'gunzip %s\n' %(fp)
-            cmd += s_gunzip
-            if suffix == 'gprobs':
-                fp_gprobs = fp
+            l += ['gunzip %s' %(fp)]
+        lines += [';'.join(l)]
 
-        ##
-        ## IMPUTE2 takes gen files...
-        ##
-        ##
-        ## gprobs > gen
-        ##
-        ## skip header
-        s_more = 'more +2 %s' %(fp_gprobs,)
-        ## print columns 1 and 2 when using field separator : (i.e. a replacement of field operator)
-        s_awk1 = "awk -F : '{print $1, $2}'"
-        ## print columns 1 and 2 with default field separator (i.e. append columns)
-        s_awk2 = '''awk '{print $1":"$2, $1":"$2, $0}' '''
-        ## cut out column 3 and do *not* print this column (i.e. remove "marker" from header and chromosomeID from subsequent rows)
-        s_cut = 'cut -d " " -f 3 --complement > out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
-        s_convert = ' | '.join([s_more,s_awk1,s_awk2,s_cut])
-        cmd += '\n'+s_convert+'\n\n'
-##        print s_convert
-##        os.system(s_convert)
-##        stop
+        ## term cmd
+        lines += self.term_cmd('BEAGLE',[fp_out],)
 
-        ##
-        ## gprobs > sample
-        ##
-        fp_out = 'out_BEAGLE/chromosome$CHROMOSOME.sample'
-        cmd += '''echo "ID_1 ID_2 missing\n0 0 0" > %s ; \
-        head -1 %s \
-        | sed 's/ /\\n/g' \
-        | fgrep -v "marker" | fgrep -v "allele" \
-        | uniq \
-        | awk '{print $1, $1, "NA"}' \
-        >> %s''' %(
-            fp_out, fp_gprobs, fp_out,
-            )
-        cmd += '\n\n'
-
-##        ## gen2ped (gen and sample to ped and map)
-##        ## http://www.well.ox.ac.uk/~cfreeman/software/gwas/gtool.html
-##        out_prefix = 'out_GTOOL/gtool.%s' %(chrom)
-##        cmd += 'gtool=/nfs/team149/Software/usr/share/gtool/gtool'
-##        cmd += '$gtool -G '
-##        ## in
-##        cmd += '--g out_BEAGLE/BeagleOutput.%s.gen ' %(chrom)
-##        cmd += '--s out_BEAGLE/chromosome%s.sample ' %(chrom)
-##        ## out
-##        cmd += '--ped %s.ped ' %(out_prefix)
-##        cmd += '--map %s.map ' %(out_prefix)
-##        ## parameters
-##        cmd += '--phenotype phenotype_1 --threshold 0.9 --snp'
-##        cmd += '\n'
-
+        ## write shell script
         self.write_shell('shell/BEAGLE.sh',lines,)
 
-        return cmd
+        return
 
 
     def bsub_all_chroms_all_steps(self,d_array,d_shell,):
@@ -655,209 +754,6 @@ echo $CHROMOSOME
         return
 
 
-    def parse_arguments(self,):
-
-        ## http://docs.python.org/2/library/argparse.html#module-argparse
-        ## New in version 2.7
-        ## optparse deprecated since version 2.7
-        parser = argparse.ArgumentParser()
-
-        ##
-        ## add arguments
-        ##
-
-        parser.add_argument(
-            '--bam','--bams','--bamdir','--fp_bams',
-            dest='fp_bams',
-            help='Path to directory containing improved BAMs',
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--GATK','--fp_GATK',
-            dest='fp_GATK',
-            help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--FASTA','--reference','--reference-sequence','--reference_sequence','--fp_FASTA_reference_sequence',
-            dest='fp_FASTA_reference_sequence',
-            help='File path to reference sequence in FASTA format (e.g. /lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta)',
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--project','-P','-G',
-            dest='project',
-            help='Project',
-            metavar='STRING',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--arguments','--args','--options','--opts','--fp_arguments',
-            dest='fp_arguments',
-            metavar='FILE',default=None,
-            required = False,
-            )
-
-        ##
-        ## VariantRecalibrator resources
-        ##
-
-        parser.add_argument(
-            '--resources','--VariantRecalibrator','--fp_resources',
-            dest='fp_resources',
-            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
-            metavar='FILE',default=None,
-            required = False,
-            )
-
-##        parser.add_argument(
-##            '--hapmap',
-##            dest='fp_resource_hapmap',
-##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/hapmap_3.3.b37.sites.vcf)',
-##            metavar='FILE',default=None,
-##            required = False,
-##            )
-##
-##        parser.add_argument(
-##            '--omni',
-##            dest='fp_resource_omni',
-##            help='File path to omni vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/1000G_omni2.5.b37.sites.vcf)',
-##            metavar='FILE',default=None,
-##            required = False,
-##            )
-
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
-        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
-##        s_help += '\nYou can get the vcf file with this command:'
-##        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
-        parser.add_argument(
-            '--dbsnp','--fp_vcf_dbsnp',
-            dest='fp_vcf_dbsnp',
-            help=s_help,
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        ##
-        ## BEAGLE
-        ##
-        parser.add_argument(
-            '--beagle','--BEAGLE','--BEAGLEjar','--fp_software_beagle',
-            dest='fp_software_beagle',
-            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        ##
-        ## IMPUTE2
-        ##
-        parser.add_argument(
-            '--impute2','--IMPUTE2','--IMPUTE2jar','--fp_software_impute2',
-            dest='fp_software_impute2',
-            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--hap','--impute2-hap','--fp_impute2_hap',
-            dest='fp_impute2_hap',
-            help='File path to directory containing hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--legend','--impute2-legend','--fp_impute2_legend',
-            dest='fp_impute2_legend',
-            help='File path to directory containing legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-        parser.add_argument(
-            '--map','--impute2-map','--fp_impute2_map',
-            dest='fp_impute2_map',
-            help='File path to directory containing map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
-            metavar='FILE',default=None,
-            required = True,
-            )
-
-##        ## IMPUTE2 input files
-##        self.fp_impute2_map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
-
-        ##
-        ##
-        ##
-        
-        ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
-        ## parse arguments to argparse NameSpace
-        self.namespace_args = namespace_args = parser.parse_args()        
-
-        ## http://docs.python.org/2/library/functions.html#vars
-        for k,v in vars(namespace_args).items():
-            setattr(self,k,v)
-            continue
-
-
-        if self.fp_GATK is None and self.fp_options is None:
-            parser.error('--GATK or --arguments')
-
-        bool_not_found = False
-        s_arguments = ''
-        for k,v in vars(namespace_args).items():
-            s_arguments += '%s %s\n' %(k,v)
-            if k[:3] != 'fp_':
-                continue
-            fp = v
-            ## argument not specified
-            if fp == None or fp == 'None': continue
-            if fp == self.fp_bams:
-                f = os.path.isdir
-            else:
-                f = os.path.isfile
-            if not f(fp):
-                print 'file path does not exist:', fp
-                bool_not_found = True
-        if bool_not_found == True:
-            sys.exit(0)
-
-        if self.fp_arguments == None or self.fp_arguments == 'None':
-            self.fp_arguments = '%s.arguments' %(self.project)
-            fd = open(self.fp_arguments,'w')
-            fd.write(s_arguments)
-            fd.close()
-        else:
-            fd = open(self.fp_arguments,'r')
-            lines = fd.readlines()
-            fd.close()
-            for line in lines:
-                l = line.strip().split()
-                k = l[0]
-                v = l[1]
-                setattr(self,k,v)
-
-        print 'dirname', os.path.dirname(self.fp_bams)
-        print 'basename', os.path.basename(self.fp_bams)
-
-        return
-
-
     def check_in(self,analysis_type,l_fp_in,):
         
         fd = open('%s.touch' %(analysis_type),'r')
@@ -895,7 +791,7 @@ echo $CHROMOSOME
 
         lines = ['#!/bin/bash']
 
-        lines += self.cmd_init(analysis_type,memMB,)
+        lines += self.init_cmd(analysis_type,memMB,)
 
         ## GATKwalker, required, out
         lines += ['--out %s \\' %(fp_out,)]
@@ -911,7 +807,7 @@ echo $CHROMOSOME
         lines += [cmd]
 
 ##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
-        lines += self.cmd_term(analysis_type,[fp_out],)
+        lines += self.term_cmd(analysis_type,[fp_out],)
 
         self.write_shell('shell/ProduceBeagleInput.sh',lines,)
 
@@ -976,7 +872,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         memMB = 64000
         memMB = 4000 ## tmp!!!!
 
-        lines += self.cmd_init(analysis_type,memMB,)
+        lines += self.init_cmd(analysis_type,memMB,)
 
         ## GATKwalker, required, in
         lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
@@ -991,7 +887,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 ##        lines += ['--ts_filter_level 99.0 \\']
         lines += ['--ts_filter_level $ts_filter_level \\']
 
-        lines += self.cmd_term(analysis_type,[fp_out_vcf,fp_out_idx,],)
+        lines += self.term_cmd(analysis_type,[fp_out_vcf,fp_out_idx,],)
 
         self.write_shell('shell/ApplyRecalibration.sh',lines,)
 
@@ -1085,7 +981,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         ## GATK walker
         ##
-        lines = self.cmd_init(analysis_type,memMB,)
+        lines = self.init_cmd(analysis_type,memMB,)
 
         ## GATKwalker, required, in
         lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
@@ -1117,7 +1013,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
-        lines += self.cmd_term(analysis_type,[fp_out],)
+        lines += self.term_cmd(analysis_type,[fp_out],)
 
         self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
@@ -1128,7 +1024,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return
 
 
-    def cmd_init(self,analysis_type,memMB,):
+    def init_cmd(self,analysis_type,memMB,):
 
         s = 'cmd="'
         ## run GATK
@@ -1183,13 +1079,13 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             l_chroms,d_chrom_lens,)
 
         ## initiate GATK command
-        lines += self.cmd_init('UnifiedGenotyper',memMB,)
+        lines += self.init_cmd('UnifiedGenotyper',memMB,)
 
         ## append GATK command options
         lines += self.body_UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.cmd_term(analysis_type,[fp_out],)
+        lines += self.term_cmd(analysis_type,[fp_out],)
 
         ## write shell script
         self.write_shell('shell/UnifiedGenotyper.sh',lines,)
@@ -1311,7 +1207,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         return lines
 
 
-    def cmd_term(self,analysis_type,l_fp_out,):
+    def term_cmd(self,analysis_type,l_fp_out,):
 
         if type(l_fp_out) != list:
             print l_fp_out
@@ -1368,6 +1264,294 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['fi\n']
 
         return lines
+
+
+    def BeagleOutputToVCF(self,chrom,):
+
+        ## this function is currently not called
+
+        lines = self.init_cmd(analysis_type,memMB,)
+
+        ## GATKwalker, required, in
+        lines += [
+            '--beaglePhased:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.phased \\' %(
+                chromosome,chromosome,
+                ),
+            ]
+        lines += [
+            '--beagleProbs:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.gprobs \\' %(
+                chromosome,chromosome,
+                ),
+            ]
+        lines += [
+            '--beagleR2:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.r2 \\' %(
+                chromosome,chromosome,
+                ),
+            ]
+        ## GATKwalker, required, out
+        fp_out = 'out_GATK/%s.%s.vcf' %(analysis_type,chromosome,)
+        lines += ['--out %s \\' %(fp_out,)]
+        ## GATKwalker, required, in
+        lines += [
+            '--variant out_GATK/ApplyRecalibration.recalibrated.filtered.%s.vcf \\' %(
+                chromosome
+                )
+            ]
+
+        s = '\n'.join(lines)+'\n\n'
+
+        return s
+
+
+    def parse_arguments(self,):
+
+        ## http://docs.python.org/2/library/argparse.html#module-argparse
+        ## New in version 2.7
+        ## optparse deprecated since version 2.7
+        parser = argparse.ArgumentParser()
+
+        ##
+        ## add arguments
+        ##
+
+        parser.add_argument(
+            '--bam','--bams','--bamdir','--fp_bams',
+            dest='fp_bams',
+            help='Path to directory containing improved BAMs',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--GATK','--fp_GATK',
+            dest='fp_GATK',
+            help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--FASTA','--reference','--reference-sequence','--reference_sequence','--fp_FASTA_reference_sequence',
+            dest='fp_FASTA_reference_sequence',
+            help='File path to reference sequence in FASTA format (e.g. /lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--project','-P','-G',
+            dest='project',
+            help='Project',
+            metavar='STRING',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--arguments','--args','--options','--opts','--fp_arguments',
+            dest='fp_arguments',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
+        ##
+        ## VariantRecalibrator resources
+        ##
+
+        parser.add_argument(
+            '--resources','--VariantRecalibrator','--fp_resources',
+            dest='fp_resources',
+            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
+##        parser.add_argument(
+##            '--hapmap',
+##            dest='fp_resource_hapmap',
+##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/hapmap_3.3.b37.sites.vcf)',
+##            metavar='FILE',default=None,
+##            required = False,
+##            )
+##
+##        parser.add_argument(
+##            '--omni',
+##            dest='fp_resource_omni',
+##            help='File path to omni vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/1000G_omni2.5.b37.sites.vcf)',
+##            metavar='FILE',default=None,
+##            required = False,
+##            )
+
+        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
+        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
+##        s_help += '\nYou can get the vcf file with this command:'
+##        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
+        parser.add_argument(
+            '--dbsnp','--fp_vcf_dbsnp',
+            dest='fp_vcf_dbsnp',
+            help=s_help,
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        ##
+        ## BEAGLE
+        ##
+        parser.add_argument(
+            '--beagle','--BEAGLE','--BEAGLEjar','--fp_software_beagle',
+            dest='fp_software_beagle',
+            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--i_BEAGLE_size',
+            dest='i_BEAGLE_size',
+            help='Size (Mbp) of divided parts.',
+            metavar='FILE',default=2,
+            required = False,
+            )
+
+        parser.add_argument(
+            '--i_BEAGLE_edge',
+            dest='i_BEAGLE_edge',
+            help='Window size (kbp) at either side of the divided part to avoid edge effects.',
+            metavar='FILE',default=150,
+            required = False,
+            )
+
+        s_help = 'Path to a file with 2 columns\n'
+        s_help += 'Column 1: Chromosome (e.g. 22 or $CHROM)\n'
+        s_help += 'Column 2: Phased file to be divided (e.g. ../in_BEAGLE/'
+        s_help += 'ALL.chr22.phase1_release_v3.20101123.filt.renamed.bgl or ALL.$CHROM...'
+        parser.add_argument(
+            '--fp_BEAGLE_phased',
+            dest='fp_BEAGLE_phased',
+            help=s_help,
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        s_help = 'Path to a file with 2 columns\n'
+        s_help += 'Column 1: Chromosome (e.g. 22 or $CHROM)\n'
+        s_help += 'Column 2: Markers file to be divided (e.g. ../in_BEAGLE/'
+        s_help += 'ALL.chr22.phase1_release_v3.20101123.filt.renamed.markers or ALL.$CHROM...'
+        parser.add_argument(
+            '--fp_BEAGLE_markers',
+            dest='fp_BEAGLE_markers',
+            help=s_help,
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--i_BEAGLE_nsamples',
+            dest='i_BEAGLE_nsamples',
+            help='',
+            metavar='FILE',default=20,
+            required = False,
+            )
+
+        ##
+        ## IMPUTE2
+        ##
+        parser.add_argument(
+            '--impute2','--IMPUTE2','--IMPUTE2jar','--fp_software_impute2',
+            dest='fp_software_impute2',
+            help='File path to BEAGLE .jar file (e.g. /software/hgi/impute2/v2.2.2/bin/impute2)',
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--hap','--impute2-hap','--fp_impute2_hap',
+            dest='fp_impute2_hap',
+            help='File path to directory containing hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--legend','--impute2-legend','--fp_impute2_legend',
+            dest='fp_impute2_legend',
+            help='File path to directory containing legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+        parser.add_argument(
+            '--map','--impute2-map','--fp_impute2_map',
+            dest='fp_impute2_map',
+            help='File path to directory containing map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt)',
+            ## Ask Deepti where this is downloaded from
+            ## and whether it is always split by chromosome
+            metavar='FILE',default=None,
+            required = True,
+            )
+
+##        ## IMPUTE2 input files
+##        self.fp_impute2_map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
+
+        ##
+        ##
+        ##
+        
+        ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
+        ## parse arguments to argparse NameSpace
+        self.namespace_args = namespace_args = parser.parse_args()        
+
+        ## http://docs.python.org/2/library/functions.html#vars
+        for k,v in vars(namespace_args).items():
+            setattr(self,k,v)
+            continue
+
+
+        if self.fp_GATK is None and self.fp_options is None:
+            parser.error('--GATK or --arguments')
+
+        bool_not_found = False
+        s_arguments = ''
+        for k,v in vars(namespace_args).items():
+            s_arguments += '%s %s\n' %(k,v)
+            if k[:3] != 'fp_':
+                continue
+            fp = v
+            ## argument not specified
+            if fp == None or fp == 'None': continue
+            if fp == self.fp_bams:
+                f = os.path.isdir
+            else:
+                f = os.path.isfile
+            if not f(fp):
+                print 'file path does not exist:', fp
+                bool_not_found = True
+        if bool_not_found == True:
+            sys.exit(0)
+
+        if self.fp_arguments == None or self.fp_arguments == 'None':
+            self.fp_arguments = '%s.arguments' %(self.project)
+            fd = open(self.fp_arguments,'w')
+            fd.write(s_arguments)
+            fd.close()
+        else:
+            fd = open(self.fp_arguments,'r')
+            lines = fd.readlines()
+            fd.close()
+            for line in lines:
+                l = line.strip().split()
+                k = l[0]
+                v = l[1]
+                setattr(self,k,v)
+
+        print 'dirname', os.path.dirname(self.fp_bams)
+        print 'basename', os.path.basename(self.fp_bams)
+
+        return
 
 
     def __init__(self,):
@@ -1452,43 +1636,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         self.verbose = True
 
         return
-
-
-    def BeagleOutputToVCF(self,chrom,):
-
-        ## this function is currently not called
-
-        lines = self.cmd_init(analysis_type,memMB,)
-
-        ## GATKwalker, required, in
-        lines += [
-            '--beaglePhased:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.phased \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        lines += [
-            '--beagleProbs:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.gprobs \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        lines += [
-            '--beagleR2:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.r2 \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        ## GATKwalker, required, out
-        fp_out = 'out_GATK/%s.%s.vcf' %(analysis_type,chromosome,)
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += [
-            '--variant out_GATK/ApplyRecalibration.recalibrated.filtered.%s.vcf \\' %(
-                chromosome
-                )
-            ]
-
-        s = '\n'.join(lines)+'\n\n'
-
-        return s
 
 
 if __name__ == '__main__':
