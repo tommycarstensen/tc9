@@ -56,9 +56,9 @@ class main():
         self.ApplyRecalibration(l_chroms,d_chrom_lens,)
 
         self.ProduceBeagleInput()
-        sys.exit()
 
-        self.BEAGLE()
+        self.BEAGLE(l_chroms,)
+        sys.exit() ## tmp
 
         self.IMPUTE2(d_chrom_lens,)
 
@@ -212,18 +212,161 @@ class main():
         return
 
 
-    def BEAGLE(self,):
+    def BEAGLE_divide(self,chrom,):
 
-        '''this step took 3.4hrs on chromosome 22 of Uganda dataset'''
+        ##
+        ## size and edge
+        ##
+        size = self.i_BEAGLE_size*1000000
+        edge = opts.i_BEAGLE_edge*1000
+
+        fp_in = opts.fp_in
+        fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
+
+        fp_out = opts.fp_out
+        if fp_out == None:
+            fp_out = fp_in
+            pass
+
+        ##
+        ## open files
+        ##
+        fd_phased = open(fp_phased,'r')
+        fd_markers = open(fp_markers,'r')
+
+        ## parse header
+        header_phased = fd_phased.readline()
+
+        ## initiate lines out
+        lines_out_phased1 = [header_phased]
+        lines_out_phased2 = [header_phased]
+
+        lines_out_markers1 = []
+        lines_out_markers2 = []
+
+        ##
+        ## parse genotype likelihood file header
+        ##
+        fd_bgl = open(fp_in,'r')
+        for line in fd_bgl:
+            header = line
+            break
+
+        ##
+        ## get position of first SNP from genotype likelihood file
+        ##
+        lines_out1 = [header]
+        lines_out2 = [header]
+        for line in fd_bgl:
+            lines_out1 += [line]
+            l = line.strip().split()
+            position = int(l[0].split(':')[1])
+            position_init1 = position-position%size
+            print position, position_init1
+            break
+
+        index = 0
+        for line in fd_bgl:
+            l = line.strip().split()
+            ## assume markers to be formatted like CHROM:POS
+            position = int(l[0].split(':')[1])
+            if position > position_init1+size-edge:
+                lines_out2 += [line]
+                if position > position_init1+size:
+                    position_init2 = position-position%size
+                    if position > position_init1+size+edge:
+                        fd_out = open('%s.like.%i' %(fp_out,index,),'w')
+                        fd_out.writelines(lines_out1)
+                        fd_out.close()
+                        print position,position_init1,index,len(lines_out1)
+                        while True:
+                            ## read next line
+                            line_markers = fd_markers.readline()
+                            l_markers = line_markers.split()
+                            pos_markers = int(l_markers[1])
+                            line_phased = fd_phased.readline()
+                            ## append line
+                            if pos_markers < position:
+                                lines_out_phased1 += [line_phased]
+                                lines_out_markers1 += [line_markers]
+                                if pos_markers >= position-2*edge:
+                                    lines_out_phased2 += [line_phased]
+                                    lines_out_markers2 += [line_markers]
+                            ## break loop
+                            else:
+                                ## append current line
+                                lines_out_phased2 += [line_phased]
+                                lines_out_markers2 += [line_markers]
+                                ## write lines
+                                fd = open('%s.markers.%i' %(fp_out,index,),'w')
+                                fd.writelines(lines_out_markers1)
+                                fd.close()
+                                fd = open('%s.phased.%i' %(fp_out,index,),'w')
+                                fd.writelines(lines_out_phased1)
+                                fd.close()
+                                ## reset lines
+                                lines_out_phased1 = lines_out_phased2
+                                lines_out_markers1 = lines_out_markers2
+                                lines_out_phased2 = [header_phased]
+                                lines_out_markers2 = []
+                                ## break loop
+                                break
+                        lines_out1 = lines_out2
+                        lines_out2 = [header]
+                        position_init1 = position_init2
+                        index += 1
+                    else:
+                        lines_out1 += [line]
+                else:
+                    lines_out1 += [line]
+            else:
+                lines_out1 += [line]
+
+        ## close after looping over last line
+        fd_bgl.close()
+        ## write remaining few lines to output file
+        fd_out = open('%s.%i' %(fp_out,index,),'w')
+        fd_out.writelines(lines_out1)
+        fd_out.close()
+        print position,position_init1,index,len(lines_out1)
+        ## write markers
+        lines_out_markers = fd_markers.readlines()
+        fd = open('%s.markers.%i' %(fp_out,index,),'w')
+        fd.writelines(lines_out_markers)
+        fd.close()
+        ## write phased
+        lines_phased = fd_phased.readlines()
+        lines_out_phased = [header_phased]+lines_phased
+        fd = open('%s.phased.%i' %(fp_out,index,),'w')
+        fd.writelines(lines_out_phased)
+        fd.close()
+
+        ## close all
+        fd_markers.close()
+        fd_phased.close()
+
+        return
+
+
+    def BEAGLE(self,l_chroms,):
 
         ## http://faculty.washington.edu/browning/beagle/beagle_3.3.2_31Oct11.pdf
 
-        ## http://www.broadinstitute.org/gsa/wiki/index.php/Interface_with_BEAGLE_imputation_software
+        ## http://www.broadinstitute.org/gatk/guide/article?id=43
+        ## Interface with BEAGLE imputation software - GSA
         ## IMPORTANT: Due to BEAGLE memory restrictions,
         ## it's strongly recommended that BEAGLE be run on a separate chromosome-by-chromosome basis.
         ## In the current use case, BEAGLE uses RAM in a manner approximately proportional to the number of input markers.
 
-        ## Then run beagle imputation (you may have to chunk up for imputation and use the "known" option with the 1000G reference)
+        for chrom in l_chroms:
+            self.BEAGLE_divide(chrom)
+
+        stop_make_this_step_similar_to_UG
+        ## use init_UnifiedGenotyper but with different bp interval sizes
+
+        ## "Then run beagle imputation
+        ## (you may have to chunk up for imputation
+        ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
         ## initiate command
@@ -280,7 +423,7 @@ class main():
 ##use a smaller nsamples parameter (e.g. 1 or 2) to reduce computation time.  If you are 
 ##phasing a small sample (say < 200 individuals), you may want to use a larger nsamples
 ##parameter (say 10 or 20) to increase accuracy.
-        cmd += ' nsamples=20 '
+        cmd += ' nsamples=20 ' %(int(self.i_BEAGLE_nsamples))
 
 ## lowmem=<true/false> where <true/false> is true if a memory-efficient,
 ## but slower, implementation of the sampling algorithm should be used.
@@ -362,7 +505,7 @@ class main():
 ##        cmd += '--phenotype phenotype_1 --threshold 0.9 --snp'
 ##        cmd += '\n'
 
-        self.write_shell('shell/BEAGLE.sh',cmd,)
+        self.write_shell('shell/BEAGLE.sh',lines,)
 
         return cmd
 
@@ -432,19 +575,11 @@ class main():
 
     def write_array_scripts_chromosome(self,d_shell,):
 
-        self = GATK()
-
-        chromosome_prefix = ''
-        
-        ##
-        ## write shell script for UnifiedGenotyper (job array and first step)
-        ##
-        for step in self.l_steps_array_chromosome:
-               
-            if step == 'ApplyRecalibration':
-                s = '#!/bin/bash\n'
-            else:
-                s = '''#!/bin/bash
+        ## useful if per-chromosome basis... not whole-genome and not sub-chromosome fragments...
+        if step == 'ApplyRecalibration':
+            s = '#!/bin/bash\n'
+        else:
+            s = '''#!/bin/bash
 LSB_JOBINDEX=$LSB_JOBINDEX
 if [ ${LSB_JOBINDEX} -eq 23 ]
 then
@@ -457,48 +592,6 @@ CHROMOSOME=$LSB_JOBINDEX
 fi
 echo $CHROMOSOME
 '''
-
-            ## do not execute if file output exists...
-            s += '\n\n# do not execute if file output exists and if not previous file output exists\n'
-            ## check that file exists and is not empty (-s)
-            if step == 'BEAGLE':
-                s += self.BEAGLE('$CHROMOSOME')
-            else:
-                print step
-                stop
-            s += '\n\nfi\n'
-            d_shell[step] = s
-
-            ## append step following UnifiedGenotyper; e.g. CombineVariants
-            if self.bool_sequential == True:
-                step_next = self.l_steps[self.l_steps.index(step)+1]
-
-                bsub_line_next = ''
-                ## is LSB_JOBINDEX always equal to 1, if job is not submitted as an array?
-                bool_wrap = False
-                if not (
-                    step in ['ApplyRecalibration',]
-                    ):
-                    bool_wrap = True
-                if bool_wrap == True:
-                    ## only call next script once...
-                    bsub_line_next += '# only call next script once (e.g. when chromosome 1 finishes)\n'
-                    bsub_line_next += '# but will still wait for all chromosomes associated with JOBID to finish\n'
-                    bsub_line_next += 'if [ ${LSB_JOBINDEX} -eq 1 ]\n'
-                    bsub_line_next += 'then\n'
-                bsub_line_next += self.generate_bsub_line(
-                    step_next,
-                    s_queue = 'normal',
-                    memory_MB = 4000,
-                    )
-                if bool_wrap == True:
-                    bsub_line_next += 'fi\n'
-
-            self.write_shell_script(
-                step,
-                d_shell[step],
-                line_additional = bsub_line_next,
-                )
 
         return
 
@@ -814,7 +907,7 @@ echo $CHROMOSOME
         cmd = 'cat %s ' %(fp_out)
         cmd += ''' | awk -v FS=":" 'NR>1'''
         cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
-        cmd = cmd.replace('"','"\'"\'').replace('$','\\$')
+        cmd = cmd.replace('"','''"'"'"''').replace('$','\\$')
         lines += [cmd]
 
 ##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
@@ -944,7 +1037,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         cmd += " '"
         cmd += ')'
 
-        cmd = cmd.replace('"','"\'"\'').replace('$','\\$')
+        cmd = cmd.replace('"','''"'"'"''').replace('$','\\$')
 
         return cmd
 
@@ -1074,7 +1167,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
 
         T = analysis_type = 'UnifiedGenotyper'
-        memMB = 2000
+        memMB = 2000 ## max 1229MB if Fula (72 samples)
 
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
@@ -1141,7 +1234,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             memMB,memMB,memMB,)
         cmd += ' -o stdout/%s.out' %(std_suffix)
         cmd += ' -e stderr/%s.err' %(std_suffix)
-        cmd += ' ./shell/%s.sh %s' %(analysis_type,chrom,)
+        cmd += ' ./shell/%s.sh' %(analysis_type,)
+        if chrom != None:
+            cmd += ' %s' %(chrom)
 
         return cmd
 
