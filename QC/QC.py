@@ -2137,6 +2137,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' --threshold_hwe_min %.1e' %(self.hwe_min)
         ## population list
         cmd += ' --pops %s' %(self.fn_pops)
+        ##
+        cmd += ' --no-X %s' %(self.bool_no_sex_check)
         cmd += nl
         cmd += 'fi'
         cmd += '\n'
@@ -2488,7 +2490,8 @@ it's ugly and I will not understand it 1 year form now.'''
         ## xxx rename het_before/after to recodeA_before/after and include het calculation in recode_after
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
-        l_plink_cmds += ['--check-sex --extract %s.X.SNPs' %(bfile)]
+        if self.bool_no_sex_check == False:
+            l_plink_cmds += ['--check-sex --extract %s.X.SNPs' %(bfile)]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
@@ -2662,33 +2665,35 @@ it's ugly and I will not understand it 1 year form now.'''
         ## 7) SNP QC, chromosome X
         ##
 
-        for sex in ['males','females']:
+        if self.bool_no_sex_check == False:
 
-            ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
-            s = '--missing \\\n'
-            s += '--out %s.X.%s \\\n' %(bfile,sex,)
-            s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
+            for sex in ['males','females']:
+
+                ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
+                s = '--missing \\\n'
+                s += '--out %s.X.%s \\\n' %(bfile,sex,)
+                s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
+                s += '--extract %s.X.SNPs \\\n' %(bfile)
+                s += '--filter-%s \\\n' %(sex)
+                l_plink_cmds += [s]
+
+            ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#hardy
+            s = '--hardy \\\n'
+            s += '--out %s.X.females \\\n' %(bfile,)
+            s += '--remove %s.sampleQC.nonfounders.samples \\\n' %(bfile,)
+    ##        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
             s += '--extract %s.X.SNPs \\\n' %(bfile)
-            s += '--filter-%s \\\n' %(sex)
+            s += '--exclude %s.X.lmiss.union.SNPs \\\n' %(bfile,)
+            s += '--filter-females \\\n'
             l_plink_cmds += [s]
 
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#hardy
-        s = '--hardy \\\n'
-        s += '--out %s.X.females \\\n' %(bfile,)
-        s += '--remove %s.sampleQC.nonfounders.samples \\\n' %(bfile,)
-##        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
-        s += '--extract %s.X.SNPs \\\n' %(bfile)
-        s += '--exclude %s.X.lmiss.union.SNPs \\\n' %(bfile,)
-        s += '--filter-females \\\n'
-        l_plink_cmds += [s]
-
-        ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
-        s = '--make-bed \\\n'
-        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
-        s += '--extract %s.X.SNPs \\\n' %(bfile)
-        s += '--out %s.postQC.X \\\n' %(bfile,)
-        s += '--exclude %s.X.lmiss.hwe.SNPs \\\n' %(bfile,)
-        l_plink_cmds += [s]
+            ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
+            s = '--make-bed \\\n'
+            s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
+            s += '--extract %s.X.SNPs \\\n' %(bfile)
+            s += '--out %s.postQC.X \\\n' %(bfile,)
+            s += '--exclude %s.X.lmiss.hwe.SNPs \\\n' %(bfile,)
+            l_plink_cmds += [s]
 
         return l_plink_cmds
 
@@ -3978,6 +3983,28 @@ it's ugly and I will not understand it 1 year form now.'''
     def init(self,bfile,):
 
         ##
+        ##
+        ##
+        if not os.path.isfile('%s.bed' %(self.bfile)):
+            print 'bed not found:', self.bfile
+            sys.exit(0)
+
+        ##
+        ##
+        ##
+        if self.bool_no_sex_check == False:
+            cmd = "cat %s.bim | awk '{if($1==23) print}' | wc -l" %(bfile)
+            if int(os.popen(cmd).read()) == 0:
+                print 'No X chromosome SNPs.'
+                print 'Use --no-sex-check to avoid this error message',
+                print 'and skip the sex check'
+                sys.exit(0)
+        else:
+            for fn in ['%s.sexcheck' %(bfile),'%s.sexcheck.samples' %(bfile),]:
+                if os.path.isfile(fn): continue
+                self.execmd('touch %s' %(fn))
+
+        ##
         ## create dirs
         ##
         for dn in ['stdout','stderr','fam','genome','prune',]:
@@ -3985,13 +4012,6 @@ it's ugly and I will not understand it 1 year form now.'''
                 os.mkdir(dn)
                 pass
             continue
-
-        ##
-        ##
-        ##
-        if not os.path.isfile('%s.bed' %(self.bfile)):
-            print 'bed not found:', self.bfile
-            sys.exit(0)
 
         ##
         ## write options in use to file
@@ -4164,7 +4184,7 @@ maybe I should rename it.'''
             )
 
         parser.add_option(
-            '--pi_hat_max', '--pi_circumflex_max', '--threshold_ibd', '--threshold_pi_hat',
+            '--pi_hat_max', '--pi_circumflex_max', '--threshold_ibd', '--threshold_pi_hat', '--threshold_pi_hat_max',
             dest='threshold_pi_hat_max',
             help='The HWE step is dependent on the chose PI CIRCUMFLEX MAX',
             metavar='FLOAT',default=0.05,
@@ -4198,7 +4218,10 @@ maybe I should rename it.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/thresh.shtml
         parser.add_option(
-            '-i', '--mind', '--imiss', '--threshold_imiss', '--threshold_callrate_samples', '--threshold_callrate_sample', '--threshold_missing_sample',
+            '-i', '--mind', '--imiss',
+            '--threshold_imiss', '--threshold_imiss_min',
+            '--threshold_callrate_samples', '--threshold_callrate_sample',
+            '--threshold_missing_sample',
             dest='threshold_imiss_min',
             help='The sample call rate calculation (--missing) is dependent on this value.',
             metavar='FLOAT',default=.97,
@@ -4206,7 +4229,9 @@ maybe I should rename it.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/thresh.shtml
         parser.add_option(
-            '-l', '--geno', '--lmiss', '--threshold_lmiss', '--threshold_callrate_SNPs', '--threshold_callrate_SNP', '--threshold_missing_SNP',
+            '-l', '--geno', '--lmiss',
+            '--threshold_lmiss', '--threshold_lmiss_min',
+            '--threshold_callrate_SNPs', '--threshold_callrate_SNP', '--threshold_missing_SNP',
             dest='threshold_lmiss_min',
             help='The SNP call rate calculation (--missing) is dependent on this value.',
             metavar='FLOAT',default=.97,
@@ -4252,6 +4277,10 @@ maybe I should rename it.'''
         parser.add_option("-v", '--verbose', action="store_true", dest="verbose", default=True)
         parser.add_option("-q", '--silent', '--quiet', action="store_false", dest="verbose")
 
+        parser.add_option(
+            '--no_sex_check', '--no-X', '--no-sex-check',
+            action="store_true", dest="bool_no_sex_check", default=False)
+
         ## parse option arguments
         (opts, args) = parser.parse_args()
 
@@ -4292,6 +4321,10 @@ maybe I should rename it.'''
                 self.verbose = self.bool_verbose = True
             elif d['verbose'] in ['0','False','no','n',]:
                 self.verbose = self.bool_verbose = False
+            if d['bool_no_sex_check'] in ['1','True','yes','y',]:
+                self.bool_no_sex_check = True
+            elif d['bool_no_sex_check'] in ['0','False','no','n',]:
+                self.bool_no_sex_check = False
             ## indep-pairwise
             self.indepWindow = int(d['indepWindow'])
             self.indepShift = int(d['indepShift'])
@@ -4311,6 +4344,7 @@ maybe I should rename it.'''
             self.bfile = opts.bfile
             self.project = str(opts.project)
             self.bool_verbose = self.verbose = bool(opts.verbose)
+            self.bool_no_sex_check = bool(opts.bool_no_sex_check)
             self.fn_pops = opts.pops
             ## indep-pairwise
             self.indepWindow = int(opts.indepWindow)
