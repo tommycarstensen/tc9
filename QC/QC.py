@@ -2115,8 +2115,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
         cmd += 'sleep 300;'
-        cmd += '/software/bin/python-2.7.3 %s/QC.py' %(
-            os.path.dirname(sys.argv[0]),
+        cmd += '/software/bin/python-2.7.3 %s' %(
+            os.path.join(os.path.dirname(sys.argv[0]),'QC.py'),
             )
         ## snould add all variables from .options file if default values are not used...
         cmd += ' --project %s --bfile %s' %(self.project,bfile,)
