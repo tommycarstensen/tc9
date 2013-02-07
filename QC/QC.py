@@ -2138,7 +2138,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## population list
         cmd += ' --pops %s' %(self.fn_pops)
         ##
-        cmd += ' --no-X %s' %(self.bool_no_sex_check)
+        cmd += ' --no-X %s' %(self.bool_no_sexcheck)
         cmd += nl
         cmd += 'fi'
         cmd += '\n'
@@ -2490,7 +2490,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## xxx rename het_before/after to recodeA_before/after and include het calculation in recode_after
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
-        if self.bool_no_sex_check == False:
+        if self.bool_no_sexcheck == False:
             l_plink_cmds += ['--check-sex --extract %s.X.SNPs' %(bfile)]
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
@@ -2665,7 +2665,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## 7) SNP QC, chromosome X
         ##
 
-        if self.bool_no_sex_check == False:
+        if self.bool_no_sexcheck == False:
 
             for sex in ['males','females']:
 
@@ -3637,17 +3637,20 @@ it's ugly and I will not understand it 1 year form now.'''
         ## check file in
         cmd += '-a -s %s.imiss ' %(bfile)
         cmd += '-a -s %s.het ' %(bfile)
-        cmd += '-a -s %s.sexcheck ' %(bfile)
+        if self.bool_no_sexcheck == False:
+            cmd += '-a -s %s.sexcheck ' %(bfile)
         cmd += '-a -f %s.imiss.samples ' %(bfile)
         cmd += '-a -f %s.het.samples ' %(bfile)
-        cmd += '-a -f %s.sexcheck.samples ' %(bfile)
+        if self.bool_no_sexcheck == False:
+            cmd += '-a -f %s.sexcheck.samples ' %(bfile)
         cmd += ']\n'
         cmd += 'then\n'
         ## concatenate sample files
         cmd += 'cat '
         cmd += '%s.imiss.samples ' %(bfile,)
         cmd += '%s.het.samples ' %(bfile,)
-        cmd += '%s.sexcheck.samples ' %(bfile,)
+        if self.bool_no_sexcheck == False:
+            cmd += '%s.sexcheck.samples ' %(bfile,)
         cmd += '| sort -u > %s.sampleQC.samples\n' %(bfile,)
         cmd += 'fi\n'
 
@@ -3992,7 +3995,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         ##
         ##
-        if self.bool_no_sex_check == False:
+        if self.bool_no_sexcheck == False:
             cmd = "cat %s.bim | awk '{if($1==23) print}' | wc -l" %(bfile)
             if int(os.popen(cmd).read()) == 0:
                 print 'No X chromosome SNPs.'
@@ -4279,7 +4282,7 @@ maybe I should rename it.'''
 
         parser.add_option(
             '--no_sex_check', '--no-X', '--no-sex-check',
-            action="store_true", dest="bool_no_sex_check", default=False)
+            action="store_true", dest="bool_no_sexcheck", default=False)
 
         ## parse option arguments
         (opts, args) = parser.parse_args()
@@ -4321,10 +4324,10 @@ maybe I should rename it.'''
                 self.verbose = self.bool_verbose = True
             elif d['verbose'] in ['0','False','no','n',]:
                 self.verbose = self.bool_verbose = False
-            if d['bool_no_sex_check'] in ['1','True','yes','y',]:
-                self.bool_no_sex_check = True
-            elif d['bool_no_sex_check'] in ['0','False','no','n',]:
-                self.bool_no_sex_check = False
+            if d['bool_no_sexcheck'] in ['1','True','yes','y',]:
+                self.bool_no_sexcheck = True
+            elif d['bool_no_sexcheck'] in ['0','False','no','n',]:
+                self.bool_no_sexcheck = False
             ## indep-pairwise
             self.indepWindow = int(d['indepWindow'])
             self.indepShift = int(d['indepShift'])
@@ -4344,7 +4347,7 @@ maybe I should rename it.'''
             self.bfile = opts.bfile
             self.project = str(opts.project)
             self.bool_verbose = self.verbose = bool(opts.verbose)
-            self.bool_no_sex_check = bool(opts.bool_no_sex_check)
+            self.bool_no_sexcheck = bool(opts.bool_no_sexcheck)
             self.fn_pops = opts.pops
             ## indep-pairwise
             self.indepWindow = int(opts.indepWindow)
