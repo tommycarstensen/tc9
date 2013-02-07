@@ -32,11 +32,16 @@ class main:
         if self.verbose == True: print '############ execute ############'
         self.plink_execution(bfile,)
 
-        if self.verbose == True: print '############ plot ############'
-        self.plink_plots(bfile,)
+        if (
+            os.path.isfile('%s.postQC.autosomes.bed' %(bfile))
+            and
+            os.path.isfile('%s.postQC.X.bed' %(bfile))
+            ):
+            if self.verbose == True: print '############ plot ############'
+            self.plink_plots(bfile,)
 
-        if self.verbose == True: print '############ tabulate ############'
-        self.plink_tables(bfile,)
+            if self.verbose == True: print '############ tabulate ############'
+            self.plink_tables(bfile,)
 
         return
 
@@ -1674,6 +1679,10 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if os.path.isfile('%s.het.call.png' %(bfile)):
             return
+        for suffix in ['het.call.plt','imiss.het.joined',]:
+            fn = '%s.%s' %(bfile,suffix,)
+            if os.path.isfile(fn):
+                sys.exit()
 
         ## check that number of samples are equal
         ## which they should be if checks are run in *parallel*
@@ -3542,8 +3551,9 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' %s.het > %s.het.samples' %(bfile, bfile,)
         l_cmds += [cmd]
 
-        ## remove huge .raw file to save disk space
-        l_cmds += ['rm %s.raw' %(bfile)]
+##        ## remove huge .raw file to save disk space
+        ## don't remove, otherwise it will be continuously regenerated
+##        l_cmds += ['rm %s.raw' %(bfile)]
 
         return l_cmds
 
