@@ -7,7 +7,7 @@
 ## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
 
 ## built-ins
-import math, os, sys, time
+import math, os, sys, time, re
 ## New in version 2.7
 import argparse
 
@@ -33,6 +33,8 @@ import argparse
 ## todo20130204: tc9: make memory sample size dependent... only tested on 3 datasets with 100 samples each...
 
 ## todo20130206: tc9: mention problem with splitting and centromeres/telomers to ms23 and dg11 and come up with a better solution if necessary... for now opt for the quick/easy solution...
+
+## todo20130207: tc9: get rid of orphant functions
 
 class main():
 
@@ -61,24 +63,7 @@ class main():
 
         self.BEAGLE(l_chroms,)
 
-        self.IMPUTE2(d_chrom_lens,)
-        sys.exit() ## tmp
-
-        s = '#!/bin/bash\n'
-        s += 'for chrom in {1..22} X Y\ndo\n'
-        s += './shell/UnifiedGenotyper $CHROMOSOME\n'
-        s += 'done'
-        self.write_shell('shell/init.sh',s,)
-
-        print self.generate_bsub_line(
-            'UnifiedGenotyper',
-            job_array_intervals='$maxindex',
-            )
-        stop
-
-##        self.bsub_all_chroms_all_steps(d_array,d_shell,)
-
-        print 'Execute shell/init.sh to start.'
+        self.IMPUTE2(l_chroms,d_chrom_lens,)
 
         return
 
@@ -88,14 +73,15 @@ class main():
         bool_error = False
         l_fn = os.listdir('stderr')
         for fn in l_fn:
-            if os.path.getsize('stderr/%s' %(fn)) > 0:
-                fd = open('stderr/%s' %(fn),'r')
-                s = fd.read()
-                fd.close()
-                print s
-                print 'stderr/%s' %(fn)
-                bool_error = True
-                break
+            if os.path.isdir('stderr/%s' %(fn)): continue
+            if os.path.getsize('stderr/%s' %(fn)) == 0: continue
+            fd = open('stderr/%s' %(fn),'r')
+            s = fd.read()
+            fd.close()
+            print s
+            print 'stderr/%s' %(fn)
+            bool_error = True
+            break
 
         if bool_error == True:
             sys.exit(0)
@@ -112,15 +98,33 @@ class main():
 
     def BEAGLE_unite(self,chrom):
 
-        keyword = re.compile(r'\bBeagleOutput.\w*.bgl.\w*.BeagleInput.\w*.bgl.\w*.gprobs\b')
-        l = os.listdir('out_BEAGLE')
-        for s in l:
-            match = keyword.search(s)
-            if not match:
-                continue
-            print s
-            stop
-        stop2
+        fd = open('BEAGLE_divide_indexes.txt','r')
+        lines = fd.readlines()
+        fd.close()
+        d_index2pos = {}
+        for line in lines:
+            l = line.strip().split()
+            if l[0] != chrom: continue
+            index = int(l[1])
+            pos = int(l[2])
+            d_index2pos[index] = pos
+        fp_out = 'out_BEAGLE/%s/' %(chrom,)
+        fp_out += 'BeagleOutput.%s.bgl.gprobs' %(chrom,)
+        for index in xrange(1,max(d_index2pos.keys())+1,):
+            print 'BEAGLE_unite', chrom, index
+            fp_in = 'out_BEAGLE/%s/' %(chrom,)
+            fp_in += 'BeagleOutput.%s.bgl.%i.' %(chrom,index,)
+##            fp_in += 'ProduceBeagleInput.%s.bgl.%i.gprobs' %(chrom,index,)
+            fp_in += 'BeagleInput.%s.bgl.%i.gprobs' %(chrom,index,) ## tmp!!!
+            if index == 1:
+                cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
+                os.system(cmd)
+            pos = d_index2pos[index]
+            cmd = "awk 'NR>1{pos=substr($1,%i);" %(len(chrom)+2)
+            cmd += "if(pos>=%i&&pos<%i) print $1}'" %(
+                pos,pos+1000000*self.i_BEAGLE_size)
+            cmd += ' %s >> %s' %(fp_in,fp_out,)
+            os.system(cmd)
 
         return
 
@@ -150,10 +154,46 @@ class main():
         return
 
 
-    def IMPUTE2(self,d_chrom_lens,):
+    def IMPUTE2_parse_input_files(self,):
+
+        ## open file
+        fd = open('BEAGLE_divide_indexes.txt','r')
+        ## read all lines into memory
+        lines = fd.readlines()
+        ## close file
+        fd.close()
+
+        l_fp_in = []
+        for line in lines:
+            l = line.strip().split()
+            chrom = l[0]
+            index = int(l[1])
+            fp_in = 'out_BEAGLE/%s/' %(chrom,)
+            fp_in += 'BeagleOutput.%s.bgl.%i.' %(chrom,index,)
+            fp_in += 'ProduceBeagleInput.%s.bgl.%i.gprobs' %(chrom,index,)
+            l_fp_in += [fp_in]
+
+        return l_fp_in
+
+
+    def IMPUTE2(self,l_chroms,d_chrom_lens,):
+
+        ##
+        ## 1) check input existence
+        ##
+        l_fp_in = self.IMPUTE2_parse_input_files()
+        l_fp_in = [] ## tmp!!!
+        self.check_in('BEAGLE',l_fp_in,)
+
+        ##
+        ## 2) touch
+        ##
+        bool_return = self.touch('IMPUTE2')
+        if bool_return == True: return
 
         for chrom in l_chroms:
-            BEAGLE_unite(chrom)
+            if chrom != '22': continue ## tmp!!!
+            self.BEAGLE_unite(chrom)
 
         self.gprobs2gen()
 
@@ -279,6 +319,11 @@ class main():
 
         self.write_shell('shell/IMPUTE2.sh',s,)
 
+        ##
+        ## execute shell script
+        ##
+        ## bsub -w "done(BEAGLE%s[*])" %(chrom)
+
         return s
 
 
@@ -319,6 +364,7 @@ class main():
 
         bool_found = True
         for fp in l_fps:
+            fp = fp.replace('$CHROMOSOME','22')
             if not os.path.isfile(fp):
                 print fp, 'not found'
                 bool_found = False
@@ -378,7 +424,8 @@ class main():
             print position, position_init1
             break
 
-        index = 1 ## LSF does not allow 0 for LSB_JOBINDEX... "Bad job name. Job not submitted."
+        d_index2pos = {}
+        index = 1 ## LSF does not allow 0 for LSB_JOBINDEX! "Bad job name. Job not submitted." ## e.g. bsub -J"test[0-2]" echo A
         for line in fd_bgl:
             l = line.strip().split()
             ## assume markers to be formatted like CHROM:POS
@@ -391,6 +438,7 @@ class main():
                         fd_out = open('%s.like.%i' %(fp_out,index,),'w')
                         fd_out.writelines(lines_out1)
                         fd_out.close()
+                        d_index2pos[index] = position_init1
                         print 'pos_curr %9i, pos_init %9i, index %3i, n_lines %5i' %(
                             position,position_init1,index,len(lines_out1))
                         while True:
@@ -443,6 +491,7 @@ class main():
 ##        fd_out.writelines(lines_out1)
 ##        fd_out.close()
         print position,position_init1,index,len(lines_out1)
+        d_index2pos[index] = position_init1 ## = position_init2
         ## write markers
         lines_out_markers = fd_markers.readlines()
         fd = open('%s.%i.markers' %(fp_out,index,),'w')
@@ -459,7 +508,7 @@ class main():
         fd_markers.close()
         fd_phased.close()
 
-        return index
+        return d_index2pos
 
 
     def BEAGLE(self,l_chroms,):
@@ -480,13 +529,13 @@ class main():
         memMB = 5000 ## tmp!!! need to test... think this is spot on though!!!
 
         ##
-        ## check input existence
+        ## 1) check input existence
         ##
         fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
         bool_exit = self.check_in('ProduceBeagleInput',[fp_in,],)
 
         ##
-        ## touch
+        ## 2) touch
         ##
         bool_return = self.touch('BEAGLE')
         if bool_return == True: return
@@ -501,19 +550,32 @@ class main():
         ##
         d_indexes = {}
         for chrom in l_chroms:
-            if chrom != '22': continue ## tmp!!!
+            if chrom != '1': continue ## tmp!!!
             d_chrom_lens = self.parse_chrom_lens()
-            index_max = self.BEAGLE_divide(chrom)
-            d_indexes[chrom] = index_max
+            d_index2pos = self.BEAGLE_divide(chrom)
+            d_indexes[chrom] = d_index2pos
+
+        s = ''
+        for chrom,d_index2pos in d_indexes.items():
+            for index,pos in d_index2pos.items():
+                s += '%s %i %i\n' %(chrom,index,pos,)
+##        fd = open('BEAGLE_divide_indexes.txt','w')
+        fd = open('BEAGLE_divide_indexes.txt','a') ## tmp!!!
+        fd.write(s)
+        fd.close()
 
         ##
         ## execute shell script
         ##
         for chrom in l_chroms:
-            if chrom != '22': continue ## tmp!!!
-            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,d_indexes[chrom],)
-            cmd = self.bsub_cmd('BEAGLE',J,memMB=memMB,)
+            if chrom != '1': continue ## tmp!!!
+            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
+            std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
+            cmd = self.bsub_cmd(
+                'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,)
             print cmd
+            if not os.path.isdir('out_BEAGLE/%s' %(chrom)):
+                os.mkdir('out_BEAGLE/%s' %(chrom))
             os.system(cmd)
 
         return
@@ -521,7 +583,7 @@ class main():
 
     def BEAGLE_write_shell_script(self,memMB,):
 
-        fp_out = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.bgl'
+        fp_out = 'out_BEAGLE/$CHROMOSOME/BeagleOutput.BeagleInput.$CHROMOSOME.bgl.$LSB_JOBINDEX' ## tmp!!! this path is wrong... fix...
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -535,8 +597,45 @@ class main():
         ##
         ## initiate BEAGLE
         ##
-        lines += ['java -Xmx%im Djava.io.tmpdir=out_BEAGLE -jar %s \\' %(
+        ## Could not find the main class: Djava.io.tmpdir=out_BEAGLE.  Program will exit.
+##        lines += ['java -Xmx%im java.io.tmpdir=out_BEAGLE -jar %s \\' %(
+        lines += ['java -Xmx%im -jar %s \\' %(
             memMB,self.fp_software_beagle)]
+
+        lines += self.body_BEAGLE(fp_out,)
+
+        ##
+        ## terminate BEAGLE
+        ##
+        lines += [';']
+
+        ##
+        ## gunzip the output files after runs to completion
+        ##
+        l = []
+        for suffix in ['dose','phased','gprobs',]:
+            fp = '%s' %(fp_out)
+            fp += '.ProduceBeagleInput.${CHROMOSOME}.bgl.${LSB_JOBINDEX}.%s.gz' %(
+                suffix,
+                )
+            l += ['gunzip %s' %(fp)]
+        s = ';'.join(l).replace('$','\\$')
+        lines += [s]
+
+        ## term cmd
+        lines += self.term_cmd('BEAGLE',[fp_out],)
+
+        ## write shell script
+        self.write_shell('shell/BEAGLE.sh',lines,)
+
+        return
+
+
+    def body_BEAGLE(self,fp_out,):
+
+        fp_phased, fp_markers = self.BEAGLE_parse_input('$CHROMOSOME',)
+
+        lines = []
 
 ##like=<unphased likelihood data file> where <unphased likelihood data file> is the name of 
 ##a genotype likelihoods file for unphased, unrelated data (see Section 2.2).   You may use 
@@ -547,7 +646,8 @@ class main():
 ## phased=<phased unrelated file> where <phased unrelated file> is the name of a Beagle file
 ## containing phased unrelated data (see Section 2.1).
 ## You may use multiple phased arguments if data from different cohorts are in different files.
-        lines += [' phased=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.bgl \\']
+##        lines += [' phased=in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.bgl \\']
+        lines += [' phased=%s \\' %(fp_phased)]
 ####  unphased=<unphased data file>                     (optional)
 ####  phased=<phased data file>                         (optional)
 ####  pairs=<unphased pair data file>                   (optional)
@@ -558,7 +658,7 @@ class main():
 ## The markers argument is optional if you specify only one Beagle file,
 ## and is required if you specify more than one Beagle file.
 ##        s += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr%s.phase1_release_v3.20101123.filt.markers ' %(chrom)
-        lines += [' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr$CHROMOSOME.phase1_release_v3.20101123.filt.renamed.markers \\']
+        lines += [' markers=%s \\' %(fp_markers)]
 ####missing=<missing code> where <missing code> is the character or sequence of characters used to represent a missing allele (e.g. missing=-1 or missing=?).
 #### The missing argument is required.
 ##        s += ' missing=? '
@@ -583,44 +683,9 @@ class main():
         ## non-optional output prefix
         lines += [' out=%s \\' %(fp_out)]
 
-        ##
-        ## terminate BEAGLE
-        ##
-        lines += [';']
+##        lines = [line.replace('$','\\$')
 
-        ##
-        ## gunzip the output files after runs to completion
-        ##
-        l = []
-        for suffix in ['dose','phased','gprobs',]:
-            fp = '%s' %(fp_out)
-            fp += '.ProduceBeagleInput.$CHROMOSOME.bgl.%s.gz.$LSBJOBINDEX' %(
-                suffix,
-                )
-            l += ['gunzip %s' %(fp)]
-        lines += [';'.join(l)]
-
-        ## term cmd
-        lines += self.term_cmd('BEAGLE',[fp_out],)
-
-        ## write shell script
-        self.write_shell('shell/BEAGLE.sh',lines,)
-
-        return
-
-
-    def bsub_all_chroms_all_steps(self,d_array,d_shell,):
-
-        self.write_nonarray_scripts(d_shell,)
-
-        self.write_array_scripts_chromosome(d_shell,)
-
-        self.write_array_scripts_subchromosome(d_array,)
-
-        if self.bool_sequential == True:
-            self.write_initial_script()
-
-        return
+        return lines
 
 
     def write_nonarray_scripts(self,d_shell,):
@@ -750,6 +815,11 @@ echo $CHROMOSOME
         for dn in l_dn:
             if not os.path.isdir(dn):
                 os.mkdir(dn)
+        for std in ['out','err',]:
+            for dn in l_dn:
+                if dn[:3] != 'out': continue
+                if not os.path.isdir('std%s/%s' %(std,dn[4:],)):
+                    os.mkdir('std%s/%s' %(std,dn[4:],))
 
         return
 
@@ -958,19 +1028,19 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
+        T = analysis_type = 'VariantRecalibrator'
+        memMB = 15000
+
         ##
-        ## check input existence
+        ## 1) check input existence
         ##
         l_vcfs_in = self.get_fps_in(
             l_chroms,d_chrom_lens,self.bps_per_interval,)
         bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
 
         ##
+        ## 2) touch
         ##
-        ##
-        T = analysis_type = 'VariantRecalibrator'
-        memMB = 15000
-
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
 
@@ -979,7 +1049,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         fp_out = fp_tranches
 
         ##
-        ## GATK walker
+        ## initiate GATK walker
         ##
         lines = self.init_cmd(analysis_type,memMB,)
 
@@ -1065,6 +1135,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         T = analysis_type = 'UnifiedGenotyper'
         memMB = 2000 ## max 1229MB if Fula (72 samples)
 
+        ##
+        ## 1) touch
+        ##
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
 
@@ -1104,7 +1177,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 d_chrom_lens[chrom]/self.bps_per_interval))
 
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
-            std_suffix = '%s.%s.%%I' %(analysis_type,chrom)
+            std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
             cmd = self.bsub_cmd(
                 analysis_type,J,std_suffix=std_suffix,memMB=memMB,chrom=chrom,)
             os.system(cmd)
@@ -1122,7 +1195,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ):
 
         if not std_suffix:
-            std_suffix = '%s' %(analysis_type,)
+            std_suffix = '%s/%s' %(analysis_type,analysis_type,)
 
         cmd = 'bsub -J"%s" -q %s' %(J,queue,)
         cmd += ' -G %s' %(self.project)
