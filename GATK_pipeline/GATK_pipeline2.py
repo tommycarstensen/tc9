@@ -526,7 +526,7 @@ class main():
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        memMB = 5000 ## tmp!!! need to test... think this is spot on though!!!
+        memMB = 2000 ## tmp!!! need to test... think this is spot on though!!! hmmmm only 1132 for uganda 100 samples
 
         ##
         ## 1) check input existence
@@ -841,9 +841,8 @@ echo $CHROMOSOME
 
     def ProduceBeagleInput(self,):
 
-        '''this walker takes approximately 5-10 minutes per chromosome to run'''
-
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
+
         ## "After variants are called and possibly filtered,
         ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
         ## and will produce a likelihood file in BEAGLE format."
@@ -884,7 +883,6 @@ echo $CHROMOSOME
         ## execute shell script
         J = 'PBI'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
         os.system(cmd)
 
         return
@@ -906,28 +904,40 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
 
+        T = analysis_type = 'ApplyRecalibration'
+        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2187 MB
+        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2210 MB
+        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2233 MB
+        memMB = 4000
+        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   2316.11 sec.
+        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3448.45 sec.
+        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3575.38 sec.
+        queue = 'normal'
+
         ##
-        ## check input existence
+        ## 1) check input existence
         ##
         fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
         fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
 ##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
 ##        l_fp_in = self.d_out[T_prev]
         bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
-            
-        ##
-        ##
-        ##
-        T = analysis_type = 'ApplyRecalibration'
 
+        ##
+        ## 2) touch
+        ##
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
-
+           
+        ##
+        ##
+        ##
         l_vcfs_in = self.get_fps_in(
             l_chroms,d_chrom_lens,self.bps_per_interval,)
 
-        fp_out_vcf = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
-        fp_out_idx = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf.idx'
+        fp_out_prefix = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered'
+        fp_out_vcf = '%s.vcf' %(fp_out_prefix)
+        fp_out_idx = '%s.vcf.idx' %(fp_out_prefix)
         if os.path.isfile(fp_out_vcf):
             return
 
@@ -936,18 +946,16 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         lines = ['#!/bin/bash']
 
-        cmd = self.determine_TS_level(fp_in)
+        cmd = self.determine_TS_level(fp_in_tranches)
         lines += [cmd]
 
-        memMB = 64000
-        memMB = 4000 ## tmp!!!!
 
         lines += self.init_cmd(analysis_type,memMB,)
 
         ## GATKwalker, required, in
         lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
         ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out[:-4],)]
+        lines += ['--out %s \\' %(fp_out_vcf,)]
         ## GATKwalker, required, in
         lines += ['--recal_file %s \\' %(fp_in_recal)]
         lines += ['--tranches_file %s \\' %(fp_in_tranches)]
@@ -966,17 +974,16 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         J = 'AR'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-##        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue='hugemem',)
         os.system(cmd)
 
         return
 
 
-    def determine_TS_level(self,fp_in,):
+    def determine_TS_level(self,fp_tranches,):
 
         cmd = 'ts_filter_level=$('
         ## loop over lines
-        cmd += 'cat %s' %(fp_in)
+        cmd += 'cat %s' %(fp_tranches)
         ## init awk
         cmd += " | awk '"
         ## BEGIN
@@ -1003,8 +1010,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         cmd += " '"
         cmd += ')'
 
-        cmd = cmd.replace('"','''"'"'"''').replace('$','\\$')
-
         return cmd
 
 
@@ -1029,7 +1034,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
         T = analysis_type = 'VariantRecalibrator'
-        memMB = 15000
+        ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     12840 MB
+        ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13710 MB
+        ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13950 MB
+        memMB = 16000
+        ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :   9635.38 sec.
+        ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  10015.61 sec.
+        ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11657.10 sec.
+        queue = 'normal'
 
         ##
         ## 1) check input existence
@@ -1046,7 +1058,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
         fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
-        fp_out = fp_tranches
 
         ##
         ## initiate GATK walker
@@ -1083,12 +1094,12 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
-        lines += self.term_cmd(analysis_type,[fp_out],)
+        lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
 
         self.write_shell('shell/VariantRecalibrator.sh',lines,)
 
         J = 'VR'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue=queue,)
         os.system(cmd)
 
         return
@@ -1133,7 +1144,11 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
 
         T = analysis_type = 'UnifiedGenotyper'
-        memMB = 2000 ## max 1229MB if Fula (72 samples)
+        ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
+        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
+        queue = 'normal'
+        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      1945 MB
+        memMB = 2000
 
         ##
         ## 1) touch
@@ -1179,7 +1194,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
             std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
             cmd = self.bsub_cmd(
-                analysis_type,J,std_suffix=std_suffix,memMB=memMB,chrom=chrom,)
+                analysis_type,J,std_suffix=std_suffix,chrom=chrom,
+                memMB=memMB,queue=queue,)
             os.system(cmd)
 
         return
@@ -1197,7 +1213,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         if not std_suffix:
             std_suffix = '%s/%s' %(analysis_type,analysis_type,)
 
-        cmd = 'bsub -J"%s" -q %s' %(J,queue,)
+        cmd = 'bsub -J"%s%s" -q %s' %(self.name,J,queue,)
         cmd += ' -G %s' %(self.project)
         cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
             memMB,memMB,memMB,)
@@ -1426,6 +1442,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = False,
             )
 
+        parser.add_argument(
+            '--name','--dataset',
+            dest='name',
+            help='Name of dataset',
+            metavar='STRING',default=None,
+            required = False,
+            )
+
         ##
         ## VariantRecalibrator resources
         ##
@@ -1620,6 +1644,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 k = l[0]
                 v = l[1]
                 setattr(self,k,v)
+
+        if self.name == None:
+            self.name = os.path.basename(self.fp_bams)
 
         print 'dirname', os.path.dirname(self.fp_bams)
         print 'basename', os.path.basename(self.fp_bams)
