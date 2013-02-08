@@ -2114,7 +2114,10 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = '\n##\n## REINITIATE\n##\n'
         cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
             bfile,bfile,)
-        cmd += 'sleep 300;'
+        if plink_cmd == 'indep-pairwise':
+            cmd += 'sleep %i;' %(10*60)
+        else:
+            cmd += 'sleep %i;' %(5*60)
         cmd += '/software/bin/python-2.7.3 %s' %(
             os.path.join(os.path.dirname(sys.argv[0]),'QC.py'),
             )
@@ -2384,28 +2387,6 @@ it's ugly and I will not understand it 1 year form now.'''
             JOBID = '%s.%s' %(bfile,plink_cmd,)
 ##        cmd += '-J"%s" \\\n' %(JOBID,)
         cmd += "-J'%s' \\\n" %(JOBID,)
-##            ##
-##            ## wait for input to exist and be more than 5 minutes old
-##            ## doesn't seem to be supported by LSF7 at the Sanger :(
-##            ##
-##            if plink_cmd in d_plink_dep_file.keys():
-##                cmd += '-w "'
-##                l = []
-##                for in_suffix in d_plink_dep_file[plink_cmd]:
-##                    fp_in = '%s.%s' %(bfile,in_suffix,)
-##                    l += ['file(age(%s.%s) > 5M)' %(bfile,in_suffix,)]
-##                s = ' && '.join(l)
-##                cmd += s
-##                cmd += '" \\'
-##            ##
-##            ## wait for preceding job to finish (done or exit)
-##            ## should be changed to check that *all* job IDs finished...
-##            ## this only works if all jobs submitted all at once...
-##            ##
-##            if plink_cmd in d_plink_dep_file.keys():
-##                cmd += '-w "ended(%s.%s)" \\' %(bfile,d_plink_dep_done[plink_cmd][0])
-
-##        cmd += '\\\n'
 
         return cmd
 
