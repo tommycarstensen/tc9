@@ -14,7 +14,21 @@ from scipy import stats
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
-## todo 2013-01-23: get rid of any references to uganda_gwas and agv and tc9 in final version
+## todo 2013-01-23: get rid of any references to uganda_gwas and agv and tc9 in final version --- the importance of this was highlighted on 2013-02-08, when the script failed for Deepti, when she used the project uganda
+
+## todo 2013-02-08: get rid of 5 and 10 minute lags with a touch file like I did for GATK pipeline
+
+## todo 2013-02-08: add --max-mem option to never allow script to ask for more than 1GB of memory, to make use of plentiful hosts with 1GB if few samples in pop
+
+## todo 2013-02-08: fix memory management!
+
+## todo 2013-02-08: add a --no-pca option
+
+## todo 2013-02-08: find out how much memory EIGENSOFT uses (3628MB for uganda_gwas 4788 samples)
+
+## todo 2013-02-08: add a --no-pca-with-1000g flag
+
+## todo 2013-02-08: add a check that the provided 1000G bim file has SNPs that match the bim file (do a join and print any diffs and do wc -l) --- if different then inform about the --no-pca-with-1000g flag
 
 class main:
 
@@ -32,16 +46,11 @@ class main:
         if self.verbose == True: print '############ execute ############'
         self.plink_execution(bfile,)
 
-        if (
-            os.path.isfile('%s.postQC.autosomes.bed' %(bfile))
-            and
-            os.path.isfile('%s.postQC.X.bed' %(bfile))
-            ):
-            if self.verbose == True: print '############ plot ############'
-            self.plink_plots(bfile,)
+        if self.verbose == True: print '############ plot ############'
+        self.plink_plots(bfile,)
 
-            if self.verbose == True: print '############ tabulate ############'
-            self.plink_tables(bfile,)
+        if self.verbose == True: print '############ tabulate ############'
+        self.plink_tables(bfile,)
 
         return
 
@@ -148,42 +157,61 @@ class main:
 
         n_SNPs = (int(os.popen('cat %s.hwe | wc -l' %(bfile)).read())-1)/3
 
-        cmd = 'cat %s.hwe' %(bfile)
-        cmd += ' | '
-        cmd += "awk 'NR>1{"
-        cmd += 'if ($9!="NA") {logp=-log($9)/log(10); print logp} '
-        cmd += "}'"
-        cmd += ' | sort -r -n '
-        ## http://gettinggeneticsdone.blogspot.co.uk/2009/11/qq-plots-of-p-values-in-r-using-ggplot2.html
-        ## Thanks to Daniel Shriner at NHGRI for providing this code for creating expected and observed values
-        cmd += " | awk '{print $1,-log(NR/%i)/log(10)}' " %(n_SNPs,)
-        cmd += '> %s.qq.hwe.dat' %(bfile)
-        self.execmd(cmd)
+##        s = '#!/software/bin/R\n'
+##        s += 'df<-read.table("%s.hwe", header=T)\n' %(bfile)
+##        s += 'png("%s.hwe.qqplot.png")\n' %(bfile)
+##        s += 'o=-log10(sort(df$p_lrt, decreasing=F))\n'
+##        s += 'e=-log10(ppoints(length(o)))\n'
+##        s += 'qqplot(e, o, pch=20, cex=1, col="black", xlim=c(0, max(e)), ylim=c(0, max(o)))\n'
+##        s += 'lines(e,e, col="grey")\n'
+##        s += 'dev.off()\n'
+##        fd = open('%s.qq.r' %(bfile),'w')
+##        fd.write(s)
+##        fd.close()
+##        self.execmd('chmod +x %s.qq.r' %(bfile))
+##        self.execmd('./%s.qq.r' %(bfile))
 
-        if self.bool_verbose == True:
-            bool_timestamp = True
+##        cmd = 'cat %s.hwe' %(bfile)
+##        cmd += ' | '
+##        cmd += "awk 'NR>1{"
+##        cmd += 'if ($9!="NA") {logp=-log($9)/log(10); print logp} '
+##        cmd += "}'"
+##        cmd += ' | sort -r -n '
+##
+##        ## http://gettinggeneticsdone.blogspot.co.uk/2009/11/qq-plots-of-p-values-in-r-using-ggplot2.html
+##        ## Thanks to Daniel Shriner at NHGRI for providing this code for creating expected and observed values
+##        cmd += " | awk '{print $1,-log(NR/%i)/log(10)}' " %(n_SNPs,)
+##
+##        cmd += '> %s.qq.hwe.dat' %(bfile)
+##        self.execmd(cmd)
 
-        gnuplot.scatter_plot_2d(
-            '%s.qq.hwe' %(bfile),
-##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
-##            line_plot = line_plot,
-            column1 = 1, column2 = 2,
-            xlabel = '-log(p_{HWE,observed})',
-            ylabel = '-log(p_{HWE,expected})',
-##            xmin=0,xmax=8,
-            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
-                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
-                ),
-            bool_timestamp=bool_timestamp,
-            )
+##        from scipy.stats import norm
+##        n = norm.ppdf((0.5+arange(len(p))/len(p), loc=m, scale=s)
+
+##        if self.bool_verbose == True:
+##            bool_timestamp = True
+##
+##        gnuplot.scatter_plot_2d(
+##            '%s.qq.hwe' %(bfile),
+####            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
+####            line_plot = line_plot,
+##            column1 = 1, column2 = 2,
+##            xlabel = '-log(p_{HWE,observed})',
+##            ylabel = '-log(p_{HWE,expected})',
+####            xmin=0,xmax=8,
+##            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+##                bfile.replace('_','\\\\_'),n_samples,n_SNPs,
+##                ),
+##            bool_timestamp=bool_timestamp,
+##            )
 
         ##
         ## 2nd plot...
         ##
         line_plot = 'plot '
         for s_ineq, suffix,color in [
-            ['<','out',1,],
-            ['>','in',0,],
+            ['<','fail',1,],
+            ['>','pass',0,],
             ]:
             cmd = 'cat %s.hwe' %(bfile)
             cmd += " | awk '"
@@ -213,8 +241,8 @@ class main:
             bool_timestamp=bool_timestamp,
             )
 
-        os.remove('%s.hwe.in' %(bfile))
-        os.remove('%s.hwe.out' %(bfile))
+        os.remove('%s.hwe.fail' %(bfile))
+        os.remove('%s.hwe.pass' %(bfile))
 
         return
 
@@ -305,16 +333,27 @@ class main:
                 if not os.path.getsize(fp_in) > 0:
                     bool_continue = True
                     break
-                if not time.time()-os.path.getmtime(fp_in) > 5*60:
+                if os.path.isfile(fp_out):
                     bool_continue = True
                     break
-                if os.path.isfile(fp_out):
+                bool_input = self.check_file_in(bfile,fp_in)
+                if bool_input == False:
                     bool_continue = True
                     break
                 continue
             if bool_continue == True:
                 continue
+
+            ## lock
+            if os.path.isfile('%s.%s.lock' %(bfile,in_suffix,)):
+                sys.exit(0)
+            else:
+                self.execmd('touch %s.%s.lock' %(bfile,in_suffix,))
+            ## tabulate
             function(bfile,)
+            ## unlock
+            os.remove('%s.%s.lock' %(bfile,in_suffix,))
+
 
         ##
         ## combined
@@ -617,9 +656,6 @@ class main:
             and
             os.path.isfile('genome_outliers.table')
             ):
-            ## some other process is already doing the job
-            if os.path.getsize('genome.table') == 0:
-                sys.exit(0)
             return
 
         ## make sure other processes don't write this table
@@ -635,20 +671,6 @@ class main:
             pi_hat_max = (i+1)*((.20-0.)/numbins)
             l_pi_hat_max += [pi_hat_max]
         l_pi_hat_max += [0.5,0.9,]
-
-        ##
-        ## check that output doesn't already exist
-        ##
-        bool_all = True
-        for pi_hat_max in l_pi_hat_max:
-            fn = '%s.genome.%.2f.samples' %(bfile,pi_hat_max,)
-            if not os.path.isfile(fn):
-                bool_all = False
-                break
-        if bool_all == True:
-            return
-
-        print '\n\ngenome'
 
         ##
         ## related samples at different thresholds
@@ -926,15 +948,24 @@ class main:
                 if not os.path.getsize(fp_in) > 0:
                     bool_continue = True
                     break
-                if not time.time()-os.path.getmtime(fp_in) > 5*60:
+                bool_input = self.check_file_in(bfile,fp_in)
+                if bool_input == False:
                     bool_continue = True
                     break
             if bool_continue == True:
                 continue
+            ## lock
+            if os.path.isfile('%s.%s.lock' %(bfile,in_suffix,)):
+                sys.exit(0)
+            else:
+                self.execmd('touch %s.%s.lock' %(bfile,in_suffix,))
+            ## plot
             if l_suffixes_in[0][-4:] == 'evec':
                 function(bfile,l_suffixes_in[0][:-len('.EIGENSOFT.evec')],)
             else:
                 function(bfile,)
+            ## unlock
+            os.remove('%s.%s.lock' %(bfile,in_suffix,))
 
         if (
             not os.path.isfile('venn3_%s.png' %(bfile))
@@ -1670,6 +1701,8 @@ it's ugly and I will not understand it 1 year form now.'''
             bool_timestamp=bool_timestamp,
             )
 
+        os.remove('%s.frq.hwe.joined' %(bfile))
+
         return
 
 
@@ -1679,10 +1712,6 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if os.path.isfile('%s.het.call.png' %(bfile)):
             return
-        for suffix in ['het.call.plt','imiss.het.joined',]:
-            fn = '%s.%s' %(bfile,suffix,)
-            if os.path.isfile(fn):
-                sys.exit()
 
         ## check that number of samples are equal
         ## which they should be if checks are run in *parallel*
@@ -1983,7 +2012,7 @@ it's ugly and I will not understand it 1 year form now.'''
             plink_cmd = plink_cmd_full.split()[0].replace('--','')
 
             ##
-            ## check that file input exists (LSF dependency does not work...)
+            ## check that file input exists (LSF file dependency does not work...)
             ##
             bool_continue_in, in_prefix, fn_in = self.check_input_existence(
                 bfile,plink_cmd,plink_cmd_full,
@@ -2042,7 +2071,8 @@ it's ugly and I will not understand it 1 year form now.'''
             ##
             ## LSF settings
             ##
-            cmd_LSF = self.append_LSF(bfile,plink_cmd,plink_cmd_full,)
+            cmd_LSF = self.append_LSF(
+                bfile,plink_cmd,plink_cmd_full=plink_cmd_full,)
             cmd_LSF += './%s_%s.sh' %(out_prefix,plink_cmd,)
 
             if (
@@ -2109,15 +2139,12 @@ it's ugly and I will not understand it 1 year form now.'''
         return cmd
 
 
-    def cmd_rerun(self,bfile,plink_cmd,nl='\n',):
+    def cmd_rerun(self,bfile,plink_cmd,):
 
-        cmd = '\n##\n## REINITIATE\n##\n'
-        cmd += 'if [ ! -s %s.postQC.autosomes.bed -a ! -s %s.posthardy.mds ]; then\n' %(
-            bfile,bfile,)
-        if plink_cmd == 'indep-pairwise':
-            cmd += 'sleep %i;' %(10*60)
-        else:
-            cmd += 'sleep %i;' %(5*60)
+        ## N.B. REMEMBER NOT TO INSERT LINE BREAKS BETWEEN FUNCTIONS HERE!!!
+        ## USE SEMICOLONS INSTEAD IF MULTIPLE COMMANDS!!!
+
+        cmd = ''
         cmd += '/software/bin/python-2.7.3 %s' %(
             os.path.join(os.path.dirname(sys.argv[0]),'QC.py'),
             )
@@ -2142,9 +2169,6 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' --pops %s' %(self.fn_pops)
         ##
         cmd += ' --no-X %s' %(self.bool_no_sexcheck)
-        cmd += nl
-        cmd += 'fi'
-        cmd += '\n'
 
         return cmd
 
@@ -2191,34 +2215,36 @@ it's ugly and I will not understand it 1 year form now.'''
         ## to avoid the same step being carried out twice
         ## and worst case scenario output being corrupted
         if bool_file_out_exists == False:
-            fn_log = '%s.log' %(out_prefix)
+
+            if plink_cmd == 'indep-pairwise':
+                chromosome = 1
+                fn_log = 'prune/%s.%i.log' %(out_prefix,chromosome,)
+            elif plink_cmd == 'genome':
+                fn_log = 'genome/%s.00.00.log' %(out_prefix)
+            else:
+                fn_log = '%s.log' %(out_prefix)
 
             if os.path.isfile(fn_log):
-                ## log file recently modified
-                if time.time()-os.path.getmtime(fn_log) < 5*60:
-                    bool_file_out_exists = True
-                    fn_out = fn_log
-                    pass
-                else:
-                    
 ##                    ## Python 2.5
 ##                    with open(fn_log,'r') as fd:
 ##                        lines = fd.readlines()
-                    ## All Python versions
-                    fd = open(fn_log,'r')
-                    lines = fd.readlines()
-                    fd.close()
+                ## All Python versions
+                fd = open(fn_log,'r')
+                lines = fd.readlines()
+                fd.close()
 
-                    if len(lines) > 0:
-                        if 'Analysis finished: ' not in lines[-2]:
-                            bool_file_out_exists = True
-                            fn_out = fn_log
-                            pass
-                        pass
-
-                    pass
-
-                pass
+                ## file is about to be generated
+                if len(lines) == 0:
+                    bool_file_out_exists = True
+                    fn_out = fn_log
+                ## file is about to be generated
+                elif 'Analysis finished: ' not in lines[-2]:
+                    bool_file_out_exists = True
+                    fn_out = fn_log
+                ## some other file was generated
+                ## and wrote to a log file with the same name as the current one
+                else:
+                    bool_file_out_exists = False
 
             ##
             ## create the output so another process doesn't think it's not created
@@ -2262,35 +2288,25 @@ it's ugly and I will not understand it 1 year form now.'''
             'read-freq', 'read-genome',
             'bmerge',
             ]:
-##            if plink_cmd == 'bmerge' and option == 'extract':
-##                fp_in = '%s.posthardy.prune.in' %(bfile,)
-##                l_fp_in += [fp_in]
-##                pass
-##            elif '--%s' %(option) in plink_cmd_full:
-##                l = plink_cmd_full.split()
-##                fp_in = l[l.index('--%s' %(option))+1]
-##                l_fp_in += [fp_in]
-##                pass
-            if '--%s' %(option) in plink_cmd_full:
-                l = plink_cmd_full.split()
-                if option == 'bmerge':
-                    fp_in = l[l.index('--%s' %(option))+2]
-                else:
-                    fp_in = l[l.index('--%s' %(option))+1]
-                l_fp_in += [fp_in]
-                pass
+            if not '--%s' %(option) in plink_cmd_full:
+                continue
+            l = plink_cmd_full.split()
+            if option == 'bmerge':
+                fp_in = l[l.index('--%s' %(option))+2]
+            else:
+                fp_in = l[l.index('--%s' %(option))+1]
+            l_fp_in += [fp_in]
             continue
 
         ## check                
         bool_input = True
         for fp_in in l_fp_in:
-            bool_input = self.check_file_in(fp_in)
-            if bool_input == False:
-                if self.bool_verbose == True:
-                    print plink_cmd, fp_in, 'does not exist or was recently modified'
-                    pass
-                break
-            continue
+            print plink_cmd, fp_in
+            bool_input = self.check_file_in(bfile,fp_in)
+            if bool_input == True: continue
+            if self.bool_verbose == True:
+                print plink_cmd, fp_in, 'does not exist or was recently modified'
+            break
         if bool_input == False:
             bool_continue = True
             pass
@@ -2361,18 +2377,20 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def append_LSF(
         self, bfile, plink_cmd, plink_cmd_full=None, JOBID=None, verbose=True,
+        memMB = None,
         ):
 
         if plink_cmd_full:
-            mem = self.assign_memory(bfile,plink_cmd,plink_cmd_full,)
-        ## --genome
+            memMB = self.assign_memory(bfile,plink_cmd,plink_cmd_full,)
+        ## --genome, EIGENSOFT, --indep-pairwise
         else:
-            mem = 4000
+            if memMB == None:
+                stop
         
         cmd = ''
         cmd += 'bsub \\\n'
         cmd += "-M%i000 -R'select[mem>%i] rusage[mem=%i]' \\\n" %(
-            mem,mem,mem,
+            memMB,memMB,memMB,
             )
         cmd += '-G %s \\\n' %(self.project)
         cmd += '-q normal \\\n'
@@ -2391,48 +2409,48 @@ it's ugly and I will not understand it 1 year form now.'''
         return cmd
 
 
-    def assign_memory(self,bfile,plink_cmd,plink_cmd_full,):
+    def assign_memory(
+        self,bfile,plink_cmd,plink_cmd_full=None,memMB_per_1000_samples=None,):
 
         ## approximate memory (MB) required per 1000 samples
         ## depends on number of SNPs as well...
-        d_mem = {
+        ## numbers below worked out for 2.5M SNPs
+        d_memMB = {
             'check-sex':800,
             'cluster':900,
-            'het':1100,
-            'bmerge':1300,
+##            'het':1100,
+            'recodeA':800,
+            'bmerge':1015,
             'freq':800,
             'indep-pairwise':800,
             'make-bed':800,
             'missing':800,
-            'genome':800, ## memory requirements low if EIGENSOFT bed not to be written...
+            'genome':800,
+            'hardy':800,
             }
-
-        if '--bfile' not in plink_cmd_full:
-            prefix_in = bfile
-        else:
-            l = plink_cmd_full.split()
-            prefix_in = l[l.index('--bfile')+1]
 
         cmd = 'cat %s.fam | wc -l' %(bfile)
         n_samples = int(os.popen(cmd).read())
         ## additional samples if bmerge
         if plink_cmd == 'bmerge':
-            if os.path.isfile(self.fp1000g):
+            if os.path.isfile(self.fp1000g): ## this file check should be carried out much much earlier...
                 cmd = 'cat %s.fam | wc -l' %(self.fp1000g)
                 if self.bool_verbose == True:
                     print cmd
                 n_samples += int(os.popen(cmd).read())
 
         ## assign appropriate amount of memory (GB)
-        if plink_cmd in d_mem.keys():
-            mem = 1000*int(
-                max(3,math.ceil((d_mem[plink_cmd]/1000.)*n_samples/1000.))
-                )
-        else:
-            mem = 1000*int(max(3,math.ceil(0.8*n_samples/1000.)))
-            pass
+        if not plink_cmd in d_memMB.keys():
+            print plink_cmd
+            stop
 
-        return mem
+        if not memMB_per_1000_samples:
+            memMB_per_1000_samples = d_memMB[plink_cmd]
+            
+        memGB_calc = math.ceil(memMB_per_1000_samples*n_samples/1000000.)
+        memMB = int(max(2000,1000*memGB_calc))
+
+        return memMB
 
 
     def l_plink_cmds(self,bfile,):
@@ -2450,7 +2468,6 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/strat.shtml#cluster
         s_cluster = '--cluster \\\n'
         s_cluster += '--mds-plot 10 \\\n' ## 10 components
-        s_cluster += '--exclude %s.ldregions.SNPs \\\n' %(bfile,)
 
 ##        ##
 ##        ## sequential for Manj
@@ -2466,8 +2483,12 @@ it's ugly and I will not understand it 1 year form now.'''
         l_plink_cmds += ['--missing']
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/ibdibs.shtml#inbreeding
-##        l_plink_cmds += ['--het --keep %s.imiss' %(bfile)] ## keep just to make sure it doesn't run until --missing finishes
-        l_plink_cmds += ['--recodeA --keep %s.imiss' %(bfile)]
+##        cmd = '--het'
+        cmd = '--recodeA'
+        ## keep just to make sure it doesn't run until --missing finishes
+        ## otherwise correct SD can't be calculated
+        cmd += ' --keep %s.imiss' %(bfile)
+        l_plink_cmds += [cmd]
         ## xxx rename het_before/after to recodeA_before/after and include het calculation in recode_after
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#sexcheck
@@ -2700,15 +2721,22 @@ it's ugly and I will not understand it 1 year form now.'''
         return cmd_genome
 
 
-    def check_file_in(self,fp_in,):
+    def check_file_in(self,bfile,fp_in,):
 
         bool_check = True
         if not os.path.isfile(fp_in):
             bool_check = False
-##        elif not os.path.getsize(fp_in) > 0:
-##            bool_check = False
-        elif not time.time()-os.path.getmtime(fp_in) > 5*60:
-            bool_check = False
+        else:
+            fd = open('%s.touch' %(bfile),'r')
+            s = fd.read()
+            fd.close()
+            l_fp_out = s.strip().split('\n')
+            if not fp_in in l_fp_out:
+                print fp_in
+                print l_fp_out
+                if bfile != 'omni2.5-8_20120809_gwa_uganda_gtu_flipped':
+                    stoptmp
+                bool_check = False
 
         return bool_check
 
@@ -2758,6 +2786,8 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd = '''awk '{if($5=="PROBLEM") print $1,$2}' '''
             cmd += ' %s.sexcheck > %s.sexcheck.samples' %(bfile, bfile,)
             l_cmds += [cmd]
+            cmd = 'echo %s.sexcheck.samples >> %s.touch\n' %(bfile,bfile,)
+            l_cmds += [cmd]
             cmd = self.concatenate_sampleQC_remove_lists(bfile,)
             l_cmds += [cmd]
 
@@ -2770,6 +2800,10 @@ it's ugly and I will not understand it 1 year form now.'''
         elif plink_cmd == 'hardy':
             l_cmds = self.hardy_after(bfile,out_prefix,)
 
+        elif plink_cmd == 'freq':
+            cmd = 'echo %s.frq >> %s.touch' %(out_prefix,bfile,)
+            l_cmds += [cmd]
+
 ##        elif plink_cmd == 'bmerge':
 ##            l_cmds = self.bmerge_after(bfile,out_prefix,)
 
@@ -2779,19 +2813,6 @@ it's ugly and I will not understand it 1 year form now.'''
         cmds = '\n\n'.join(l_cmds)
 
         return cmds
-
-
-##    def bmerge_after(self,bfile,out_prefix,):
-##
-##        l_cmds = []
-##
-##        cmd_EIGENSOFT = self.EIGENSOFT(
-##            bfile,out_prefix,out_prefix,bool_removal=False,)
-##        cmd = '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
-##
-##        l_cmds += [cmd]
-##
-##        return l_cmds
 
 
     def hardy_after(self,bfile,out_prefix,):
@@ -2810,12 +2831,15 @@ it's ugly and I will not understand it 1 year form now.'''
 
             cmd += "awk '{if ($9 < %.1e) print $2}' %s.hwe > %s.hwe.SNPs\n" %(
                 self.hwe_min, bfile,bfile,)
+            cmd += 'echo %s.hwe.SNPs >> %s.touch\n' %(bfile,bfile,)
             cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs > %s.lmiss.hwe.SNPs\n' %(
                 bfile,bfile,bfile,
                 )
+            cmd += 'echo %s.lmiss.hwe.SNPs >> %s.touch\n' %(bfile,bfile,)
             cmd += 'cat %s.lmiss.SNPs %s.hwe.SNPs %s.ldregions.SNPs' %(
                 bfile,bfile,bfile,)
             cmd += ' > %s.lmiss.hwe.LRLD.SNPs\n' %(bfile)
+            cmd += 'echo %s.lmiss.hwe.LRLD.SNPs >> %s.touch\n' %(bfile,bfile,)
 
             ##
             ## only merge SNPs found in 1000g and current dataset
@@ -2828,26 +2852,15 @@ it's ugly and I will not understand it 1 year form now.'''
                 cmd += "\ncat %s.bim | awk '{if($1>=1&&$1<=22) print $2}' | sort > %s.autosomes.SNPs.sorted" %(
                     fn_in,fn_out,)
 
-            cmd += '\ncomm -12 %s.autosomes.SNPs.sorted %s.autosomes.SNPs.sorted > %s.%s.autosomes.comm.SNPs' %(
-                bfile,self.fn1000g,bfile,self.fn1000g,)
+            fn_out = '%s.%s.autosomes.comm.SNPs' %(bfile,self.fn1000g,)
+            cmd += '\ncomm -12 %s.autosomes.SNPs.sorted %s.autosomes.SNPs.sorted > %s' %(
+                bfile,self.fn1000g,fn_out,)
+            cmd += '\necho %s >> %s.touch' %(fn_out,bfile,)
 
             cmd += '\nrm %s.autosomes.SNPs.sorted %s.autosomes.SNPs.sorted' %(bfile,self.fn1000g,)
 
-########            cmd += '\nsort %s.posthardy.prune.in' %(bfile)
-########            cmd += ' > %s.posthardy.prune.in.sorted' %(bfile)
-########
-########            cmd += '\ncomm -12 %s.posthardy.prune.in.sorted %s.%s.autosomes.comm.SNPs > %s.%s.prune.in' %(
-########                bfile,bfile,self.fn1000g,bfile,self.fn1000g,)
-########
-########            cmd += '\nrm %s.%s.autosomes.comm.SNPs %s.posthardy.prune.in.sorted' %(
-########                bfile,self.fn1000g,bfile,)
-
-##            ##
-##            ## EIGENSOFT after HWE (before new LD pruning)
-##            ##
-##            cmd_EIGENSOFT = self.EIGENSOFT(bfile,bool_removal=False,)
-##            cmd += '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
-
+            cmd += '\necho %s.hwe >> %s.touch\n' %(out_prefix,bfile,)
+            
             ##
             ## fi
             ##
@@ -2890,6 +2903,8 @@ it's ugly and I will not understand it 1 year form now.'''
         ##Thus, under the default of up to 5 outlier removal iterations, running time is 
         ##  up to 1.5e-11 * nSNP * NSAMPLES^2 hours.
 
+        memMB = 4000
+
         if self.project == 'uganda_gwas':
             bool_removal = False ## ms23 24jan2013
         elif self.project == 'agv':
@@ -2924,7 +2939,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' | uniq -d'
         cmd += ' | wc -l'
         cmd += ')\n'
-        cmd += 'if [ $s -gt 0 ]; then\n'
+        cmd += 'if [ $dups -gt 0 ]; then\n'
         cmd += 'echo duplicate sample IDs or bug\n'
         cmd += 'exit\n'
         cmd += 'fi\n'
@@ -3046,7 +3061,7 @@ it's ugly and I will not understand it 1 year form now.'''
         fd.write(cmd)
         fd.close()
         self.execmd('chmod +x %s' %(fn_sh))
-        cmd_LSF = self.append_LSF(prefix,'EIGENSOFT',)
+        cmd_LSF = self.append_LSF(prefix,'EIGENSOFT',memMB=memMB,)
         cmd_LSF += './%s' %(fn_sh)
 
         return cmd_LSF
@@ -3139,7 +3154,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += '## continue if output exists\n'
         cmd += 'if ['
         cmd += ' -f prune/%s.$chrom.prune.in -o' %(out_prefix)
-        cmd += ' -f prune/%s.$chrom.log' %(out_prefix)
+        cmd += ' -s prune/%s.$chrom.log' %(out_prefix)
         cmd += ' ]\nthen continue\nfi\n\n'
         ## initiate command
         cmd += "cmd='\n"
@@ -3196,6 +3211,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## parse FID and IID columns
         cmd = 'if [ $parent -eq 0 ]; then\n' ## one time only
+        ## sleep while allowing parent to split fam files
         cmd += 'sleep 60'
         cmd += '\nelse\n'
         cmd += 'cat %s.filtered.fam' %(out_prefix,)
@@ -3248,6 +3264,11 @@ it's ugly and I will not understand it 1 year form now.'''
     def indep_pairwise_after(self,bfile,out_prefix,in_prefix,):
         l_cmds = []
 
+        memMB = self.assign_memory(
+            bfile,'indep-pairwise',
+            memMB_per_1000_samples=150, ## based on chromosome 1
+            )
+
         ##
         ## continuation of nested loop and command from indep_pairwise_before
         ##
@@ -3257,7 +3278,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_run_all == True:
             cmd += ';'
             ## need to rerun at the end of each bsub
-            cmd += self.cmd_rerun(bfile,'indep-pairwise',nl=';\n')
+            cmd += self.cmd_rerun(bfile,'indep-pairwise')
             pass
         ## terminate command
         cmd += "\n'\n\n"
@@ -3265,6 +3286,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd_LSF = self.append_LSF(
             bfile,'indep-pairwise',
             JOBID='%s.indep-pairwise.${chrom}' %(out_prefix),
+            memMB = memMB,
             )
 ##        cmd += 'echo $cmd\n'
         cmd += '''cmd="%sbash -c '$cmd' $chrom"\n''' %(cmd_LSF)
@@ -3330,6 +3352,7 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += "cat prune/%s.$chrom.prune.in >> %s.prune.in\n" %(
             out_prefix,out_prefix,
             )
+        cmd += 'echo %s.prune.in >> %s.touch\n' %(out_prefix,bfile,)
         ## append to .prune.out file
         cmd += "cat prune/%s.$chrom.prune.out >> %s.prune.out\n" %(
             out_prefix,out_prefix,
@@ -3351,16 +3374,17 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
         l_cmds += [cmd]
 
-##        cmd_EIGENSOFT = self.EIGENSOFT(
-##            bfile,out_prefix,out_prefix,bool_removal=False,)
-##        cmd = '\n##\n## EIGENSOFT\n##\n'+cmd_EIGENSOFT+'\n\n'
-
         return l_cmds
 
 
     def genome_after(self,bfile,in_prefix,out_prefix,):
 
         l_cmds = []
+
+        memMB = self.assign_memory(
+            bfile,'genome',
+            memMB_per_1000_samples=760,
+            )
 
         ##
         ## continuation of nested loop and command from genome_before
@@ -3371,11 +3395,12 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_run_all == True:
             cmd += ';'
             ## need to rerun at the end of each bsub
-            cmd += self.cmd_rerun(bfile,'genome',nl=';\n')
+            cmd += self.cmd_rerun(bfile,'genome')
         ## terminate command
         cmd += "\n'\n\n"
         ## evaluate command
-        cmd_LSF = self.append_LSF(bfile,'genome',JOBID='genome.${i}.${j}',)
+        cmd_LSF = self.append_LSF(
+            bfile,'genome',JOBID='genome.${i}.${j}',memMB=memMB,)
 ##        cmd += 'echo $cmd\n'
         cmd += '''cmd="%sbash -c '$cmd' $i $j"\n''' %(cmd_LSF)
         cmd += 'echo $cmd\n'
@@ -3426,6 +3451,7 @@ it's ugly and I will not understand it 1 year form now.'''
             out_prefix,out_prefix,
             )
         cmd += '\ndone\ndone\n\n'
+        cmd += 'echo %s.genome >> %s.touch\n' %(out_prefix,bfile,)
 
 ##        ## sort to always get the same result from IBD prune irrrespective of fam file sizes
 ##        ## for now using the same fam file size of 400 samples per fam file
@@ -3455,6 +3481,8 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += '--pi_hat_max %.2f --genome %s.prehardy --imiss %s --out %s\n\n' %(
                 self.pi_hat_max,bfile,bfile,bfile,
                 )
+            cmd += 'echo %s.genome.%.2f.samples >> %s.touch\n' %(
+                bfile,self.pi_hat_max,bfile,)
 
             ##
             ## concatenate sample removal lists
@@ -3475,12 +3503,14 @@ it's ugly and I will not understand it 1 year form now.'''
                 cmd += ' > %s.sampleQC.IBD.samples\n\n' %(bfile,)
             else:
                 stop_unknown_project
+            cmd += 'echo %s.sampleQC.IBD.samples >> %s.touch\n' %(bfile,bfile,)
 
             ## before HWE
             cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
                 bfile,bfile,self.pi_hat_max,
                 )
             cmd += ' > %s.sampleQC.nonfounders.samples\n' %(bfile,)
+            cmd += 'echo %s.sampleQC.nonfounders.samples >> %s.touch\n' %(bfile,bfile,)
 
         if self.bool_run_all == True:
             cmd += self.cmd_rerun(bfile,'genome',)
@@ -3511,6 +3541,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += "'"
         cmd += ' > %s.het' %(bfile)
         l_cmds += [cmd]
+        cmd = 'echo %s.het >> %s.touch\n' %(bfile,bfile,)
+        l_cmds += [cmd]
 
         ## append header
         cmd = "sed -i '1i FID IID N(HET) N(NM) HET' %s.het" %(bfile)
@@ -3536,6 +3568,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ") print $1,$2}' "
         cmd += ' %s.het > %s.het.samples' %(bfile, bfile,)
         l_cmds += [cmd]
+        cmd = 'echo %s.het.samples >> %s.touch\n' %(bfile,bfile,)
+        l_cmds += [cmd]
 
 ##        ## remove huge .raw file to save disk space
         ## don't remove, otherwise it will be continuously regenerated
@@ -3559,6 +3593,8 @@ it's ugly and I will not understand it 1 year form now.'''
             bfile,
             )
         cmd += ' > %s.imiss.samples\n' %(bfile)
+        cmd += 'echo %s.imiss.samples >> %s.touch\n' %(bfile,bfile,)
+        cmd += 'echo %s.imiss >> %s.touch\n' %(bfile,bfile,)
 ##        cmd += 'rm %s.lmiss\n' %(bfile)
         cmd += self.concatenate_sampleQC_remove_lists(bfile,)
         cmd += 'fi\n'
@@ -3570,16 +3606,20 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd = 'if [ -s %s.SNPQC.lmiss -a ! -f %s.lmiss.SNPs ]\n' %(bfile,bfile,)
         cmd += 'then\n'
 
+        cmd += 'echo %s.SNPQC.lmiss >> %s.touch\n' %(bfile,bfile,)
+
         cmd += 'cat %s.SNPQC.lmiss' %(bfile)
         cmd += ' | '
         cmd += "awk 'NR>1 {if ((1-$5)<%.2f) print $2}' " %(
             self.threshold_lmiss,
             )
         cmd += ' > %s.lmiss.SNPs\n' %(bfile)
+        cmd += 'echo %s.lmiss.SNPs >> %s.touch\n' %(bfile,bfile,)
 
         cmd += 'cat %s.lmiss.SNPs %s.ldregions.SNPs > %s.lmiss.exclLRLD.SNPs\n' %(
             bfile,bfile,bfile)
-        cmd += 'rm %s.SNPQC.imiss\n' %(bfile)
+        cmd += 'echo %s.lmiss.exclLRLD.SNPs >> %s.touch\n' %(bfile,bfile,)
+##        cmd += 'rm %s.SNPQC.imiss\n' %(bfile)
         cmd += 'fi\n'
         l_cmds += [cmd]
 
@@ -3633,6 +3673,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_no_sexcheck == False:
             cmd += '%s.sexcheck.samples ' %(bfile,)
         cmd += '| sort -u > %s.sampleQC.samples\n' %(bfile,)
+        cmd += 'echo %s.sampleQC.samples >> %s.touch\n' %(bfile,bfile,)
         cmd += 'fi\n'
 
         return cmd
@@ -3878,12 +3919,6 @@ it's ugly and I will not understand it 1 year form now.'''
         if os.path.isfile('%s.lmiss.png' %(bfile)):
             return
 
-        ## other process already generating this image
-        if os.path.isfile('%s.lmiss.plt' %(bfile)):
-            sys.exit(0)
-        if os.path.isfile('%s.lmiss.ps' %(bfile)):
-            sys.exit(0)
-
         print 'histogram call lmiss', bfile
 
         n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
@@ -3967,14 +4002,14 @@ it's ugly and I will not understand it 1 year form now.'''
     def init(self,bfile,):
 
         ##
-        ##
+        ## check file existence
         ##
         if not os.path.isfile('%s.bed' %(self.bfile)):
             print 'bed not found:', self.bfile
             sys.exit(0)
 
         ##
-        ##
+        ## check X chromosome genotype data existence
         ##
         if self.bool_no_sexcheck == False:
             cmd = "cat %s.bim | awk '{if($1==23) print}' | wc -l" %(bfile)
@@ -3987,6 +4022,17 @@ it's ugly and I will not understand it 1 year form now.'''
             for fn in ['%s.sexcheck' %(bfile),'%s.sexcheck.samples' %(bfile),]:
                 if os.path.isfile(fn): continue
                 self.execmd('touch %s' %(fn))
+
+        ##
+        ## create touch file *after* initial checks
+        ##
+        if not os.path.isfile('%s.touch' %(bfile)):
+            s = ''
+            for extension in ['bed','bim','fam',]:
+                s += '%s.%s\n%s.%s\n' %(bfile,extension,self.fp1000g,extension)
+            fd = open('%s.touch' %(bfile),'w')
+            fd.write(s)
+            fd.close()
 
         ##
         ## create dirs
@@ -4153,6 +4199,10 @@ maybe I should rename it.'''
                 bfile,condition,fn_out,
                 )
             self.execmd(cmd)
+
+            fd = open('%s.touch' %(bfile),'a')
+            fd.write('%s\n' %(fn_out))
+            fd.close()
 
         return
 
