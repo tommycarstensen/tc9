@@ -112,10 +112,7 @@ class main():
         fp_out += 'BeagleOutput.%s.bgl.gprobs' %(chrom,)
         for index in xrange(1,max(d_index2pos.keys())+1,):
             print 'BEAGLE_unite', chrom, index
-            fp_in = 'out_BEAGLE/%s/' %(chrom,)
-            fp_in += 'BeagleOutput.%s.bgl.%i.' %(chrom,index,)
-##            fp_in += 'ProduceBeagleInput.%s.bgl.%i.gprobs' %(chrom,index,)
-            fp_in += 'BeagleInput.%s.bgl.%i.gprobs' %(chrom,index,) ## tmp!!!
+            fp_in = 'out_BEAGLE/%s/%s.%i.gprobs' %(chrom,chrom,index,)
             if index == 1:
                 cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
                 os.system(cmd)
@@ -182,8 +179,7 @@ class main():
         ## 1) check input existence
         ##
         l_fp_in = self.IMPUTE2_parse_input_files()
-        l_fp_in = [] ## tmp!!!
-        self.check_in('BEAGLE',l_fp_in,)
+        bool_exit = self.check_in('BEAGLE',l_fp_in,)
 
         ##
         ## 2) touch
@@ -376,6 +372,9 @@ class main():
 
     def BEAGLE_divide(self,chrom,):
 
+        ## To save disk space I should rewrite this function to act directly on ProduceBeagleInput.bgl instead of ProduceBeagleInput.$CHROM.bgl
+        ## I can't remember why I split up the bgl file per chromosome in the first place...
+
         ##
         ## size and edge
         ##
@@ -383,18 +382,21 @@ class main():
         edge = self.i_BEAGLE_edge*1000
 
         fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
-        fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.%s' %(chrom)
+        ## genotype likelihood file
+        fp_out_prefix = 'in_BEAGLE/%s' %(chrom)
 
         fp_phased, fp_markers = self.BEAGLE_parse_input(chrom,)
 
         ##
-        ## open files
+        ## parse genotype likelihood file header
         ##
-        fd_phased = open(fp_phased,'r')
-        fd_markers = open(fp_markers,'r')
+        ## append header
+        fd = open('out_ProduceBeagleInput/ProduceBeagleInput.bgl','r')
+        header = header_phased = fd.readline().strip()
+        fd.close()
 
-        ## parse header
-        header_phased = fd_phased.readline()
+##        ## parse header
+##        header_phased = fd_phased.readline()
 
         ## initiate lines out
         lines_out_phased1 = [header_phased]
@@ -404,12 +406,11 @@ class main():
         lines_out_markers2 = []
 
         ##
-        ## parse genotype likelihood file header
+        ## open files
         ##
-        fd_bgl = open(fp_in,'r')
-        for line in fd_bgl:
-            header = line
-            break
+        fd_phased = open(fp_phased,'r')
+        fd_markers = open(fp_markers,'r')
+        fd_bgl = open(fp_in,'r') ## without header
 
         ##
         ## get position of first SNP from genotype likelihood file
@@ -435,7 +436,7 @@ class main():
                 if position > position_init1+size:
                     position_init2 = position-position%size
                     if position > position_init1+size+edge:
-                        fd_out = open('%s.like.%i' %(fp_out,index,),'w')
+                        fd_out = open('%s.%i.like' %(fp_out_prefix,index,),'w')
                         fd_out.writelines(lines_out1)
                         fd_out.close()
                         d_index2pos[index] = position_init1
@@ -460,10 +461,10 @@ class main():
                                 lines_out_phased2 += [line_phased]
                                 lines_out_markers2 += [line_markers]
                                 ## write lines
-                                fd = open('%s.markers.%i' %(fp_out,index,),'w')
+                                fd = open('%s.%i.markers' %(fp_out_prefix,index,),'w')
                                 fd.writelines(lines_out_markers1)
                                 fd.close()
-                                fd = open('%s.phased.%i' %(fp_out,index,),'w')
+                                fd = open('%s.%i.phased' %(fp_out_prefix,index,),'w')
                                 fd.writelines(lines_out_phased1)
                                 fd.close()
                                 ## reset lines
@@ -484,27 +485,63 @@ class main():
             else:
                 lines_out1 += [line]
 
-        ## close after looping over last line
-        fd_bgl.close()
-##        ## write remaining few lines to output file
-##        fd_out = open('%s.%i.bgl' %(fp_out,index,),'w')
-##        fd_out.writelines(lines_out1)
-##        fd_out.close()
-        print position,position_init1,index,len(lines_out1)
-        d_index2pos[index] = position_init1 ## = position_init2
+        min_bps = 999300000
+
+        ## write remaining few lines to genotype likelihood output file
+##        ## minimum number of variants
+##        if len(lines_out1) < 1000:
+        ## minimum number of base pairs
+        if position-position_init1 < min_bps:
+            index -= 1
+            ## append to previous file
+            fd_out = open('%s.%i.like' %(fp_out_prefix,index,),'a')
+            ## remove header
+            lines_out1 = lines_out1[1:]
+        else:
+            print 'pos_curr %9i, pos_init %9i, index %3i, n_lines %5i' %(
+                position,position_init1,index,len(lines_out1))
+            ## write to next file
+            fd_out = open('%s.%i.like' %(fp_out_prefix,index,),'w')
+            ## append position to dictionary
+            d_index2pos[index] = position_init1 ## = position_init2
+        fd_out.writelines(lines_out1)
+        fd_out.close()
+
         ## write markers
+        ## read remaining lines into memory
         lines_out_markers = fd_markers.readlines()
-        fd = open('%s.%i.markers' %(fp_out,index,),'w')
+        if position-position_init1 < min_bps:
+            ## append lines to file
+            fd = open('%s.%i.markers' %(fp_out_prefix,index,),'a')
+        else:
+            ## write lines to file
+            fd = open('%s.%i.markers' %(fp_out_prefix,index,),'w')
         fd.writelines(lines_out_markers)
         fd.close()
+        ## delete lines from memory
+        del lines_out_markers
+
         ## write phased
+        ## read remaining lines into memory
         lines_phased = fd_phased.readlines()
-        lines_out_phased = [header_phased]+lines_phased
-        fd = open('%s.%i.phased' %(fp_out,index,),'w')
+        if position-position_init1 < min_bps:
+            ## append lines to file
+            fd = open('%s.%i.phased' %(fp_out_prefix,index,),'a')
+            lines_out_phased = lines_phased
+        else:
+            ## append header
+            lines_out_phased = [header_phased]+lines_phased
+            ## write lines to file
+            fd = open('%s.%i.phased' %(fp_out_prefix,index,),'w')
         fd.writelines(lines_out_phased)
         fd.close()
+        ## delete lines from memory
+        del lines_phased, lines_out_phased
 
-        ## close all
+        ##
+        ## close all files after looping over last line
+        ##
+        fd_bgl.close()
         fd_markers.close()
         fd_phased.close()
 
@@ -526,7 +563,7 @@ class main():
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        memMB = 2000 ## tmp!!! need to test... think this is spot on though!!! hmmmm only 1132 for uganda 100 samples
+        memMB = 8000 ## tmp!!! need to test...
 
         ##
         ## 1) check input existence
@@ -548,12 +585,23 @@ class main():
         ##
         ## chunk up for imputation due to memory requirements...
         ##
+##        ## split bgl by chromosome
+##        ## this should be part of the BEAGLE_divide function
+##        ## to avoid looping over the same lines twice (a bit stupid at the moment)
+##        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
+##        cmd += ''' | awk 'BEGIN{FS=":"} NR>1'''
+##        cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
+##        print cmd
+##        os.system(cmd)
+        ## split further into smaller fragments
         d_indexes = {}
         for chrom in l_chroms:
-            if chrom != '1': continue ## tmp!!!
+            if chrom != '22': continue ## tmp!!!
             d_chrom_lens = self.parse_chrom_lens()
-            d_index2pos = self.BEAGLE_divide(chrom)
+            d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
+##            os.remove(
+##                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom))
 
         s = ''
         for chrom,d_index2pos in d_indexes.items():
@@ -568,7 +616,7 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            if chrom != '1': continue ## tmp!!!
+            if chrom != '22': continue ## tmp!!!
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
@@ -583,7 +631,7 @@ class main():
 
     def BEAGLE_write_shell_script(self,memMB,):
 
-        fp_out = 'out_BEAGLE/$CHROMOSOME/BeagleOutput.BeagleInput.$CHROMOSOME.bgl.$LSB_JOBINDEX' ## tmp!!! this path is wrong... fix...
+        fp_out = 'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.bgl'
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -808,6 +856,7 @@ echo $CHROMOSOME
             'out_VariantRecalibrator',
             'out_ApplyRecalibration',
             'out_ProduceBeagleInput',
+            'in_BEAGLE','in_IMPUTE2',
             'out_BEAGLE','out_IMPUTE2',
             ]
 
@@ -848,7 +897,14 @@ echo $CHROMOSOME
         ## and will produce a likelihood file in BEAGLE format."
 
         T = analysis_type = 'ProduceBeagleInput'
-        memMB = 6000 ## tmp
+        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2154 MB
+        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2168 MB
+        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2171 MB
+        memMB = 4000
+        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   2483.24 sec.
+        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4521.89 sec.
+        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
+        queue = 'normal'
 
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
@@ -866,14 +922,6 @@ echo $CHROMOSOME
         lines += ['--out %s \\' %(fp_out,)]
         ## GATKwalker, required, in
         lines += ['--variant %s \\' %(fp_in)]
-
-        ## split bgl by chromosome
-        lines += [';']
-        cmd = 'cat %s ' %(fp_out)
-        cmd += ''' | awk -v FS=":" 'NR>1'''
-        cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
-        cmd = cmd.replace('"','''"'"'"''').replace('$','\\$')
-        lines += [cmd]
 
 ##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
         lines += self.term_cmd(analysis_type,[fp_out],)
