@@ -63,6 +63,8 @@ class main():
 
         self.ProduceBeagleInput()
 
+        ## phased imputation reference panels not available for chrY
+        l_chroms.remove('Y')
         self.BEAGLE(l_chroms,)
 
         self.IMPUTE2(l_chroms,d_chrom_lens,)
@@ -112,13 +114,13 @@ class main():
             pos1 = int(l[2])
             pos2 = int(l[3])
 ##            d_index2pos[index] = pos
-            d_index2pos[index] = pos1
-            d_index2pos[index] = pos2
+            d_index2pos[index] = [pos1,pos2,]
         fp_out = 'out_BEAGLE/%s/' %(chrom,)
         fp_out += 'BeagleOutput.%s.bgl.gprobs' %(chrom,)
         for index in xrange(1,max(d_index2pos.keys())+1,):
             print 'BEAGLE_unite', chrom, index
-            fp_in = 'out_BEAGLE/%s/%s.%i.gprobs' %(chrom,chrom,index,)
+##            fp_in = 'out_BEAGLE/%s/%s.%i.gprobs' %(chrom,chrom,index,)
+            fp_in = 'out_BEAGLE/%s/%s.%i.bgl.%s.%i.like.gprobs' %(chrom,chrom,index,chrom,index,) ## tmp!!!
             if index == 1:
                 cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
                 os.system(cmd)
@@ -188,7 +190,8 @@ class main():
         ## 1) check input existence
         ##
         l_fp_in = self.IMPUTE2_parse_input_files()
-        bool_exit = self.check_in('BEAGLE',l_fp_in,)
+##        bool_exit = self.check_in('BEAGLE',l_fp_in,)
+        if False: bool_exit = self.check_in('BEAGLE',l_fp_in,) ## tmp!!!
 
         ##
         ## 2) touch
@@ -197,7 +200,7 @@ class main():
         if bool_return == True: return
 
         for chrom in l_chroms:
-##            if chrom != '22': continue ## tmp!!!
+            if chrom != '22': continue ## tmp!!!
             self.BEAGLE_unite(chrom)
 
         self.gprobs2gen()
@@ -403,8 +406,8 @@ class main():
         ##
         fd_phased = open(fp_phased,'r')
         fd_markers = open(fp_markers,'r')
-        fd_bgl = open(fp_in,'r') ## with header
-        fd_bgl.readline() ## skip header
+        fd_bgl = open(fp_in,'r') ## without header
+##        fd_bgl.readline() ## skip header
 
         ##
         ## parse phased header and skip phased header
@@ -453,6 +456,8 @@ class main():
             l = line.strip().split()
             ## assume markers to be formatted like CHROM:POS
             position = int(l[0].split(':')[1])
+            alleleA_like = l[1]
+            alleleB_like = l[2]
 
             ##
             ## loop to determine
@@ -460,8 +465,19 @@ class main():
             ##
             while True:
                 if pos_markers == position:
-                    bool_append_markphas = True
-                    break
+                    if (
+                        alleleA_markers == alleleA_like
+                        and
+                        alleleB_markers == alleleB_like
+                        ):
+                        bool_append_markphas = True
+                        break
+                    else:
+                        bool_append_markphas = False
+##                        print position,
+##                        print alleleA_markers, alleleA_like,
+##                        print alleleB_markers, alleleB_like
+                        break
                 elif pos_markers > position:
                     bool_append_markphas = False
                     break
@@ -470,13 +486,9 @@ class main():
                     line_phased = fd_phased.readline()
                     l_markers = line_markers.split()
                     pos_markers = int(l_markers[1])
+                    alleleA_markers = l_markers[2]
+                    alleleB_markers = l_markers[3]
                     continue
-            if pos_markers == position and bool_append_markphas == False:
-                print pos_markers, position, bool_append_markphas
-                stop1
-            if pos_markers != position and bool_append_markphas == True:
-                print pos_markers, position, bool_append_markphas
-                stop2
 
             ##
             ## avoid multiple comparisons of large integers
@@ -492,116 +504,8 @@ class main():
                         bool_append_to_prev = True
             elif bool_BOF2 == True and bool_EOF1 == False and position > pos_term1+edge:
                 bool_EOF1 = True
-            ## centromere
-            elif bool_EOF1 == False and position > pos_term1+edge:
-                print bool_BOF2 == True
-                pos_init2 = position-position%size
-                bool_BOF2 = True
-                bool_EOF1 = True
-                print 'position', position
-                print 'pos_prev', pos_prev
-                print 'pos_init1', pos_init1
-                print 'pos_term1', pos_term1
-                print 'pos_init2', pos_init2
-                print 'size', size
-                print edge
-                print 'bool_BOF2', bool_BOF2
-                print 'bool_EOF1', bool_EOF1
-                print len(lines_out1)
-                print len(lines_out2)
-                print bool_append_to_previous
-                stop
             else:
-                if bool_BOF2 == True and bool_EOF1 == False:
-                    pass
-                elif bool_BOF2 == True or bool_EOF1 == True:
-                    print bool_BOF2, bool_EOF1
-                    print position
-                    print pos_init1
-                    print pos_term1
-                    stop
-##            ## else reset starting position and continue
-####            elif pos_prev-pos_init1 < min_bps: ## slow
-##            else: ## faster
-##                bool_append_to_previous = True
-####                pos_init1 = position-position%size
-##                ## centromere
-##                if position > pos_init1+size:
-##                    bool_BOF2 = True
-##                    bool_EOF1 = True
-##                    pos_init2 = position-position%size
-##                    print 'centromere',
-##                    pos_init1, pos_prev, pos_init2, position
-##                    stop
-##                pass
-####            if pos_prev-pos_init1 >= min_bps:
-
-            ## first position after centromere
-            if [chrom,position] in [
-                ['1',144888371 ,],
-                ['2',95329645,],
-                ['3', 93506547 ,],
-                ['4', 52682571 ,],
-                ['5', 49441621 ,],
-                ['6' ,61880512 ,],
-                ['7', 61060256 ,],
-                ['8', 46883398 ,],
-                ['9', 66334018 ,],
-                ['10', 42397373 ,],
-                ['11', 54794727 ,],
-                ['12', 37857751 ,],
-                ['13', 19168767 ,],
-                ['14', 19099878 ,],
-                ['15', 20004821 ,],
-                ['16', 46436844 ,],
-                ['17', 25308930 ,],
-                ['18', 18520354 ,],
-                ['19', 27740659 ,],
-                ['20', 29444239 ,],
-                ['21', 9412629 ,],
-                ['21', 14594887 ,],
-                ['22', 16554965 ,],
-                ['X', 61731996 ,],
-                ['Y', 2657176 ,],
-                ['Y', 13196611 ,],
-                ['Y', 28505204 ,],
-                ]:
-                print '@@@@@', chrom,position,bool_BOF2,bool_EOF1
-                if bool_BOF2 == False or bool_EOF1 == False:
-                    stop
-            ## last position before centromere
-            if [chrom,position] in [
-                ['1',121351046,],
-                ['2',92304874,],
-                ['3', 90502860,],
-                ['4', 49632969,],
-                ['5', 46405262,],
-                ['6' ,58775200,],
-                ['7', 58053551,],
-                ['8', 43820454,],
-                ['9', 44905287,],
-                ['10', 39154363,],
-                ['11', 51576318,],
-                ['12',  34856284,],
-                ['13',  19168767,],
-                ['14',  19099878,],
-                ['15',  20004821,],
-                ['16',  35281785,],
-                ['17',  22244499,],
-                ['18',  15384732,],
-                ['19',  24600804,],
-                ['20',  26316584,],
-                ['21',  9412629,],
-                ['21',  10980490,],
-                ['22',  16554965,],
-                ['X',  58563466,],
-                ['Y',  2657176,],
-                ['Y',  10077460,],
-                ['Y',  24874071,],
-                ]:
-                print '@@@@@', chrom,position,bool_BOF2,bool_EOF1
-                if bool_BOF2 == True or bool_EOF1 == True:
-                    stop
+                pass
 
             ## BOF2
             if bool_BOF2 == True:
@@ -610,12 +514,6 @@ class main():
                     lines_out_markers2 += [line_markers]
                     lines_out_phased2 += [line_phased]
             if bool_EOF1 == False:
-                if position>pos_term1+edge:
-                    print pos_init1, position
-                    print pos_term1
-                    print bool_BOF2
-                    print (bool_BOF2 == True and bool_EOF1 == False and position > pos_term1+edge)
-                    stop
                 lines_out1 += [line]
                 if bool_append_markphas == True:
                     lines_out_markers1 += [line_markers]
@@ -625,11 +523,14 @@ class main():
                 ## append to previous file if less than 1000 variants
                 if bool_append_to_prev == False and len(lines_out1) < 1000:
                     ## 2nd append to prev
-                    if pos_init1-size == d_index2pos[index-1][0]:
+                    if index != 1 and pos_init1-size == d_index2pos[index-1][0]:
                         bool_append_to_prev = True
                     ## append to next
                     else:
                         bool_append_to_next = True
+                if bool_append_to_prev == True and index == 1:
+                    bool_append_to_prev = False
+                    bool_append_to_next = True
                 if bool_append_to_prev == True:
                     print 'append prev'
                     mode = 'a'
@@ -637,23 +538,16 @@ class main():
                     lines_out1 = lines_out1[1:]
                     lines_out_phased1 = lines_out_phased1[1:]
                     index -= 1
-                    pos_init1 = d_index2pos[index][0]
+                    if index != 0:
+                        pos_init1 = d_index2pos[index][0]
                 elif bool_append_to_next == True:
                     print 'append next'
-##                    pos_term1 += size
-##                    pos_prev = position
-##                    bool_append_to_next = False
-##                    lines_out_phased2 = [header_phased]
-##                    lines_out_markers2 = []
-##                    ## do not write/append lines yet
-##                    ## merge with next fragment instead
-##                    continue
                 else:
                     mode = 'w'
-                print 'pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
-                    position,pos_init1,pos_term1,index,len(lines_out1))
+                print '%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
+                    chrom,position,pos_init1,pos_term1,index,len(lines_out1))
                 if bool_append_to_next == False:
-                    ## write/append lines
+                    ## write/append current lines to file
                     fd_out = open('%s.%i.like' %(fp_out_prefix,index,),mode)
                     fd_out.writelines(lines_out1)
                     fd_out.close()
@@ -667,6 +561,12 @@ class main():
                     lines_out1 = lines_out2
                     lines_out_phased1 = lines_out_phased2
                     lines_out_markers1 = lines_out_markers2
+                ## append to current lines
+                else:
+                    lines_out1 += [line]
+                    if bool_append_markphas == True:
+                        lines_out_markers1 += [line_markers]
+                        lines_out_phased1 += [line_phased]
                 ## reset next lines
                 lines_out2 = [header]
                 lines_out_phased2 = [header_phased]
@@ -700,19 +600,13 @@ class main():
             mode = 'a'
             index -= 1
             pos_init1 = d_index2pos[index][0]
-            print index, d_index2pos[index]
-            print pos_init1,pos_term1
-            stoptmp
             ## remove headers
             lines_out1 = lines_out1[1:]
             lines_out_phased1 = lines_out_phased1[1:]
         else:
             mode = 'w'
-            if len(lines_out1) < 1000:
-                print len(lines_out1)
-                stop
-        print 'pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
-            position,pos_init1,pos_term1,index,len(lines_out1))
+        print '%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
+            chrom,position,pos_init1,pos_term1,index,len(lines_out1))
 
         ##
         ## write/append lines
@@ -745,17 +639,11 @@ class main():
     def calc_pos_term(self,pos_init1,position,size,min_bps):
 
         ## acrocentric chromosome telomeres (13,14,15,21,22,Y)
-        ## and all centromeres
+        ## and various centromeres (e.g. chromosome 6)
         if size-min_bps < position-pos_init1:
-            if pos_init1 != 0:
-                print pos_init1, pos_term1
             pos_term1 = pos_init1+2*size
-            if pos_init1 != 0:
-                print pos_init1, pos_term1
-                print pos_init1, position, pos_term1
-                stoptmp
         ## non-acrocentric chromosome
-        ## and all cemtromeres
+        ## and various centromeres
         else:
             pos_term1 = pos_init1+1*size
 
@@ -801,9 +689,9 @@ class main():
         ##
         ## chunk up for imputation due to memory requirements...
         ##
-##        ## split bgl by chromosome
-##        ## this should be part of the BEAGLE_divide function
-##        ## to avoid looping over the same lines twice (a bit stupid at the moment)
+        ## split bgl by chromosome
+        ## this should be part of the BEAGLE_divide function
+        ## to avoid looping over the same lines twice (a bit stupid at the moment)
 ##        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
 ##        cmd += ''' | awk 'BEGIN{FS=":"} NR>1'''
 ##        cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
@@ -812,25 +700,20 @@ class main():
         ## split further into smaller fragments
         d_indexes = {}
         for chrom in l_chroms:
-            if chrom in ['1',]: continue ## tmp!!!
-##            if chrom != '1': continue ## tmp!!!
-##            if chrom != '22': continue ## tmp!!!
+            if chrom != '22': continue ## tmp!!!
             d_chrom_lens = self.parse_chrom_lens()
             d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
             continue
-        stoptmpend
-##            os.remove(
-##                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom))
+            stoptmpend
+            os.remove(
+                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom))
 
         s = ''
         for chrom,d_index2pos in d_indexes.items():
-##            for index,pos in d_index2pos.items():
             for index,[pos1,pos2,] in d_index2pos.items():
-##                s += '%s %i %i\n' %(chrom,index,pos,)
                 s += '%s %i %i %i\n' %(chrom,index,pos1,pos2,)
-##        fd = open('BEAGLE_divide_indexes.txt','w')
-        fd = open('BEAGLE_divide_indexes.txt','a') ## tmp!!!
+        fd = open('BEAGLE_divide_indexes.txt','w')
         fd.write(s)
         fd.close()
 
@@ -838,7 +721,7 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-##            if chrom != '1': continue ## tmp!!!
+            if chrom != '22': continue ## tmp!!!
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
