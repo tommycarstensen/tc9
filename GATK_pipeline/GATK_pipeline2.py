@@ -38,6 +38,8 @@ import argparse
 
 ## todo20130210: tc9: download markers from http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/ instead of asking user for their location by default... Make those arguments non-required... --- alternatively download as specified here http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/READ_ME_beagle_phase1_v3
 
+## todo20130217: tc9: make sure that IMPUTE2 doesn't run, if no SNPs in fragment
+
 class main():
 
     def main(self):
@@ -65,6 +67,8 @@ class main():
 
         ## phased imputation reference panels not available for chrY
         l_chroms.remove('Y')
+        ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
+        l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
         self.IMPUTE2(l_chroms,d_chrom_lens,)
@@ -72,30 +76,30 @@ class main():
         return
 
 
-    def check_logs(self,):
+    def init(self,l_chroms,):
 
-        bool_error = False
-        l_fn = os.listdir('stderr')
-        for fn in l_fn:
-            if os.path.isdir('stderr/%s' %(fn)): continue
-            if os.path.getsize('stderr/%s' %(fn)) == 0: continue
-            fd = open('stderr/%s' %(fn),'r')
-            s = fd.read()
-            fd.close()
-            print s
-            print 'stderr/%s' %(fn)
-            bool_error = True
-            break
+        l_dn = self.mkdirs(l_chroms,)
 
-        if bool_error == True:
-            sys.exit(0)
+        self.check_stderr(l_chroms,l_dn,)
 
         return
 
 
-    def init(self,l_chroms,):
+    def check_stderr(self,l_chroms,l_dn,):
 
-        self.mkdirs(l_chroms,)
+        print 'checking that stderr is empty'
+
+        bool_exit = False
+        for dn in l_dn:
+            if dn[:3] != 'out': continue
+            l_fn = os.listdir('stderr/%s' %(dn[4:],))
+            for fn in l_fn:
+                fp = 'stderr/%s/%s' %(dn[4:],fn)
+                if os.path.getsize(fp) > 0:
+                    print 'error:', fp
+                    bool_exit = True
+
+        if bool_exit == True: sys.exit(0)
 
         return
 
@@ -110,26 +114,24 @@ class main():
             l = line.strip().split()
             if l[0] != chrom: continue
             index = int(l[1])
-##            pos = int(l[2])
             pos1 = int(l[2])
             pos2 = int(l[3])
-##            d_index2pos[index] = pos
             d_index2pos[index] = [pos1,pos2,]
-        fp_out = 'out_BEAGLE/%s/' %(chrom,)
-        fp_out += 'BeagleOutput.%s.bgl.gprobs' %(chrom,)
+        fp_out = 'out_BEAGLE/%s.gprobs' %(chrom,)
         for index in xrange(1,max(d_index2pos.keys())+1,):
-            print 'BEAGLE_unite', chrom, index
-##            fp_in = 'out_BEAGLE/%s/%s.%i.gprobs' %(chrom,chrom,index,)
-            fp_in = 'out_BEAGLE/%s/%s.%i.bgl.%s.%i.like.gprobs' %(chrom,chrom,index,chrom,index,) ## tmp!!!
+            if index % 10 == 0:
+                print 'BEAGLE_unite', chrom, index
+            fp_in = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index,)
+            if not os.path.isfile(fp_in):
+                print 'missing', fp_in
+                stop
             if index == 1:
                 cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
                 os.system(cmd)
-##            pos = d_index2pos[index]
             pos1 = d_index2pos[index][0]
             pos2 = d_index2pos[index][1]
             cmd = "awk 'NR>1{pos=substr($1,%i);" %(len(chrom)+2)
-            cmd += "if(pos>=%i&&pos<%i) print $1}'" %(
-##                pos,pos+1000000*self.i_BEAGLE_size)
+            cmd += "if(pos>%i&&pos<=%i) print $0}'" %(
                 pos1,pos2,)
             cmd += ' %s >> %s' %(fp_in,fp_out,)
             os.system(cmd)
@@ -137,27 +139,81 @@ class main():
         return
 
 
-    def gprobs2gen():
+    def IMPUTE2(self,l_chroms,d_chrom_lens,):
+
+        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
+        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2_instructions.pdf
+        ## http://mathgen.stats.ox.ac.uk/impute/example_one_phased_panel.html
+        ## http://www.stats.ox.ac.uk/~marchini/software/gwas/file_format.html
+
+        ## /lustre/scratch107/projects/agv/users/tc9/WGS/fula_20120704/stdout/IMPUTE2/IMPUTE2.22.8.out:    Max Memory :      2941 MB
+        memMB = 4000
+        queue = 'normal'
 
         ##
-        ## IMPUTE2 takes gen files...
+        ## 1) check input existence
         ##
+        l_fp_in = self.IMPUTE2_parse_input_files()
+        bool_exit = self.check_in('BEAGLE',l_fp_in,)
+
         ##
-        ## gprobs > gen
+        ## 2) touch
         ##
-        ## skip header
-        s_more = 'more +2 %s' %(fp_gprobs,)
-        ## print columns 1 and 2 when using field separator : (i.e. a replacement of field operator)
-        s_awk1 = "awk -F : '{print $1, $2}'"
-        ## print columns 1 and 2 with default field separator (i.e. append columns)
-        s_awk2 = '''awk '{print $1":"$2, $1":"$2, $0}' '''
-        ## cut out column 3 and do *not* print this column (i.e. remove "marker" from header and chromosomeID from subsequent rows)
-        s_cut = 'cut -d " " -f 3 --complement > out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
-        s_convert = ' | '.join([s_more,s_awk1,s_awk2,s_cut])
-        cmd += '\n'+s_convert+'\n\n'
-##        print s_convert
-##        os.system(s_convert)
-##        stop
+        bool_return = self.touch('IMPUTE2')
+        if bool_return == True: return
+
+        ##
+        ## BEAGLE gprobs > IMPUTE2 gen
+        ##
+        for chrom in l_chroms:
+##            if chrom != '9': continue ## tmp!!!
+            self.BEAGLE_unite(chrom)
+##            stop ## tmp!!!
+            fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
+            fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
+            self.gprobs2gen(fp_in,fp_out)
+
+        fp_out = 'out_IMPUTE2/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.gen'
+
+        ## write shell script to list/memory
+        lines = self.IMPUTE2_write_shell_script(fp_out)
+
+        ## term cmd
+        lines += self.term_cmd('IMPUTE2',[fp_out],)
+
+        ## write shell script to file
+        self.write_shell('shell/IMPUTE2.sh',lines,)
+
+        ##
+        ## execute shell script
+        ##
+        for chrom in l_chroms:
+            index_max = int(math.ceil(
+                    d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+            J = '%s.%s[%i-%i]' %('IMPUTE2',chrom,1,index_max,)
+            std_suffix = '%s/%s.%s.%%I' %('IMPUTE2','IMPUTE2',chrom)
+            cmd = self.bsub_cmd(
+                'IMPUTE2',J,std_suffix=std_suffix,chrom=chrom,
+                memMB=memMB,queue=queue,)
+            os.system(cmd)
+
+        return
+
+
+    def gprobs2gen(self,fp_in,fp_out,):
+    
+        cmd = 'cat %s' %(fp_in)
+        cmd += " | awk '"
+        cmd += 'BEGIN{FS=":"}'
+        cmd += 'NR>1{print $1,$2}'
+        cmd += "'"
+        cmd += " | awk '"
+        cmd += '{print $1":"$2,$1":"$2,$0}'
+        cmd += "'"
+        cmd += ' | cut -d " " -f 3 --complement'
+        cmd += ' > %s' %(fp_out,)
+        print cmd
+        os.system(cmd)
 
         return
 
@@ -177,83 +233,23 @@ class main():
             chrom = l[0]
             index = int(l[1])
             fp_in = 'out_BEAGLE/%s/' %(chrom,)
-            fp_in += 'BeagleOutput.%s.bgl.%i.' %(chrom,index,)
-            fp_in += 'ProduceBeagleInput.%s.bgl.%i.gprobs' %(chrom,index,)
+            fp_in += '%s.%i.like.gprobs' %(chrom,index,)
             l_fp_in += [fp_in]
 
         return l_fp_in
 
+    
+    def IMPUTE2_write_shell_script(self,fp_out,):
 
-    def IMPUTE2(self,l_chroms,d_chrom_lens,):
+        fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
 
-        ##
-        ## 1) check input existence
-        ##
-        l_fp_in = self.IMPUTE2_parse_input_files()
-##        bool_exit = self.check_in('BEAGLE',l_fp_in,)
-        if False: bool_exit = self.check_in('BEAGLE',l_fp_in,) ## tmp!!!
+        ## initiate shell script
+        lines = ['#!/bin/bash\n']
 
-        ##
-        ## 2) touch
-        ##
-        bool_return = self.touch('IMPUTE2')
-        if bool_return == True: return
-
-        for chrom in l_chroms:
-            if chrom != '22': continue ## tmp!!!
-            self.BEAGLE_unite(chrom)
-
-        self.gprobs2gen()
-
-        ##
-        ## gprobs > sample
-        ##
-        fp_out = 'out_BEAGLE/chromosome$CHROMOSOME.sample'
-        cmd += '''echo "ID_1 ID_2 missing\n0 0 0" > %s ; \
-        head -1 %s \
-        | sed 's/ /\\n/g' \
-        | fgrep -v "marker" | fgrep -v "allele" \
-        | uniq \
-        | awk '{print $1, $1, "NA"}' \
-        >> %s''' %(
-            fp_out, fp_gprobs, fp_out,
-            )
-        cmd += '\n\n'
-
-##        ## gen2ped (gen and sample to ped and map)
-##        ## http://www.well.ox.ac.uk/~cfreeman/software/gwas/gtool.html
-##        out_prefix = 'out_GTOOL/gtool.%s' %(chrom)
-##        cmd += 'gtool=/nfs/team149/Software/usr/share/gtool/gtool'
-##        cmd += '$gtool -G '
-##        ## in
-##        cmd += '--g out_BEAGLE/BeagleOutput.%s.gen ' %(chrom)
-##        cmd += '--s out_BEAGLE/chromosome%s.sample ' %(chrom)
-##        ## out
-##        cmd += '--ped %s.ped ' %(out_prefix)
-##        cmd += '--map %s.map ' %(out_prefix)
-##        ## parameters
-##        cmd += '--phenotype phenotype_1 --threshold 0.9 --snp'
-##        cmd += '\n'
-
-
-        fp_in = 'out_BEAGLE/BeagleOutput.$CHROMOSOME.gen'
-
-##        intervals_IMPUTE2 = int(math.ceil(
-##            d_chrom_lens[chrom]
-##            /self.bps_per_interval_IMPUTE2
-##            ))
-
-        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
-        ## /lustre/scratch107/projects/agv/imputation/code_FINAL/imputechunks.sh
-        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2_instructions.pdf
-        ## http://mathgen.stats.ox.ac.uk/impute/example_one_phased_panel.html
-        ## http://www.stats.ox.ac.uk/~marchini/software/gwas/file_format.html
-
-        lines = []
-
-        lines += ['#!/bin/bash']
-
+        ## parse chromosome and chromosome length from command line
         lines += ['CHROMOSOME=$1']
+        lines += ['CHROM=$1']
+##        lines += self.bash_chrom2len(l_chroms,d_chrom_lens,)
         lines += ['LENCHROMOSOME=$2']
 
         ##
@@ -261,50 +257,56 @@ class main():
         ##
         ## Input file options
         ## http://mathgen.stats.ox.ac.uk/impute/ALL_1000G_phase1integrated_v3_impute.tgz
-        s_haps = self.fp_impute2_hap
-        s_legend = self.fp_impute2_legend
+        s_haps = self.fp_impute2_hap.replace('$CHROMOSOME','${CHROMOSOME}')
+        s_legend = self.fp_impute2_legend.replace('$CHROMOSOME','${CHROMOSOME}')
 
-        print self.fp_impute2_map
-        stop
-        lines += ['if [ $CHROMOSOME=="X" ]\nthen']
-        lines += ['map=%s' %(self.fp_impute2_map.replace('$CHROMOSOME','$CHROMOSOME_PAR1',),)]
+        lines += ['if [ $CHROMOSOME = "X" ]; then']
+        lines += ['map=%s' %(self.fp_impute2_map.replace(
+            '$CHROMOSOME','\\${CHROMOSOME}_PAR1'))]
         lines += ['else']
-        lines += ['map=%s' %(self.fp_impute2_map)]
+        lines += ['map=%s' %(self.fp_impute2_map.replace(
+            '$CHROMOSOME','\\${CHROMOSOME}'))]
         lines += ['fi']
-        
-        ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-g
-        fn_genotype    = '%s' %(fp_in)
-##        ## Strand alignment options
-##        s_strand       = '/lustre/scratch107/projects/agv/imputation/trial3/mock_strand_file/strand_file_chr%s.txt' %(chrom)
 
+        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
         ## IMPUTE2 requires that you specify an analysis interval
         ## in order to prevent accidental whole-chromosome analyses.
         ## If you want to impute a region larger than 7 Mb
         ## (which is not generally recommended),
         ## you must activate the -allow_large_regions flag.
-        lines += ['posmax=$((($LSB_JOBINDEX+0)*5000000))']
-        lines += ['if test $posmax -ge $LENCHROMOSOME']
-        lines += ['then posmax=$LENCHROMOSOME']
+        lines += ['posmax=$((($LSB_JOBINDEX+0)*%i))' %(self.bps_per_interval_IMPUTE2)]
+        lines += ['if [ $posmax -gt $LENCHROMOSOME ]; then']
+        lines += ['posmax=$LENCHROMOSOME']
         lines += ['fi\n']
-        s = '\n'.join(lines)
+
+        ## init cmd
+        lines += ['cmd="']
+
+        lines += self.body_IMPUTE2(
+            'in_IMPUTE2/$CHROMOSOME.gen',s_legend,s_haps,fp_out,)
+
+        return lines
+
+
+    def body_IMPUTE2(self,s_gen,s_legend,s_haps,fp_out,):
 
         ##
         ## initiate impute2 command
         ##
-        s += '%s \\' %(self.fp_software_IMPUTE2)
+        lines = ['%s \\' %(self.fp_software_IMPUTE2)]
 
         ##
         ## Required arguments
         ## http://mathgen.stats.ox.ac.uk/impute/required_arguments.html
         ##
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-g
-        s += '-g %s \\' %(fn_genotype,)
+        lines += ['-g %s \\' %(s_gen)]
         ## http://mathgen.stats.ox.ac.uk/impute/required_arguments.html#-m
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-m
         ## Ask Deepti whether a different recombination map file should be used
-        s += '-m $map \\'
+        lines += ['-m $map \\']
         ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html#-int
-        s += '-int $((($LSB_JOBINDEX-1)*%i+1)) $posmax \\' %(5000000)
+        lines += ['-int $((($LSB_JOBINDEX-1)*%i+1)) $posmax \\' %(self.bps_per_interval_IMPUTE2)]
 
         ##
         ## Basic options
@@ -315,24 +317,17 @@ class main():
         ## Output file options
         ## http://mathgen.stats.ox.ac.uk/impute/output_file_options.html
         ##
-        s += '-o out_IMPUTE2/impute2.gen.$CHROMOSOME.$LSB_JOBINDEX \\'
+        lines += ['-o %s \\' %(fp_out)]
 
         ##
         ## Input file options
         ##
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-l
-        s += '-l %s \\' %(s_legend,)
+        lines += ['-l %s \\' %(s_legend,)]
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-h
-        s += '-h %s \\' %(s_haps,)
+        lines += ['-h %s \\' %(s_haps,)]
 
-        self.write_shell('shell/IMPUTE2.sh',s,)
-
-        ##
-        ## execute shell script
-        ##
-        ## bsub -w "done(BEAGLE%s[*])" %(chrom)
-
-        return s
+        return lines
 
 
     def write_shell(self,fp,lines,):
@@ -350,29 +345,6 @@ class main():
         return
 
 
-    def BEAGLE_parse_input(self,chrom,):
-
-        l_fps = []
-        for fp_in in [self.fp_BEAGLE_phased,self.fp_BEAGLE_markers,]:
-            fd = open(fp_in,'r')
-            lines = fd.readlines()
-            fd.close()
-            for line in lines:
-                l = line.strip().split()
-                if l[0] == chrom:
-                    l_fps += [l[1]]
-                    break
-                elif l[0] == '$CHROM':
-                    l_fps += [l[1].replace('$CHROM',chrom)]
-                    break
-                continue
-
-        fp_phased = l_fps[0]
-        fp_markers = l_fps[1]
-
-        return fp_phased, fp_markers
-
-
     def BEAGLE_divide(self,chrom,):
 
         ## To save disk space I should rewrite this function to act directly on ProduceBeagleInput.bgl instead of ProduceBeagleInput.$CHROM.bgl
@@ -386,9 +358,10 @@ class main():
 
         fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
         ## genotype likelihood file
-        fp_out_prefix = 'in_BEAGLE/%s' %(chrom)
+        fp_out_prefix = 'in_BEAGLE/%s/%s' %(chrom,chrom,)
 
-        fp_phased, fp_markers = self.BEAGLE_parse_input(chrom,)
+        fp_phased = self.fp_BEAGLE_phased.replace('$CHROMOSOME',chrom)
+        fp_markers = self.fp_BEAGLE_markers.replace('$CHROMOSOME',chrom)
 
         ##
         ## parse genotype likelihood file header
@@ -406,7 +379,7 @@ class main():
         ##
         fd_phased = open(fp_phased,'r')
         fd_markers = open(fp_markers,'r')
-        fd_bgl = open(fp_in,'r') ## without header
+        fd_bgl = open(fp_in,'r') ## with header marker allelelA alleleB
 ##        fd_bgl.readline() ## skip header
 
         ##
@@ -426,8 +399,6 @@ class main():
         ## set smallest fragment size
         ##
         min_bps = 400000
-##        min_bps = size ## tmp!!!
-##        min_bps = 480000 ## tmp!!!
 
         ##
         ## get position of first SNP from genotype likelihood file
@@ -435,8 +406,9 @@ class main():
         lines_out1 = [header]
         lines_out2 = [header]
         for line in fd_bgl:
-            lines_out1 += [line]
             l = line.strip().split()
+            if l[0] == 'marker': continue ## header
+            lines_out1 += [line]
             position = int(l[0].split(':')[1])
             pos_init1 = position-position%size
             pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
@@ -449,6 +421,7 @@ class main():
         bool_append_to_prev = False
         bool_append_to_next = False
         pos_prev = 0
+        pos_prev_EOF = None
         bool_BOF2 = False
         bool_EOF1 = False
         ## loop over BEAGLE genotype likelihood file lines
@@ -528,15 +501,30 @@ class main():
                     ## append to next
                     else:
                         bool_append_to_next = True
+                ## append to next file if first fragment
                 if bool_append_to_prev == True and index == 1:
                     bool_append_to_prev = False
                     bool_append_to_next = True
+                ## append to next file if gap (500kbp) between
+                ## first position of current lines and
+                ## last position of previous file
+                if bool_append_to_prev == True:
+                    cmd = 'tail -n1 %s.%i.like | cut -d " " -f1' %(
+                        fp_out_prefix,index-1)
+                    pos_prev_EOF = int(os.popen(cmd).read().split(':')[1])
+                    pos_curr_BOF = int(lines_out1[1].split()[0].split(':')[1])
+                    if pos_curr_BOF-pos_prev_EOF > 500000:
+                        bool_append_to_prev = False
+                        bool_append_to_next = True
                 if bool_append_to_prev == True:
                     print 'append prev'
                     mode = 'a'
-                    ## remove headers
-                    lines_out1 = lines_out1[1:]
-                    lines_out_phased1 = lines_out_phased1[1:]
+                    (
+                        lines_out1, lines_out_markers1, lines_out_phased1,
+                        ) = self.remove_duplicate_lines(
+                            index, fp_out_prefix,
+                            lines_out1, lines_out_markers1, lines_out_phased1)
+                    ##
                     index -= 1
                     if index != 0:
                         pos_init1 = d_index2pos[index][0]
@@ -597,12 +585,14 @@ class main():
         ## less than minimum number of base pairs
         ## or minimum number of variants
         if position-pos_init1 < min_bps or len(lines_out1) < 1000:
+            (
+                lines_out1, lines_out_markers1, lines_out_phased1
+                ) = self.remove_duplicate_lines(
+                    index, fp_out_prefix,
+                    lines_out1, lines_out_markers1, lines_out_phased1)
             mode = 'a'
             index -= 1
             pos_init1 = d_index2pos[index][0]
-            ## remove headers
-            lines_out1 = lines_out1[1:]
-            lines_out_phased1 = lines_out_phased1[1:]
         else:
             mode = 'w'
         print '%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
@@ -633,7 +623,56 @@ class main():
         fd_markers.close()
         fd_phased.close()
 
+        cmd1 = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort -u | wc -l' %(chrom,chrom,)
+        cmd2 = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl | cut -d " " -f1 | wc -l' %(chrom)
+        i1 = int(os.popen(cmd1).read())
+        i2 = int(os.popen(cmd2).read())+1
+        if i1 != i2:
+            print 'chrom', chrom
+            print cmd1
+            print i1
+            print cmd2
+            print i2
+            stop
+
         return d_index2pos
+
+
+    def remove_duplicate_lines(
+        self, index, fp_out_prefix,
+        lines_out1, lines_out_markers1, lines_out_phased1):
+
+        ##
+        ## remove headers
+        ##
+        lines_out1 = lines_out1[1:]
+        lines_out_phased1 = lines_out_phased1[1:]
+
+        ##
+        ## get terminal positions in previous files
+        ##
+        cmd = 'tail -n1 %s.%i.like | cut -d " " -f1' %(
+            fp_out_prefix,index-1)
+        pos_prev_like = int(os.popen(cmd).read().split(':')[1])
+        cmd = 'tail -n1 %s.%i.markers | cut -d " " -f1' %(
+            fp_out_prefix,index-1)
+        pos_prev_markers = int(os.popen(cmd).read().split(':')[1])
+
+        ##
+        ## index position in current lines
+        ## and remove duplicate lines
+        ##
+        for i in xrange(len(lines_out1)):
+            if pos_prev_like == int(lines_out1[i].split()[0].split(':')[1]):
+                break
+        lines_out1 = lines_out1[i+1:]
+        for i in xrange(len(lines_out_markers1)):
+            if pos_prev_markers == int(lines_out_markers1[i].split()[0].split(':')[1]):
+                break
+        lines_out_markers1 = lines_out_markers1[i+1:]
+        lines_out_phased1 = lines_out_phased1[i+1:]
+
+        return lines_out1, lines_out_markers1, lines_out_phased1
 
 
     def calc_pos_term(self,pos_init1,position,size,min_bps):
@@ -665,7 +704,7 @@ class main():
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        ## fgrep Mem stdout/BEAGLE/BEAGLE.22.* | sort -k5n,5 | tail -n1 | awk '{print $5}'
+        ## fgrep Mem stdout/BEAGLE/BEAGLE.*.out | sort -k5n,5 | tail -n1 | awk '{print $5}'
         ## 2885 with lowmem=true
         memMB = 4000
 
@@ -692,22 +731,26 @@ class main():
         ## split bgl by chromosome
         ## this should be part of the BEAGLE_divide function
         ## to avoid looping over the same lines twice (a bit stupid at the moment)
-##        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
-##        cmd += ''' | awk 'BEGIN{FS=":"} NR>1'''
-##        cmd += '''{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"}' '''
-##        print cmd
+        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
+        cmd += ''' | awk 'BEGIN{FS=":"} '''
+##        cmd += " | awk -F : '"
+        cmd += 'NR>1{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"'
+        cmd += "}'"
+        print cmd
 ##        os.system(cmd)
+        if not os.path.isfile('out_ProduceBeagleInput/ProduceBeagleInput.22.bgl'): ## redundant
+            os.system(cmd)
         ## split further into smaller fragments
         d_indexes = {}
+        d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
-            if chrom != '22': continue ## tmp!!!
-            d_chrom_lens = self.parse_chrom_lens()
             d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
             continue
-            stoptmpend
+            ## clean up
             os.remove(
-                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom))
+                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(
+                    chrom))
 
         s = ''
         for chrom,d_index2pos in d_indexes.items():
@@ -721,7 +764,6 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            if chrom != '22': continue ## tmp!!!
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
@@ -734,7 +776,7 @@ class main():
 
     def BEAGLE_write_shell_script(self,memMB,):
 
-        fp_out = 'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.bgl'
+        fp_out = 'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.like'
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -742,14 +784,14 @@ class main():
         ## parse chromosome from command line
         lines += ['CHROMOSOME=$1\n']
 
+        lines += ['if [ -s %s.gprobs ]; then\nexit\nfi\n' %(fp_out)] ## redundant
+
         ## init cmd
         lines += ['cmd="']
 
         ##
         ## initiate BEAGLE
         ##
-        ## Could not find the main class: Djava.io.tmpdir=out_BEAGLE.  Program will exit.
-##        lines += ['java -Xmx%im java.io.tmpdir=out_BEAGLE -jar %s \\' %(
         lines += ['java -Xmx%im -jar %s \\' %(
             memMB,self.fp_software_beagle)]
 
@@ -766,7 +808,7 @@ class main():
         l = []
         for suffix in ['dose','phased','gprobs',]:
             fp = '%s' %(fp_out)
-            fp += '.ProduceBeagleInput.${CHROMOSOME}.bgl.${LSB_JOBINDEX}.%s.gz' %(
+            fp += '.%s.gz' %(
                 suffix,
                 )
             l += ['gunzip %s' %(fp)]
@@ -784,11 +826,9 @@ class main():
 
     def body_BEAGLE(self,fp_out,):
 
-        fp_phased, fp_markers = self.BEAGLE_parse_input('$CHROMOSOME',)
-
-        fp_like = 'in_BEAGLE/$CHROMOSOME.$LSB_JOBINDEX.like'
-        fp_phased = 'in_BEAGLE/$CHROMOSOME.$LSB_JOBINDEX.phased'
-        fp_markers = 'in_BEAGLE/$CHROMOSOME.$LSB_JOBINDEX.markers'
+        fp_like = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.like'
+        fp_phased = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.phased'
+        fp_markers = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.$LSB_JOBINDEX.markers'
 
         lines = []
 
@@ -844,94 +884,6 @@ class main():
         return lines
 
 
-    def write_nonarray_scripts(self,d_shell,):
-
-        ##
-        ## write shell scripts for each non-array step
-        ##
-##        d_bsub_lines = {}
-        for i_step in range(len(self.l_steps)):
-
-            step = self.l_steps[i_step]
-
-            if self.bool_sequential == True:
-
-                ## no additional steps
-                if i_step+1 == len(self.l_steps):
-                    bsub_line_next = None
-                ## this is not the final step; i.e. next step exists
-                else:
-                    step_next = self.l_steps[i_step+1]
-                    if step_next == 'BEAGLE':
-                        if step_next in self.d_memory.keys():
-                            s_queue = self.d_queues[step_next]
-                            memory_MB = self.d_memory[step_next]
-                        else:
-                            s_queue = 'normal'
-                            memory_MB = 4000
-                        bsub_line_next = self.generate_bsub_line(
-                            step_next,
-                            job_array_intervals = 24,
-                            job_array_title = '%s' %(step_next[:6],),
-                            bool_wait = False,
-                            s_queue = s_queue,
-                            memory_MB = memory_MB,
-                            )
-            else:
-                bsub_line_next = None
-
-            s = d_shell[step]
-            s += '\n\nfi\n\n'
-            self.write_shell_script(
-                step,
-                s,
-                line_additional = bsub_line_next,
-                )
-##            print d_shell[step]
-##            stop
-
-        return
-
-
-    def write_array_scripts_chromosome(self,d_shell,):
-
-        ## useful if per-chromosome basis... not whole-genome and not sub-chromosome fragments...
-        if step == 'ApplyRecalibration':
-            s = '#!/bin/bash\n'
-        else:
-            s = '''#!/bin/bash
-LSB_JOBINDEX=$LSB_JOBINDEX
-if [ ${LSB_JOBINDEX} -eq 23 ]
-then
-CHROMOSOME="X"
-elif [ ${LSB_JOBINDEX} -eq 24 ]
-then
-CHROMOSOME="Y"
-else
-CHROMOSOME=$LSB_JOBINDEX
-fi
-echo $CHROMOSOME
-'''
-
-        return
-
-
-    def write_array_scripts_subchromosome(self,d_array,):
-        
-        ##
-        ## write shell script for UnifiedGenotyper (job array and first step)
-        ##
-        for step in self.l_steps_array_subchromosome:
-
-            s = '#!/bin/sh\n\n'
-            for chrom in ['X','Y',]+range(1,22+1,):
-                chrom = str(chromosome)
-                s += '%s\n' %(d_array[step][chrom])
-                s += 'fi\n'
-
-        return
-
-
     def parse_chrom_lens(self):
 
         d_chrom_lens = {}
@@ -973,7 +925,7 @@ echo $CHROMOSOME
         for dn in l_dn:
             if not os.path.isdir(dn):
                 os.mkdir(dn)
-            if dn != 'touch' and dn[:3] == 'out':
+            if dn != 'touch' and (dn[:4] == 'out_' or dn[:3] == 'in_'):
                 if not os.path.isdir(os.path.join('touch',dn)):
                     os.mkdir(os.path.join('touch',dn))
         for std in ['out','err',]:
@@ -983,12 +935,13 @@ echo $CHROMOSOME
                     os.mkdir('std%s/%s' %(std,dn[4:],))
 
         for chrom in l_chroms:
-            if not os.path.isdir('out_BEAGLE/%s' %(chrom)):
-                os.mkdir('out_BEAGLE/%s' %(chrom))
-            if not os.path.isdir('touch/out_BEAGLE/%s' %(chrom)):
-                os.mkdir('touch/out_BEAGLE/%s' %(chrom))
+            for dn in ['in_BEAGLE','out_BEAGLE','out_IMPUTE2',]:
+                if not os.path.isdir('%s/%s' %(dn,chrom)):
+                    os.mkdir('%s/%s' %(dn,chrom))
+                if not os.path.isdir('touch/%s/%s' %(dn,chrom)):
+                    os.mkdir('touch/%s/%s' %(dn,chrom))
 
-        return
+        return l_dn
 
 
     def check_in(self,analysis_type,l_fp_in,):
@@ -1000,6 +953,12 @@ echo $CHROMOSOME
 
         l = os.listdir(os.path.join('touch','out_%s' %(analysis_type)))
         l_fp_out = [os.path.join('out_%s' %(analysis_type),fn) for fn in l]
+        ## append files in subdirectories (e.g. BEAGLE)
+        for s in l:
+            if os.path.isdir(os.path.join('out_%s' %(analysis_type),s)):
+                l = os.listdir(os.path.join('touch','out_%s' %(analysis_type),s))
+                for fn in l:
+                    l_fp_out += [os.path.join('out_%s' %(analysis_type),s,fn) ]
 
         bool_exit = False
         if len(set(l_fp_in)-set(l_fp_out)) > 0:
@@ -1030,13 +989,19 @@ echo $CHROMOSOME
         ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
         queue = 'normal'
 
+        ##
+        ## 1) check file in existence
+        ##
+        fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
+        bool_exit = self.check_in('ApplyRecalibration',[fp_in],)
+
+        ##
+        ## 2) touch
+        ##
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
 
         fp_out = 'out_ProduceBeagleInput/ProduceBeagleInput.bgl'
-
-        fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf'
-        bool_exit = self.check_in('ApplyRecalibration',[fp_in],)
 
         lines = ['#!/bin/bash']
 
@@ -1118,8 +1083,13 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         lines = ['#!/bin/bash']
 
-        cmd = self.determine_TS_level(fp_in_tranches)
-        lines += [cmd]
+        if self.f_ApplyRecalibration_ts_filter_level in [None,'None',]:
+            cmd = self.determine_TS_level(fp_in_tranches)
+            lines += [cmd]
+        else:
+            lines += [
+                'ts_filter_level=%f' %(
+                    float(self.f_ApplyRecalibration_ts_filter_level))]
 
 
         lines += self.init_cmd(analysis_type,memMB,)
@@ -1190,7 +1160,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         l_vcfs_in = []
         for chrom in l_chroms:
             intervals = int(math.ceil(
-                d_chrom_lens[chrom]/bps_per_interval))
+                d_chrom_lens[chrom]/float(bps_per_interval)))
             for interval in range(1,intervals+1,):
                 fp_in = 'out_%s/%s.%s.%i.vcf' %(
                     'UnifiedGenotyper','UnifiedGenotyper',
@@ -1266,9 +1236,12 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             s_TStranches += '--TStranche %.1f ' %(TStranche)
         lines += ['%s \\' %(s_TStranches)]
 
+        ## GATKwalker, optional, out
+        lines += ['--rscript_file out_%s/%s.plots.R \\' %(T,T,)]
+
         lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
 
-        self.write_shell('shell/VariantRecalibrator.sh',lines,)
+        self.write_shell('shell/%s.sh' %(analysis_type),lines,)
 
         J = 'VR'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue=queue,)
@@ -1319,8 +1292,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
         queue = 'normal'
-        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      1945 MB
-        memMB = 2000
+        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
+        memMB = 3000
 
         ##
         ## 1) touch
@@ -1361,7 +1334,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             if os.path.isfile(fp_out_chrom):
                 continue
             intervals = int(math.ceil(
-                d_chrom_lens[chrom]/self.bps_per_interval))
+                d_chrom_lens[chrom]/float(self.bps_per_interval)))
 
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
             std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
@@ -1426,7 +1399,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [
             '--intervals $CHROMOSOME:$((($LSB_JOBINDEX-1)*%i+1))-$posmax \\' %(
-                int(self.bps_per_interval),)]
+                self.bps_per_interval)]
 
         ##
         ## UnifiedGenotyper, optional
@@ -1483,7 +1456,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         s = '/software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
         for k,v in vars(self.namespace_args).items():
-            s += ' --%s %s' %(k,v)
+            s += ' --%s %s' %(k,str(v).replace('$','\\\\\\$'))
         lines += [s]
         ## term cmd
         lines += ['"']
@@ -1501,6 +1474,23 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['\n## parse chromosome from command line']
         lines += ['CHROMOSOME=$1']
 
+        lines += self.bash_chrom2len(l_chroms,d_chrom_lens,)
+
+        ##
+        ## do not allow interval to exceed the length of the chromosome
+        ## otherwise it will raise an I/O error (v. 1.4-15)
+        ##
+        lines += ['posmax=$((($LSB_JOBINDEX+0)*%i))' %(self.bps_per_interval)]
+        lines += ['if [ $posmax -gt $LENCHROMOSOME ]']
+        lines += ['then posmax=$LENCHROMOSOME']
+        lines += ['fi\n']
+
+        return lines
+
+
+    def bash_chrom2len(self,l_chroms,d_chrom_lens,):
+
+        lines = []
         lines += ['\n## define arrays']
         lines += ['CHROMOSOMES=(%s)' %(' '.join(l_chroms))]
         lines += ['LENCHROMOSOMES=(%s)' %(' '.join(
@@ -1514,17 +1504,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         lines += ['\n## find length of current chromosome passed via the command line']
         lines += ['LENCHROMOSOME=${LENCHROMOSOMES[$index]}\n']
-
-        ##
-        ## do not allow interval to exceed the length of the chromosome
-        ## otherwise it will raise an I/O error (v. 1.4-15)
-        ##
-        lines += ['posmax=$((($LSB_JOBINDEX+0)*%i))' %(int(
-            self.bps_per_interval
-            ))]
-        lines += ['if test $posmax -gt $LENCHROMOSOME']
-        lines += ['then posmax=$LENCHROMOSOME']
-        lines += ['fi\n']
 
         return lines
 
@@ -1671,6 +1650,18 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             )
 
         ##
+        ## ApplyRecalibration
+        ##
+
+        parser.add_argument(
+            '--f_ApplyRecalibration_ts_filter_level',
+            dest='f_ApplyRecalibration_ts_filter_level',
+            help='',
+            metavar='FLOAT',default=None,
+            required = False,
+            )
+
+        ##
         ## BEAGLE
         ##
         parser.add_argument(
@@ -1697,10 +1688,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = False,
             )
 
-        s_help = 'Path to a file with 2 columns\n'
-        s_help += 'Column 1: Chromosome (e.g. 22 or $CHROM)\n'
-        s_help += 'Column 2: Phased file to be divided (e.g. ../in_BEAGLE/'
-        s_help += 'ALL.chr22.phase1_release_v3.20101123.filt.renamed.bgl or ALL.$CHROM...'
+        s_help = 'Phased file to be divided (e.g. ../in_BEAGLE/'
+        s_help += 'ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.bgl'
         parser.add_argument(
             '--fp_BEAGLE_phased',
             dest='fp_BEAGLE_phased',
@@ -1709,10 +1698,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = True,
             )
 
-        s_help = 'Path to a file with 2 columns\n'
-        s_help += 'Column 1: Chromosome (e.g. 22 or $CHROM)\n'
-        s_help += 'Column 2: Markers file to be divided (e.g. ../in_BEAGLE/'
-        s_help += 'ALL.chr22.phase1_release_v3.20101123.filt.renamed.markers or ALL.$CHROM...'
+        s_help = 'Markers file to be divided (e.g. ../in_BEAGLE/'
+        s_help += 'ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.markers'
         parser.add_argument(
             '--fp_BEAGLE_markers',
             dest='fp_BEAGLE_markers',
@@ -1733,45 +1720,39 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## IMPUTE2
         ##
         parser.add_argument(
-            '--impute2','--IMPUTE2','--IMPUTE2jar','--fp_software_impute2',
-            dest='fp_software_impute2',
-            help='File path to BEAGLE .jar file (e.g. /software/hgi/impute2/v2.2.2/bin/impute2)',
+            '--impute2','--IMPUTE2','--IMPUTE2jar','--fp_software_impute2','--fp_software_IMPUTE2',
+            dest='fp_software_IMPUTE2',
+            help='File path to IMPUTE2 executable (e.g. /software/hgi/impute2/v2.2.2/bin/impute2)',
             metavar='FILE',default=None,
             required = True,
             )
 
         parser.add_argument(
+            ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
             '--hap','--impute2-hap','--fp_impute2_hap',
             dest='fp_impute2_hap',
-            help='File path to directory containing hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.hap.gz)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
+            help='Hap files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROM_impute.hap.gz)',
             metavar='FILE',default=None,
             required = True,
             )
 
         parser.add_argument(
+            ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
             '--legend','--impute2-legend','--fp_impute2_legend',
             dest='fp_impute2_legend',
-            help='File path to directory containing legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROMOSOME_impute.legend.gz)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
+            help='Legend files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/ALL_1000G_phase1integrated_v3_chr$CHROM_impute.legend.gz)',
             metavar='FILE',default=None,
             required = True,
             )
 
         parser.add_argument(
+            ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
             '--map','--impute2-map','--fp_impute2_map',
             dest='fp_impute2_map',
-            help='File path to directory containing map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt)',
-            ## Ask Deepti where this is downloaded from
-            ## and whether it is always split by chromosome
+            help='Map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROM_combined_b37.txt)',
             metavar='FILE',default=None,
             required = True,
             )
-
-##        ## IMPUTE2 input files
-##        self.fp_impute2_map = '/nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROMOSOME_combined_b37.txt'
 
         ##
         ##
@@ -1779,13 +1760,16 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         
         ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
         ## parse arguments to argparse NameSpace
-        self.namespace_args = namespace_args = parser.parse_args()        
+        self.namespace_args = namespace_args = parser.parse_args()
 
         ## http://docs.python.org/2/library/functions.html#vars
         for k,v in vars(namespace_args).items():
+            if k[:2] == 'i_':
+                v = int(v)
+            elif k[:2] == 'f_':
+                v = float(v)
             setattr(self,k,v)
             continue
-
 
         if self.fp_GATK is None and self.fp_options is None:
             parser.error('--GATK or --arguments')
@@ -1801,11 +1785,17 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             if fp == None or fp == 'None': continue
             if fp == self.fp_bams:
                 f = os.path.isdir
+                l_fp = [fp]
             else:
                 f = os.path.isfile
-            if not f(fp):
-                print 'file path does not exist:', fp
-                bool_not_found = True
+                if '$CHROMOSOME' in fp:
+                    l_fp = [fp.replace('$CHROMOSOME',str(chrom)) for chrom in xrange(1,22+1)]
+                else:
+                    l_fp = [fp]
+            for fp in l_fp:
+                if not f(fp):
+                    print 'file path does not exist:', fp
+                    bool_not_found = True
         if bool_not_found == True:
             sys.exit(0)
 
@@ -1840,77 +1830,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         self.parse_arguments()
 
-        ## A node on the cluster does approximately 4Mbp in 8 hours;
-        ## i.e. UnifiedGenotyper, ugandan dataset, chromosome1=249Mbp=3.1weeks=504hours,
-        ## so do intervals of 4Mbp to avoid cluster time out after 12 hours
-        ## this should be set as a flag with optparse as it differs from dataset to dataset...
-        ## this one varies from chromosome to chromosome...
-        ## this variable should be dependent on the number of samples (and the coverage / number of variants... ???)
-        ## todo: collect stats...
-        ##
-        ## the same variable is also used for IMPUTE2, so I decided to lower it from 10Mbp to 5Mbp
-        self.bps_per_interval = 10.*10**6
-        self.bps_per_interval_IMPUTE2 = 5.*10**6
-
-        ## sequential order in which to run GATK walkers and other steps
-        self.l_steps = [
-            'UnifiedGenotyper',
-            'CombineVariants',
-            'VariantRecalibrator',
-            'ApplyRecalibration',
-            ## Imputation, BEAGLE
-            'ProduceBeagleInput',
-            'BEAGLE', ## not a GATK step
-            ## Imputation, IMPUTE2
-            'IMPUTE2', ## not a GATK step
-            ]
-
-        ## which jobs need to be run as arrays because of special memory/processor requirements?
-        self.l_steps_array_subchromosome = [
-            'UnifiedGenotyper',
-            'IMPUTE2',
-            ]
-        self.l_steps_array_chromosome = [
-            'ApplyRecalibration',
-            'BEAGLE',
-            ]
-
-        self.d_file_outputs = {
-            'ApplyRecalibration':[
-                'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf',
-                'ApplyRecalibration.recalibrated.filtered.$CHROMOSOME.vcf.idx',
-                ],
-            'ProduceBeagleInput':['ProduceBeagleInput.$CHROMOSOME.bgl',],
-            'BEAGLE':[
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.phased',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.r2',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.gprobs',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.dose',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.r2.idx',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.gprobs.idx',
-                'BeagleOutput.$CHROMOSOME.bgl.ProduceBeagleInput.$CHROMOSOME.bgl.phased.idx',
-                ],
-            'IMPUTE2':[
-                'chromosome$CHROMOSOME.impute2.gen.$LSB_JOBINDEX_summary',
-                'chromosome$CHROMOSOME.impute2.gen.$LSB_JOBINDEX',
-                ],
-            }
-
-        ##
-        ## binary options
-        ##
-
-        ## run everything in sequential;
-        ## i.e. wait for previous steps to finish
-        ## and then auto submit next step
-        self.bool_sequential = True
-
-        ## create empty shell script if file already exists
-        ## should really skip the step entirely to avoid submitting 0 second job to cluster and get unpopular and acquire poor cluster stats on behalf of the ms23 group...
-        self.bool_skip_if_output_exists = True
-
-        ## not currently used, but will be implemented...
-        self.bool_send_mail_upon_job_completion = True
+        self.bps_per_interval = 10*10**6
+        self.bps_per_interval_IMPUTE2 = 5*10**6
 
         self.verbose = True
 
