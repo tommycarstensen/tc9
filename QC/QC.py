@@ -14,7 +14,7 @@ from scipy import stats
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
-## todo 2013-01-23: get rid of any references to uganda_gwas and agv and tc9 in final version --- the importance of this was highlighted on 2013-02-08, when the script failed for Deepti, when she used the project uganda
+## todo 2013-01-23: get rid of any references to uganda_gwas and agv and tc9 and lustre in final version --- the importance of this was highlighted on 2013-02-08, when the script failed for Deepti, when she used the project uganda
 
 ## todo 2013-02-08: get rid of 5 and 10 minute lags with a touch file like I did for GATK pipeline
 
@@ -46,11 +46,83 @@ class main:
         if self.verbose == True: print '############ execute ############'
         self.plink_execution(bfile,)
 
-        if self.verbose == True: print '############ plot ############'
-        self.plink_plots(bfile,)
+        if self.verbose == True: print '############ figures ############'
+        self.plink_figures(bfile,)
 
-        if self.verbose == True: print '############ tabulate ############'
+        if self.verbose == True: print '############ tables ############'
         self.plink_tables(bfile,)
+
+        if self.verbose == True: print '############ pdf ############'
+        self.pdflatex(bfile,)
+
+        return
+
+
+    def pdflatex(self,bfile,):
+
+        if not os.path.isfile('%s.postQC.autosomes.bed'):
+            return
+
+    def variables2tex2pdf():
+
+        s += '\documentclass{article}\n'
+        s += '\usepackage{thumbpdf}\n'
+        s += '\usepackage[pdftex,\n'
+        s += '        colorlinks=true,\n'
+        s += '        urlcolor=rltblue,       % \href{...}{...} external (URL)\n'
+        s += '        filecolor=rltgreen,     % \href{...} local file\n'
+        s += '        linkcolor=rltred,       % \ref{...} and \pageref{...}\n'
+        s += '        pdftitle={QC, %s, %s},\n' %(self.project,bfile)
+        s += '        pdfauthor={Tommy Carstensen / team 149 / %s},\n' %(
+            pwd.getpwuid(os.getuid())[0])
+        s += '        pdfsubject={QC, %s, %s},\n' %(self.project,bfile)
+        s += '        pdfkeywords={QC, %s, %s, Tommy Carstensen, team149, %s},\n' %(
+            self.project,bfile,pwd.getpwuid(os.getuid())[0])
+        s += '        pdfproducer={pdfLaTeX},\n'
+        s += '        pdfadjustspacing=1,\n'
+        s += '        pagebackref,\n'
+        s += '        pdfpagemode=None,\n'
+        s += '        bookmarksopen=true]{hyperref}\n'
+        s += '\usepackage{color}\n'
+        s += '\definecolor{rltred}{rgb}{0.75,0,0}\n'
+        s += '\definecolor{rltgreen}{rgb}{0,0.5,0}\n'
+        s += '\definecolor{rltblue}{rgb}{0,0,0.75}\n\n'
+
+        s += '\title{QC %s %s}\n' %(self.project,bfile,)
+        s += '\author{Tommy Carstensen / %s}\n' %(os.getlogin())
+        s += '\date{\today}\n\n'
+
+        s += '\begin{document}\label{start}\n\n'
+
+        s += '\maketitle\n\n'
+
+        s += '\section{Section One}\n\n'
+
+        s += 'A test document from\n'
+        s += '\href{http://www.Ringlord.com/}{Ringlord Technologies}!\n\n'
+
+        s += '\subsection{Subsection One Dot One}\n\n'
+
+        s += 'Hello, this is section 1.1\n\n'
+
+        s += '\subsection{Subsection One Dot Two}\n\n'
+
+        s += 'And here we have section 1.2; here is a link to\n'
+        s += '\href{Other.pdf}{another Document (Other.pdf)},\n'
+        s += 'which probably does not exist (but that is OK).\n\n'
+
+        s += '\section{Section Two}\n\n'
+
+        s += 'You could also click on the following number to jump to\n'
+        s += 'the first page, namely page \pageref{start}\ldots\n\n'
+
+        s += '\label{end}\end{document}\n'
+
+        fd = open('%s.tex' %(os.path.basename(bfile)),'w')
+        fd.write(s)
+        fd.close()
+
+        self.execmd('pdflatex %s' %(bfile))
 
         return
 
@@ -150,6 +222,8 @@ class main:
 
         if os.path.isfile('%s.qq.hwe.png' %(bfile)):
             return
+        if os.path.isfile('%s.hwe.scatter.png' %(bfile)):
+            return
 
         n_samples = int(os.popen('cat %s.fam | wc -l' %(bfile)).read())
         cmd = 'cat %s.sampleQC.nonfounders.samples | wc -l' %(bfile)
@@ -165,7 +239,7 @@ class main:
 ##        s += 'qqplot(e, o, pch=20, cex=1, col="black", xlim=c(0, max(e)), ylim=c(0, max(o)))\n'
 ##        s += 'lines(e,e, col="grey")\n'
 ##        s += 'dev.off()\n'
-##        fd = open('%s.qq.r' %(bfile),'w')
+##        fd = open('%s.qq.r' %(os.path.basename(bfile)),'w')
 ##        fd.write(s)
 ##        fd.close()
 ##        self.execmd('chmod +x %s.qq.r' %(bfile))
@@ -593,6 +667,8 @@ class main:
 
         for suffix in ['SNPQC','X.males','X.females',]:
 
+            if suffix == 'X.males' and self.bool_filter_females == True: continue
+
             if not os.path.isfile('%s.%s.lmiss' %(bfile,suffix,)):
                 continue
 
@@ -684,7 +760,7 @@ class main:
         for pi_hat_max in l_pi_hat_max:
             cmd = 'python %s/QC_IBD_prune.py ' %(os.path.dirname(sys.argv[0]))
             cmd += '--pi_hat_max %.02f --genome %s.prehardy --imiss %s --out %s\n\n' %(
-                pi_hat_max, bfile, bfile, bfile,
+                pi_hat_max, bfile, bfile, os.path.basename(bfile),
                 )
             self.execmd(cmd)
             cmd = 'cat %s.genome.%.2f.samples | wc -l' %(bfile,pi_hat_max,)
@@ -919,7 +995,7 @@ class main:
             start += step
 
 
-    def plink_plots(self,bfile,):
+    def plink_figures(self,bfile,):
 
         for l_suffixes_in,function in [
             [['imiss'],self.histogram_imiss,],
@@ -956,6 +1032,7 @@ class main:
                 continue
             ## lock
             if os.path.isfile('%s.%s.lock' %(bfile,in_suffix,)):
+                print 'other process plotting. exiting.'
                 sys.exit(0)
             else:
                 self.execmd('touch %s.%s.lock' %(bfile,in_suffix,))
@@ -1458,7 +1535,7 @@ it's ugly and I will not understand it 1 year form now.'''
             else:
                 lines += ['%f\t%f\t \n' %(
                     u[i],v[i],)]
-        fd = open('%s.mds.labels' %(bfile),'w')
+        fd = open('%s.mds.labels' %(os.path.basename(bfile)),'w')
         fd.writelines(lines)
         fd.close()
         
@@ -2155,7 +2232,8 @@ it's ugly and I will not understand it 1 year form now.'''
         cmd += ' --indepShift %i' %(self.indepShift)
         cmd += ' --Rsquared %f' %(self.Rsquared)
         ## genome
-        cmd += ' --pi_hat_max %f' %(self.pi_hat_max)
+        cmd += ' --pi_hat_max_postHWE %f' %(self.pi_hat_max_postHWE)
+        cmd += ' --pi_hat_max_preHWE %f' %(self.pi_hat_max_preHWE)
         ## het
         cmd += ' --threshold_het_stddev %i' %(self.threshold_het_stddev)
         ## freq
@@ -2188,9 +2266,12 @@ it's ugly and I will not understand it 1 year form now.'''
                 out_prefix = l[l.index('--out')+1]
         elif '--bfile' in plink_cmd_full:
             l = plink_cmd_full.split()
-            out_prefix = l[l.index('--bfile')+1]
+            out_prefix = os.path.basename(l[l.index('--bfile')+1])
+            print l
+            print out_prefix
+            stop_tmp
         else:
-            out_prefix = bfile
+            out_prefix = os.path.basename(bfile)
 
         bool_file_out_exists = False
         for out_suffix in self.d_out_suffix[plink_cmd]:
@@ -2301,7 +2382,6 @@ it's ugly and I will not understand it 1 year form now.'''
         ## check                
         bool_input = True
         for fp_in in l_fp_in:
-            print plink_cmd, fp_in
             bool_input = self.check_file_in(bfile,fp_in)
             if bool_input == True: continue
             if self.bool_verbose == True:
@@ -2433,11 +2513,10 @@ it's ugly and I will not understand it 1 year form now.'''
         n_samples = int(os.popen(cmd).read())
         ## additional samples if bmerge
         if plink_cmd == 'bmerge':
-            if os.path.isfile(self.fp1000g): ## this file check should be carried out much much earlier...
-                cmd = 'cat %s.fam | wc -l' %(self.fp1000g)
-                if self.bool_verbose == True:
-                    print cmd
-                n_samples += int(os.popen(cmd).read())
+            cmd = 'cat %s.fam | wc -l' %(self.fp1000g)
+            if self.bool_verbose == True:
+                print cmd
+            n_samples += int(os.popen(cmd).read())
 
         ## assign appropriate amount of memory (GB)
         if not plink_cmd in d_memMB.keys():
@@ -2454,6 +2533,8 @@ it's ugly and I will not understand it 1 year form now.'''
 
 
     def l_plink_cmds(self,bfile,):
+
+        bfile_basename = os.path.basename(bfile)
 
         l_plink_cmds = []
 
@@ -2498,7 +2579,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
-        s += '--out %s.sampleQC \\\n' %(bfile)
+        s += '--out %s.sampleQC \\\n' %(bfile_basename)
         l_plink_cmds += [s]
 
         ##
@@ -2507,7 +2588,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
         s = '--missing \\\n'
-        s +='--out %s.SNPQC \\\n' %(bfile,)
+        s +='--out %s.SNPQC \\\n' %(bfile_basename)
         s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
         l_plink_cmds += [s]
 
@@ -2518,7 +2599,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
         s = '--freq \\\n'
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
-        s += '--out %s.preIBD \\\n' %(bfile)
+        s += '--out %s.preIBD \\\n' %(bfile_basename)
         s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
 ##        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
         l_plink_cmds += [s]
@@ -2527,7 +2608,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s = s_indep_pairwise
         s += '--read-freq %s.preIBD.frq \\\n' %(bfile)
         s += '--remove %s.sampleQC.samples \\\n' %(bfile)
-        s += '--out prune/%s.prehardy.$chrom \\\n' %(bfile,)
+        s += '--out prune/%s.prehardy.$chrom \\\n' %(bfile_basename)
         s += '--chr $chrom \\\n' ## parallel
         s += '--exclude %s.lmiss.SNPs \\\n' %(bfile)
 ##        s += '--exclude %s.lmiss.exclLRLD.SNPs \\\n' %(bfile)
@@ -2543,7 +2624,7 @@ it's ugly and I will not understand it 1 year form now.'''
 ##        s += '--bfile %s \\\n' %(bfile,)
 ##        s += '--remove %s.sampleQC.samples \\\n' %(bfile,)
 ##        s += '--extract %s.prehardy.prune.in \\\n' %(bfile,)
-##        s += '--out %s.prehardy \\\n' %(bfile,)
+##        s += '--out %s.prehardy \\\n' %(bfile_basename,)
 ##        l_plink_cmds += [s]
 
         ##
@@ -2564,7 +2645,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
         s = '--freq \\\n'
-        s += '--out %s.postIBD \\\n' %(bfile,)
+        s += '--out %s.postIBD \\\n' %(bfile_basename)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
@@ -2574,7 +2655,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--read-freq %s.postIBD.frq \\\n' %(bfile,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
-        s += '--out prune/%s.posthardy.$chrom \\\n' %(bfile,)
+        s += '--out prune/%s.posthardy.$chrom \\\n' %(bfile_basename)
         s += '--chr $chrom \\\n' ## parallel
         l_plink_cmds += [s]
 
@@ -2589,7 +2670,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--bfile %s \\\n' %(bfile,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--extract %s.posthardy.prune.in \\\n' %(bfile,)
-        s += '--out %s.posthardy \\\n' %(bfile,)
+        s += '--out %s.posthardy \\\n' %(bfile_basename)
         l_plink_cmds += [s]
 
         ##
@@ -2605,7 +2686,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '%s.bim \\\n' %(self.fp1000g,)
         s += '%s.fam \\\n' %(self.fp1000g,)
         s += '--make-bed \\\n'
-        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile_basename,suffix,)
         s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,self.fn1000g,)
         s += '--bfile %s \\\n' %(bfile,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
@@ -2615,7 +2696,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#freq
         s = '--freq \\\n'
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
-        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile_basename,suffix,)
         s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,suffix,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
@@ -2628,7 +2709,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s += '--extract %s.%s.autosomes.comm.SNPs \\\n' %(bfile,suffix,)
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
         s += '--exclude %s.lmiss.hwe.LRLD.SNPs \\\n' %(bfile,)
-        s += '--out prune/%s.%s.$chrom \\\n' %(bfile,suffix,)
+        s += '--out prune/%s.%s.$chrom \\\n' %(bfile_basename,suffix,)
         s += '--chr $chrom \\\n'
         l_plink_cmds += [s]
 
@@ -2645,7 +2726,7 @@ it's ugly and I will not understand it 1 year form now.'''
         s = s_cluster+'--read-genome %s.%s.genome \\\n' %(bfile,suffix,)
         s += '--bfile %s.%s \\\n' %(bfile,suffix,)
         s += '--extract %s.%s.prune.in \\\n' %(bfile,suffix,)
-        s += '--out %s.%s \\\n' %(bfile,suffix,)
+        s += '--out %s.%s \\\n' %(bfile_basename,suffix,)
         ## posthardy
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
 ##        ## prehardy
@@ -2659,7 +2740,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## http://pngu.mgh.harvard.edu/~purcell/plink/data.shtml#bed
         s = '--make-bed \\\n'
         s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
-        s += '--out %s.postQC.autosomes \\\n' %(bfile)
+        s += '--out %s.postQC.autosomes \\\n' %(bfile_basename)
         s += '--exclude %s.lmiss.hwe.SNPs \\\n' %(bfile,)
         l_plink_cmds += [s]
 
@@ -2671,9 +2752,11 @@ it's ugly and I will not understand it 1 year form now.'''
 
             for sex in ['males','females']:
 
+                if sex == 'males' and self.bool_filter_females == True: continue
+
                 ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#missing
                 s = '--missing \\\n'
-                s += '--out %s.X.%s \\\n' %(bfile,sex,)
+                s += '--out %s.X.%s \\\n' %(bfile_basename,sex,)
                 s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
                 s += '--extract %s.X.SNPs \\\n' %(bfile)
                 s += '--filter-%s \\\n' %(sex)
@@ -2681,7 +2764,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
             ## http://pngu.mgh.harvard.edu/~purcell/plink/summary.shtml#hardy
             s = '--hardy \\\n'
-            s += '--out %s.X.females \\\n' %(bfile,)
+            s += '--out %s.X.females \\\n' %(bfile_basename,)
             s += '--remove %s.sampleQC.nonfounders.samples \\\n' %(bfile,)
     ##        s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile,)
             s += '--extract %s.X.SNPs \\\n' %(bfile)
@@ -2693,7 +2776,7 @@ it's ugly and I will not understand it 1 year form now.'''
             s = '--make-bed \\\n'
             s += '--remove %s.sampleQC.IBD.samples \\\n' %(bfile)
             s += '--extract %s.X.SNPs \\\n' %(bfile)
-            s += '--out %s.postQC.X \\\n' %(bfile,)
+            s += '--out %s.postQC.X \\\n' %(bfile_basename,)
             s += '--exclude %s.X.lmiss.hwe.SNPs \\\n' %(bfile,)
             l_plink_cmds += [s]
 
@@ -2704,7 +2787,7 @@ it's ugly and I will not understand it 1 year form now.'''
         self, bfile, suffix, suffix_remove, bfile_in,
         ):
 
-        out = 'genome/%s.%s.$i.$j' %(bfile,suffix,),
+        out = 'genome/%s.%s.$i.$j' %(os.path.basename(bfile),suffix,),
         remove = '%s.%s.samples' %(bfile,suffix_remove,),
         extract = '%s.%s.prune.in' %(bfile,suffix,),
         genome_lists = 'fam/%s.%s.fam.$i fam/%s.%s.fam.$j' %(
@@ -2727,15 +2810,11 @@ it's ugly and I will not understand it 1 year form now.'''
         if not os.path.isfile(fp_in):
             bool_check = False
         else:
-            fd = open('%s.touch' %(bfile),'r')
+            fd = open('%s.touch' %(os.path.basename(bfile)),'r')
             s = fd.read()
             fd.close()
             l_fp_out = s.strip().split('\n')
             if not fp_in in l_fp_out:
-                print fp_in
-                print l_fp_out
-                if bfile != 'omni2.5-8_20120809_gwa_uganda_gtu_flipped':
-                    stoptmp
                 bool_check = False
 
         return bool_check
@@ -2872,17 +2951,23 @@ it's ugly and I will not understand it 1 year form now.'''
         ##
         if out_prefix == '%s.X.females' %(bfile):
 
-            cmd = 'if [ -s %s.X.females.hwe -a -s %s.X.males.lmiss.SNPs ]; then\n' %(bfile,bfile,)
+            if self.bool_filter_females == True:
+                cmd = 'if [ -s %s.X.females.hwe ]; then\n' %(bfile,)
+            else:
+                cmd = 'if [ -s %s.X.females.hwe -a -s %s.X.males.lmiss.SNPs ]; then\n' %(bfile,bfile,)
 
             cmd += 'cat %s.X.females.hwe | ' %(bfile)
             cmd += "awk '{if ($9 < %.1e) print $2}' > %s.X.females.hwe.SNPs\n" %(
                 self.hwe_min, bfile,)
             cmd += 'cat '
-            cmd += '%s.X.males.lmiss.SNPs ' %(bfile,)
+            if self.bool_filter_females == False:
+                cmd += '%s.X.males.lmiss.SNPs ' %(bfile,)
             cmd += '%s.X.females.lmiss.SNPs ' %(bfile,)
             cmd += '%s.X.females.hwe.SNPs ' %(bfile,)
             cmd += '| sort -u '
             cmd += '> %s.X.lmiss.hwe.SNPs\n' %(bfile,)
+
+            cmd += 'echo %s.X.lmiss.hwe.SNPs >> %s.touch\n' %(bfile,bfile,)
 
             cmd += 'fi\n'
             l_cmds += [cmd]
@@ -2909,6 +2994,8 @@ it's ugly and I will not understand it 1 year form now.'''
             bool_removal = False ## ms23 24jan2013
         elif self.project == 'agv':
             bool_removal = False ## cp8 17jan2013
+        else:
+            bool_removal = False
 
         self.write_EIGENSOFT_parameter_file(bfile,prefix,bool_removal,)
 
@@ -3464,50 +3551,41 @@ it's ugly and I will not understand it 1 year form now.'''
             ## run IBD prune
             ##
 
-            ## disallow duplicates (i.e. IBD>0.90)
-            if self.project == 'uganda_gwas':
-                cmd += 'python %s/QC_IBD_prune.py ' %(
-                    os.path.dirname(sys.argv[0]),
-                    )
-                cmd += '--pi_hat_max %.2f --genome %s.prehardy --imiss %s --out %s\n\n' %(
-                    .9,bfile,bfile,bfile,
-                    )
-
-            ## disallow related samples for HWE
-            ## write minimal sample exclusion list
+            ## disallow duplicates or non-founders (e.g. IBD>0.90 or IBD>0.05)
             cmd += 'python %s/QC_IBD_prune.py ' %(
                 os.path.dirname(sys.argv[0]),
                 )
             cmd += '--pi_hat_max %.2f --genome %s.prehardy --imiss %s --out %s\n\n' %(
-                self.pi_hat_max,bfile,bfile,bfile,
+                self.pi_hat_max_postHWE,bfile,bfile,os.path.basename(bfile),
                 )
+
+            ## disallow related samples for HWE
+            ## write minimal sample exclusion list
+            if self.pi_hat_max_preHWE != self.pi_hat_max_postHWE:
+                cmd += 'python %s/QC_IBD_prune.py ' %(
+                    os.path.dirname(sys.argv[0]),
+                    )
+                cmd += '--pi_hat_max %.2f --genome %s.prehardy --imiss %s --out %s\n\n' %(
+                    self.pi_hat_max_preHWE,bfile,bfile,os.path.basename(bfile),
+                    )
             cmd += 'echo %s.genome.%.2f.samples >> %s.touch\n' %(
-                bfile,self.pi_hat_max,bfile,)
+                bfile,self.pi_hat_max_preHWE,bfile,)
 
             ##
             ## concatenate sample removal lists
             ##
 
             ## after HWE
-            if self.project == 'uganda_gwas':
-                ## concatenate sample exclusion lists (i.e. IBD>0.90)
-                cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
-                    bfile,bfile,.9,
-                    )
-                cmd += ' > %s.sampleQC.IBD.samples\n\n' %(bfile,)
-            elif self.project == 'agv':
-                ## concatenate sample exclusion lists (i.e. IBD>low threshold)
-                cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
-                    bfile,bfile,self.pi_hat_max,
-                    )
-                cmd += ' > %s.sampleQC.IBD.samples\n\n' %(bfile,)
-            else:
-                stop_unknown_project
+            ## concatenate sample exclusion lists (i.e. IBD>low threshold)
+            cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
+                bfile,bfile,self.pi_hat_max_postHWE,
+                )
+            cmd += ' > %s.sampleQC.IBD.samples\n\n' %(bfile,)
             cmd += 'echo %s.sampleQC.IBD.samples >> %s.touch\n' %(bfile,bfile,)
 
             ## before HWE
             cmd += 'cat %s.sampleQC.samples %s.genome.%.2f.samples' %(
-                bfile,bfile,self.pi_hat_max,
+                bfile,bfile,self.pi_hat_max_preHWE,
                 )
             cmd += ' > %s.sampleQC.nonfounders.samples\n' %(bfile,)
             cmd += 'echo %s.sampleQC.nonfounders.samples >> %s.touch\n' %(bfile,bfile,)
@@ -3627,6 +3705,7 @@ it's ugly and I will not understand it 1 year form now.'''
         ## lmiss.X.SNPs
         ##
         for sex in ['males','females',]:
+            if sex == 'males' and self.bool_filter_females == True: continue
             cmd = 'if [ -s %s.X.%s.lmiss -a ! -f %s.X.%s.lmiss.SNPs ]\n' %(
                 bfile,sex,bfile,sex,)
             cmd += 'then\n'
@@ -3640,10 +3719,17 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd += 'fi\n'
             l_cmds += [cmd]
 
-        cmd = 'if [ -f %s.X.males.lmiss.SNPs -a -f %s.X.females.lmiss.SNPs ]; then\n' %(
-            bfile,bfile,)
-        cmd += 'cat %s.X.males.lmiss.SNPs %s.X.females.lmiss.SNPs | sort -u > %s.X.lmiss.union.SNPs\n' %(
-            bfile,bfile,bfile,)
+        if self.bool_filter_females == True:
+            cmd = 'if [ -f %s.X.females.lmiss.SNPs ]; then\n' %(
+                bfile,bfile,)
+            cmd += 'cat %s.X.females.lmiss.SNPs | sort -u > %s.X.lmiss.union.SNPs\n' %(
+                bfile,bfile,bfile,)
+        else:
+            cmd = 'if [ -f %s.X.males.lmiss.SNPs -a -f %s.X.females.lmiss.SNPs ]; then\n' %(
+                bfile,bfile,)
+            cmd += 'cat %s.X.males.lmiss.SNPs %s.X.females.lmiss.SNPs | sort -u > %s.X.lmiss.union.SNPs\n' %(
+                bfile,bfile,bfile,)
+        cmd += 'echo %s.X.lmiss.union.SNPs >> %s.touch\n' %(bfile,bfile,)
         cmd += 'fi\n'
         l_cmds += [cmd]
 
@@ -3807,7 +3893,7 @@ it's ugly and I will not understand it 1 year form now.'''
             IID = line.split()[0]
             d_IBD[IID] = -1
 
-        fd = open('%s.prehardy.genome' %(bfile),'r')
+        fd = open('%s.prehardy.genome' %(os.path.basename(bfile)),'r')
         ## skip header
         for line in fd: break
 
@@ -3832,7 +3918,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 del d_IBD[IID]
 
         l = ['%s\n' %(v) for v in d_IBD.values()]
-        fd = open('%s.genome.max' %(bfile),'w')
+        fd = open('%s.genome.max' %(os.path.basename(bfile)),'w')
         fd.writelines(l)
         fd.close()
 
@@ -4024,13 +4110,28 @@ it's ugly and I will not understand it 1 year form now.'''
                 self.execmd('touch %s' %(fn))
 
         ##
+        ## check that FIDs and IIDs in fam file are unique
+        ## otherwise this script needs to be rewritten
+        ## in particular when fgrep is used
+        ##
+        cmd_FID = "cat %s.fam | awk '{print $1}' | sort | uniq -d" %(bfile)
+        FID_dup = os.popen(cmd_FID).read().strip()
+        cmd_IID = "cat %s.fam | awk '{print $2}' | sort | uniq -d" %(bfile)
+        IID_dup = os.popen(cmd_IID).read().strip()
+        if FID_dup != '' and IID_dup != '':
+            print 'duplicate FIDs or IIDs'
+            print FID_dup
+            print IID_dup
+            sys.exit()
+
+        ##
         ## create touch file *after* initial checks
         ##
         if not os.path.isfile('%s.touch' %(bfile)):
             s = ''
             for extension in ['bed','bim','fam',]:
                 s += '%s.%s\n%s.%s\n' %(bfile,extension,self.fp1000g,extension)
-            fd = open('%s.touch' %(bfile),'w')
+            fd = open('%s.touch' %(os.path.basename(bfile)),'w')
             fd.write(s)
             fd.close()
 
@@ -4056,7 +4157,7 @@ it's ugly and I will not understand it 1 year form now.'''
         for k,v in l:
             s += '%-20s\t%s\n' %(k,v,)
             continue
-        fd = open('%s.options' %(self.bfile),'w')
+        fd = open('%s.options' %(os.path.basename(bfile)),'w')
         fd.write(s)
         fd.close()
 
@@ -4094,7 +4195,7 @@ it's ugly and I will not understand it 1 year form now.'''
 
     def convert_range_exclusion_to_SNP_exclusion(self,bfile,):
 
-        fn_out = '%s.ldregions.SNPs' %(bfile)
+        fn_out = '%s.ldregions.SNPs' %(os.path.basename(bfile))
 
         if os.path.isfile(fn_out):
             return
@@ -4188,7 +4289,7 @@ maybe I should rename it.'''
             ['autosomes','$1>=1 && $1<=22',],
             ]:
 
-            fn_out = '%s.%s.SNPs' %(bfile,out_prefix,)
+            fn_out = '%s.%s.SNPs' %(os.path.basename(bfile),out_prefix,)
 
             ## continue if file already exists
             if os.path.isfile(fn_out):
@@ -4200,7 +4301,7 @@ maybe I should rename it.'''
                 )
             self.execmd(cmd)
 
-            fd = open('%s.touch' %(bfile),'a')
+            fd = open('%s.touch' %(os.path.basename(bfile)),'a')
             fd.write('%s\n' %(fn_out))
             fd.close()
 
@@ -4218,9 +4319,16 @@ maybe I should rename it.'''
             )
 
         parser.add_option(
-            '--pi_hat_max', '--pi_circumflex_max', '--threshold_ibd', '--threshold_pi_hat', '--threshold_pi_hat_max',
-            dest='threshold_pi_hat_max',
-            help='The HWE step is dependent on the chose PI CIRCUMFLEX MAX',
+            '--pi_hat_max_postHWE',
+            dest='threshold_pi_hat_max_postHWE',
+            help='Use to exclude non-founders (e.g. 0.05) or duplicates (e.g. 0.90)',
+            metavar='FLOAT',default=0.90,
+            )
+
+        parser.add_option(
+            '--pi_hat_max_preHWE',
+            dest='threshold_pi_hat_max_preHWE',
+            help='The HWE step is dependent on the chosen PI CIRCUMFLEX MAX. Use to exclude non-founders before HWE check (e.g. 0.05)',
             metavar='FLOAT',default=0.05,
             )
 
@@ -4308,8 +4416,10 @@ maybe I should rename it.'''
             metavar='FILE',
             )
 
-        parser.add_option("-v", '--verbose', action="store_true", dest="verbose", default=True)
-        parser.add_option("-q", '--silent', '--quiet', action="store_false", dest="verbose")
+        parser.add_option("-v", '--verbose', action="store_true", dest="bool_verbose", default=True)
+        parser.add_option("-q", '--silent', '--quiet', action="store_false", dest="bool_verbose")
+
+        parser.add_option('--filter-females', '--bool_filter_females', action="store_true", dest="bool_filter_females", default=False)
 
         parser.add_option(
             '--no_sex_check', '--no-X', '--no-sex-check',
@@ -4334,6 +4444,10 @@ maybe I should rename it.'''
 
         opts = self.parse_options()
 
+        ## REWRITE THIS!!!
+        ##
+        ## options file
+        ##
         if opts.options:
             if not os.path.isfile(opts.options):
                 print 'does not exist:', opts.options
@@ -4370,15 +4484,19 @@ maybe I should rename it.'''
             ## hwe
             self.hwe_min = float(d['threshold_hwe_min'])
             ## genome
-            self.pi_hat_max = float(d['threshold_pi_hat_max'])
+            self.pi_hat_max_postHWE = float(d['threshold_pi_hat_max_postHWE'])
+            self.pi_hat_max_preHWE = float(d['threshold_pi_hat_max_preHWE'])
             ## missing
             self.threshold_imiss = float(d['threshold_imiss_min'])
             self.threshold_lmiss = float(d['threshold_lmiss_min'])
+        ##
+        ## command line options
+        ##
         else:
-            self.bfile = opts.bfile
-            self.project = str(opts.project)
-            self.bool_verbose = self.verbose = bool(opts.verbose)
-            self.bool_no_sexcheck = bool(opts.bool_no_sexcheck)
+            for k,v in vars(opts).items():
+                if k[:5] == 'bool_':
+                    v = bool(v)
+                setattr(self,k,v)
             self.fn_pops = opts.pops
             ## indep-pairwise
             self.indepWindow = int(opts.indepWindow)
@@ -4391,10 +4509,12 @@ maybe I should rename it.'''
             ## hwe
             self.hwe_min = float(opts.threshold_hwe_min)
             ## genome
-            self.pi_hat_max = float(opts.threshold_pi_hat_max)
+            self.pi_hat_max_preHWE = float(opts.threshold_pi_hat_max_preHWE)
+            self.pi_hat_max_postHWE = float(opts.threshold_pi_hat_max_postHWE)
             ## missing
             self.threshold_imiss = float(opts.threshold_imiss_min)
             self.threshold_lmiss = float(opts.threshold_lmiss_min)
+        self.verbose =self.bool_verbose
 
         ##
         ## other options
