@@ -7,7 +7,7 @@
 ## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
 
 ## built-ins
-import math, os, sys, time, re
+import math, os, sys, time, re, pwd
 ## New in version 2.7
 import argparse
 
@@ -82,6 +82,8 @@ class main():
 
     def IMPUTE2_without_BEAGLE_unite(self,l_chroms,d_chrom_lens,):
 
+        ## tmp function!!!
+
         for chrom in l_chroms:
             index_max = int(math.ceil(
                     d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
@@ -97,6 +99,8 @@ class main():
 
 
     def IMPUTE2_without_BEAGLE(self,l_chroms,d_chrom_lens,):
+
+        ## tmp function!!!
 
         if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
             os.mkdir('in_IMPUTE2_without_BEAGLE')
@@ -472,6 +476,16 @@ class main():
         return
 
 
+    def parse_marker(self,line_markers,):
+
+        l_markers = line_markers.split()
+        pos_markers = int(l_markers[1])
+        alleleA_markers = l_markers[2]
+        alleleB_markers = l_markers[3]
+
+        return pos_markers, alleleA_markers, alleleB_markers
+
+
     def BEAGLE_divide(self,chrom,):
 
         ## To save disk space I should rewrite this function to act directly on ProduceBeagleInput.bgl instead of ProduceBeagleInput.$CHROM.bgl
@@ -555,12 +569,10 @@ class main():
         ##
         ## parse 1st markers line
         ##
-        line_markers = fd_markers.readline()
         line_phased = fd_phased.readline()
-        l_markers = line_markers.split()
-        pos_markers = int(l_markers[1])
-        alleleA_markers = l_markers[2]
-        alleleB_markers = l_markers[3]
+        line_markers = fd_markers.readline()
+        pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+            line_markers)
 
         ## loop over BEAGLE genotype likelihood file lines
         for line in fd_bgl:
@@ -584,9 +596,12 @@ class main():
                         bool_append_markphas = True
                         break
                     else:
-                        line_markers = fd_markers.readline()
-                        line_phased = fd_phased.readline()
                         bool_append_markphas = False
+                        ## read markers and phased
+                        line_phased = fd_phased.readline()
+                        line_markers = fd_markers.readline()
+                        pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                            line_markers)
                         break
                 ## continue loop over genotype likelihoods
                 elif position < pos_markers:
@@ -599,13 +614,10 @@ class main():
                     lines_out_markers1 += [line_markers]
                     lines_out_phased1 += [line_phased]
                     ## read markers and phased
-                    line_markers = fd_markers.readline()
                     line_phased = fd_phased.readline()
-                    ## parse line
-                    l_markers = line_markers.split()
-                    pos_markers = int(l_markers[1])
-                    alleleA_markers = l_markers[2]
-                    alleleB_markers = l_markers[3]
+                    line_markers = fd_markers.readline()
+                    pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                        line_markers)
                     continue
 
             ##
@@ -726,6 +738,8 @@ class main():
             if bool_append_markphas == True:
                 line_markers = fd_markers.readline()
                 line_phased = fd_phased.readline()
+                pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                    line_markers)
 
             ## continue loop over genotype likelihoods
             continue
@@ -857,6 +871,7 @@ class main():
         ## fgrep Mem stdout/BEAGLE/BEAGLE.*.out | sort -k5n,5 | tail -n1 | awk '{print $5}'
         ## 2885 with lowmem=true
         memMB = 4000
+        queue = 'long'
 
         ##
         ## 1) check input existence
@@ -917,7 +932,8 @@ class main():
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
-                'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,)
+                'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,
+                queue=queue,)
             print cmd
             os.system(cmd)
 
@@ -1215,9 +1231,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
-           
+
         ##
-        ##
+        ## parse list of vcf input files
         ##
         l_vcfs_in = self.get_fps_in(
             l_chroms,d_chrom_lens,self.bps_per_interval,)
@@ -1241,6 +1257,19 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 'ts_filter_level=%f' %(
                     float(self.f_ApplyRecalibration_ts_filter_level))]
 
+        ##
+        ## send e-mail to user about choice of ts_filter level
+        ##
+        address = '%s@sanger.ac.uk' %(pwd.getpwuid(os.getuid())[0],)
+        cmd = 'echo "Check your tranches file'
+        cmd += ' (%s/out_VariantRecalibrator/VariantRecalibrator.tranches)' %(
+            os.getcwd())
+        cmd += ' to see if you are satisfied with the chosen TS level of'
+        cmd += ' $ts_filter_level" '
+        cmd += '| mail -s "%s" ' %(self.project)
+        cmd += '%s\n' %(address)
+        self.execmd(cmd)
+        stoptmp_check_ts_filter_level
 
         lines += self.init_cmd(analysis_type,memMB,)
 
@@ -1387,7 +1416,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['%s \\' %(s_TStranches)]
 
         ## GATKwalker, optional, out
-        lines += ['--rscript_file out_%s/%s.plots.R \\' %(T,T,)]
+        lines += ['--rscript_file %s.plots.R \\' %(T,T,)]
 
         lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
 
@@ -1978,8 +2007,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         self.parse_arguments()
 
-        self.bps_per_interval = 10*10**6
-        self.bps_per_interval_IMPUTE2 = 5*10**6
+        self.bps_per_interval = 10*10**6 ## UG - add to optparse/argparse!!!
+        self.bps_per_interval_IMPUTE2 = 5*10**6 ## add to optparse/argparse!!!
 
         self.d_out = {
             'UnifiedGenotyper':'out_UnifiedGenotyper/UnifiedGenotyper.$CHROMOSOME.${LSB_JOBINDEX}.vcf',
