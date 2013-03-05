@@ -613,6 +613,9 @@ class main():
                     ## append marker not present in genotype likehoods file
                     lines_out_markers1 += [line_markers]
                     lines_out_phased1 += [line_phased]
+                    if bool_BOF2 == True:
+                        lines_out_markers2 += [line_markers]
+                        lines_out_phased2 += [line_phased]
                     ## read markers and phased
                     line_phased = fd_phased.readline()
                     line_markers = fd_markers.readline()
@@ -1416,7 +1419,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['%s \\' %(s_TStranches)]
 
         ## GATKwalker, optional, out
-        lines += ['--rscript_file %s.plots.R \\' %(T,T,)]
+        lines += ['--rscript_file %s.plots.R \\' %(T,)]
 
         lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
 
