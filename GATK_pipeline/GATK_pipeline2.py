@@ -597,11 +597,17 @@ class main():
                         break
                     else:
                         bool_append_markphas = False
-                        ## read markers and phased
-                        line_phased = fd_phased.readline()
-                        line_markers = fd_markers.readline()
-                        pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
-                            line_markers)
+                        pos_markers_prev = pos_markers
+                        while True:
+                            ## read markers and phased
+                            line_phased = fd_phased.readline()
+                            line_markers = fd_markers.readline()
+                            pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                                line_markers)
+                            ## make sure all duplicates are skipped
+                            ## e.g. 9:81801344 TG and 01 in markers, TC in like
+                            if pos_markers > pos_markers_prev:
+                                break
                         break
                 ## continue loop over genotype likelihoods
                 elif position < pos_markers:
@@ -616,12 +622,29 @@ class main():
                     if bool_BOF2 == True:
                         lines_out_markers2 += [line_markers]
                         lines_out_phased2 += [line_phased]
+                    if pos_markers == 81801344: ## 9.26
+                        print bool_EOF1, bool_BOF2
+                        print position, pos_markers
+                        print bool_append_markphas
+                        print lines_out_markers1[-2]
+                        print lines_out_markers1[-1]
+                        stop
                     ## read markers and phased
                     line_phased = fd_phased.readline()
                     line_markers = fd_markers.readline()
                     pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
                         line_markers)
                     continue
+
+            if position in [81801247,81801344,]: ## 9.26
+                print bool_EOF1, bool_BOF2
+                print position, pos_markers
+                print bool_append_markphas
+                print lines_out_markers1[-1]
+                    
+            if lines_out_markers1[-1].split()[0] == '9:81801344':
+                print position, pos_markers
+                stop
 
             ##
             ## avoid multiple comparisons of large integers
@@ -735,6 +758,9 @@ class main():
                 bool_append_to_prev = False
                 bool_append_to_next = False
 
+                ## end of if bool_EOF == True
+                pass
+
             pos_prev = position
 
             ## read markers and phased
@@ -801,6 +827,14 @@ class main():
             print cmd2
             print i2
             stop
+
+        cmd = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort | uniq -d' %(chrom,chrom,)
+        i = int(os.popen('%s | wc -l').read())
+        if i > 0:
+            print os.popen('%s | wc -l').readlines()[:10]
+            sys.exit()
+
+        stoptmp
 
         return d_index2pos
 
@@ -912,6 +946,7 @@ class main():
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
+            if chrom != '9': continue ## tmp!!!
             d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
             continue
