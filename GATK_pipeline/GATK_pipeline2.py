@@ -86,7 +86,7 @@ class main():
 
         for chrom in l_chroms:
             index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             cmd = 'cat'
             for index in xrange(1,index_max+1):
                 fp_gen = 'out_IMPUTE2_without_BEAGLE/%s/%s.%i.gen' %(chrom,chrom,index)
@@ -124,7 +124,7 @@ class main():
             for chrom in l_chroms:
                 os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
 
-            memMB = 7000 ## Max Memory :      5892 MB
+            memMB = 6000 ## Max Memory :      5894 MB
             queue = 'normal'
             fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
             fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
@@ -143,7 +143,7 @@ class main():
             ##
             for chrom in l_chroms:
                 index_max = int(math.ceil(
-                        d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+                        d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
                 J = '%s.%s[%i-%i]' %('IMPUTE2_without_BEAGLE',chrom,1,index_max,)
                 std_suffix = '%s/%s.%s.%%I' %(
                     'IMPUTE2_without_BEAGLE','IMPUTE2_without_BEAGLE',chrom)
@@ -163,19 +163,14 @@ class main():
         l_fp_in = []
         for chrom in l_chroms:
             index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             for index in xrange(1,index_max+1):
                 l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen' %(chrom,chrom,index)]
         fd = open('IMPUTE2.touch','r')
         s = fd.read()
         fd.close()
-        l_fp_out = s.split('\n')
-        if len(set(l_fp_in)-set(l_fp_out)) > 0:
-            print '%s and possibly other files not generated.' %(
-                list(set(l_fp_in)-set(l_fp_out))[0])
-            print '%s has not run to completion. Exiting.' %('IMPUTE2')
-            sys.exit(0)
-##        bool_exit = self.check_in('IMPUTE2',l_fp,)
+        l_fp_out = s.strip().split('\n')
+        self.check_in('IMPUTE2',l_fp_out)
 
         ##
         ## 2) touch
@@ -185,7 +180,7 @@ class main():
 
         for chrom in l_chroms:
             index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             cmd = 'cat'
             for index in xrange(1,index_max+1):
                 fp_gen = 'out_IMPUTE2/%s/%s.%i.gen' %(chrom,chrom,index)
@@ -277,7 +272,9 @@ class main():
 
         ## /lustre/scratch107/projects/agv/users/tc9/WGS/fula_20120704/stdout/IMPUTE2/IMPUTE2.22.8.out:    Max Memory :      2941 MB
         ## /lustre/scratch109/sanger/tc9/agv/wgs/uganda_20130113/stdout/IMPUTE2/IMPUTE2.8.1.out:    Max Memory :      5892 MB
-        memMB = 7000
+        memMB = 6000
+        ## fgrep CPU */stdout/IMPUTE2/*.out | awk '{print $5}' | sort -nr | head -n1
+        ## 40589.07
         queue = 'normal'
 
         ##
@@ -317,12 +314,15 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
+            fp_in = 'in_IMPUTE2/%s.gen' %(chrom)
+            if os.path.getsize(fp_in) == 0: continue ## redundant
             index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/self.bps_per_interval_IMPUTE2))
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             J = '%s.%s[%i-%i]' %('IMPUTE2',chrom,1,index_max,)
             std_suffix = '%s/%s.%s.%%I' %('IMPUTE2','IMPUTE2',chrom)
             cmd = self.bsub_cmd(
-                'IMPUTE2',J,std_suffix=std_suffix,chrom=chrom,
+                'IMPUTE2',J,std_suffix=std_suffix,
+                chrom=chrom, chromlen=d_chrom_lens[chrom],
                 memMB=memMB,queue=queue,)
             os.system(cmd)
 
@@ -405,7 +405,7 @@ class main():
         ## If you want to impute a region larger than 7 Mb
         ## (which is not generally recommended),
         ## you must activate the -allow_large_regions flag.
-        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.bps_per_interval_IMPUTE2)]
+        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_IMPUTE2_size)]
         lines += ['if [ $posmax -gt $LENCHROMOSOME ]; then']
         lines += ['posmax=$LENCHROMOSOME']
         lines += ['fi\n']
@@ -437,7 +437,7 @@ class main():
         ## Ask Deepti whether a different recombination map file should be used
         lines += ['-m $map \\']
         ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html#-int
-        lines += ['-int $(((${LSB_JOBINDEX}-1)*%i+1)) $posmax \\' %(self.bps_per_interval_IMPUTE2)]
+        lines += ['-int $(((${LSB_JOBINDEX}-1)*%i+1)) $posmax \\' %(self.i_IMPUTE2_size)]
 
         ##
         ## Basic options
@@ -756,8 +756,6 @@ class main():
             ## continue loop over genotype likelihoods
             continue
 
-        ## write remaining few lines to output files
-
         ## less than minimum number of base pairs
         ## or minimum number of variants
         if position-pos_init1 < min_bps or len(lines_out1) < 1000:
@@ -773,6 +771,11 @@ class main():
             mode = 'w'
         print '%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
             chrom,position,pos_init1,pos_term1,index,len(lines_out1))
+
+        ## write remaining few lines to output files
+        ## without checking for duplicate positions
+        lines_out_markers1 += fd_markers.readlines()
+        lines_out_phased1 += fd_phased.readlines()
 
         ##
         ## write/append lines
@@ -799,8 +802,14 @@ class main():
         fd_markers.close()
         fd_phased.close()
 
+        ##
+        ## tmp check for different file i/o lengths
+        ##
+
+        ## out
         cmd1 = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort -u | wc -l' %(chrom,chrom,)
-        cmd2 = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl | cut -d " " -f1 | wc -l' %(chrom)
+        ## in
+        cmd2 = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl | wc -l' %(chrom)
         i1 = int(os.popen(cmd1).read())
         i2 = int(os.popen(cmd2).read())+1
         if i1 != i2:
@@ -811,6 +820,30 @@ class main():
             print i2
             stop
 
+##        ## out
+##        cmd1 = 'cat in_BEAGLE/%s/%s.*.markers | cut -d " " -f1 | sort -u | wc -l' %(chrom,chrom,)
+##        ## in
+##        cmd2 = 'cat %s | cut -f2 | sort -u | wc -l' %(fp_markers)
+##        i1 = int(os.popen(cmd1).read())
+##        i2 = int(os.popen(cmd2).read())
+##        if i1 != i2:
+##            print 'chrom', chrom
+##            print cmd1
+##            print i1
+##            print cmd2
+##            print i2
+##            stop
+
+##        ## duplicate positions in input markers file (allow or disallow and carry out this check? currently allowed)
+##        cmd = 'cat in_BEAGLE/%s/%s.*.markers | sort -u | cut -d " " -f1 | sort | uniq -d' %(chrom,chrom)
+##        i = int(os.popen('%s | wc -l').read())
+##        if i > 0:
+##            print 'duplicates'
+##            print cmd
+##            print os.popen.cmd(cmd)
+##            sys.exit()
+
+        ## tmp check for duplicates
         cmd = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort | uniq -d' %(chrom,chrom,)
         i = int(os.popen('%s | wc -l').read())
         if i > 0:
@@ -889,6 +922,8 @@ class main():
         ## fgrep Mem stdout/BEAGLE/BEAGLE.*.out | sort -k5n,5 | tail -n1 | awk '{print $5}'
         ## 2885 with lowmem=true
         memMB = 4000
+        ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
+        ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
 
         ##
@@ -1137,7 +1172,7 @@ class main():
 
         l = os.listdir(os.path.join('touch','out_%s' %(analysis_type)))
         l_fp_out = [os.path.join('out_%s' %(analysis_type),fn) for fn in l]
-        ## append files in subdirectories (e.g. BEAGLE)
+        ## append files in subdirectories (e.g. BEAGLE and IMPUTE2)
         for s in l:
             if os.path.isdir(os.path.join('out_%s' %(analysis_type),s)):
                 l = os.listdir(os.path.join('touch','out_%s' %(analysis_type),s))
@@ -1253,10 +1288,10 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         ## parse list of vcf input files
         ##
-        l_vcfs_in = self.get_fps_in(
-            l_chroms,d_chrom_lens,self.bps_per_interval,)
+        l_vcfs_in = self.get_fps_in(l_chroms,d_chrom_lens,self.i_UG_size,)
 
-        fp_out_prefix = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered'
+        fp_out_prefix = 'out_ApplyRecalibration'
+        fp_out_prefix += '/ApplyRecalibration.recalibrated.filtered'
         fp_out_vcf = '%s.vcf' %(fp_out_prefix)
         fp_out_idx = '%s.vcf.idx' %(fp_out_prefix)
         if os.path.isfile(fp_out_vcf):
@@ -1386,7 +1421,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## 1) check input existence
         ##
         l_vcfs_in = self.get_fps_in(
-            l_chroms,d_chrom_lens,self.bps_per_interval,)
+            l_chroms,d_chrom_lens,self.i_UG_size,)
         bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
 
         ##
@@ -1434,7 +1469,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['%s \\' %(s_TStranches)]
 
         ## GATKwalker, optional, out
-        lines += ['--rscript_file %s.plots.R \\' %(T,)]
+        lines += ['--rscript_file out_%s/%s.plots.R \\' %(T,T,)]
 
         lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
 
@@ -1526,7 +1561,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             if os.path.isfile(fp_stdout):
                 continue
             intervals = int(math.ceil(
-                d_chrom_lens[chrom]/float(self.bps_per_interval)))
+                d_chrom_lens[chrom]/float(self.i_UG_size)))
 
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
             std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
@@ -1545,6 +1580,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         queue='normal',memMB=4000,
         std_suffix=None,
         chrom=None,
+        chromlen=None,
         ):
 
         if not std_suffix:
@@ -1559,6 +1595,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         cmd += ' ./shell/%s.sh' %(analysis_type,)
         if chrom != None:
             cmd += ' %s' %(chrom)
+        if chromlen != None:
+            cmd += ' %s' %(chromlen)
 
         return cmd
 
@@ -1591,7 +1629,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [
             '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
-                self.bps_per_interval)]
+                self.i_UG_size)]
 
         ##
         ## UnifiedGenotyper, optional
@@ -1672,7 +1710,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## do not allow interval to exceed the length of the chromosome
         ## otherwise it will raise an I/O error (v. 1.4-15)
         ##
-        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.bps_per_interval)]
+        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_UG_size)]
         lines += ['if [ $posmax -gt $LENCHROMOSOME ]']
         lines += ['then posmax=$LENCHROMOSOME']
         lines += ['fi\n']
@@ -1797,6 +1835,18 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             )
 
         ##
+        ## UnifiedGenotyper
+        ##
+
+        parser.add_argument(
+            '--i_UG_size',
+            dest='i_UG_size',
+            help='Size (bp) of divided parts.',
+            metavar='FILE',default=10*10**6,
+            required = False,
+            )
+
+        ##
         ## VariantRecalibrator resources
         ##
 
@@ -1846,7 +1896,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
 
         parser.add_argument(
-            '--f_ApplyRecalibration_ts_filter_level',
+            '--f_ApplyRecalibration_ts_filter_level','--ts',
             dest='f_ApplyRecalibration_ts_filter_level',
             help='',
             metavar='FLOAT',default=None,
@@ -1868,7 +1918,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             '--i_BEAGLE_size',
             dest='i_BEAGLE_size',
             help='Size (Mbp) of divided parts.',
-            metavar='FILE',default=2,
+            metavar='FILE',default=1, ## CPU bound (2Mbp=22hrs,3090MB) with lowmem option...
             required = False,
             )
 
@@ -1944,6 +1994,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             help='Map files used by IMPUTE2 (e.g. /nfs/t149_1kg/ALL_1000G_phase1integrated_v3_impute/genetic_map_chr$CHROM_combined_b37.txt)',
             metavar='FILE',default=None,
             required = True,
+            )
+
+        parser.add_argument(
+            '--i_IMPUTE2_size',
+            dest='i_IMPUTE2_size',
+            help='Size (bp) of divided parts.',
+            metavar='FILE',default=5000000, ## memory bound (5Mbp=6GB,11hrs)...
+            required = False,
             )
 
         ##
@@ -2024,9 +2082,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## parse command line arguments
         ##
         self.parse_arguments()
-
-        self.bps_per_interval = 10*10**6 ## UG - add to optparse/argparse!!!
-        self.bps_per_interval_IMPUTE2 = 5*10**6 ## add to optparse/argparse!!!
 
         self.d_out = {
             'UnifiedGenotyper':'out_UnifiedGenotyper/UnifiedGenotyper.$CHROMOSOME.${LSB_JOBINDEX}.vcf',
