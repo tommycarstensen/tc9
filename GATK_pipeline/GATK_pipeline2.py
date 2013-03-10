@@ -74,7 +74,7 @@ class main():
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 
 ##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
+##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
 
@@ -142,15 +142,7 @@ class main():
             ## execute shell script
             ##
             for chrom in l_chroms:
-                index_max = int(math.ceil(
-                        d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-                J = '%s.%s[%i-%i]' %('IMPUTE2_without_BEAGLE',chrom,1,index_max,)
-                std_suffix = '%s/%s.%s.%%I' %(
-                    'IMPUTE2_without_BEAGLE','IMPUTE2_without_BEAGLE',chrom)
-                cmd = self.bsub_cmd(
-                    'IMPUTE2_without_BEAGLE',J,std_suffix=std_suffix,chrom=chrom,
-                    memMB=memMB,queue=queue,)
-                os.system(cmd)
+                bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,)
 
         return
 
@@ -270,9 +262,6 @@ class main():
         ## http://mathgen.stats.ox.ac.uk/impute/example_one_phased_panel.html
         ## http://www.stats.ox.ac.uk/~marchini/software/gwas/file_format.html
 
-        ## /lustre/scratch107/projects/agv/users/tc9/WGS/fula_20120704/stdout/IMPUTE2/IMPUTE2.22.8.out:    Max Memory :      2941 MB
-        ## /lustre/scratch109/sanger/tc9/agv/wgs/uganda_20130113/stdout/IMPUTE2/IMPUTE2.8.1.out:    Max Memory :      5892 MB
-        memMB = 6000
         ## fgrep CPU */stdout/IMPUTE2/*.out | awk '{print $5}' | sort -nr | head -n1
         ## 40589.07
         queue = 'normal'
@@ -293,6 +282,9 @@ class main():
         ## BEAGLE gprobs > IMPUTE2 gen
         ##
         for chrom in l_chroms:
+            print 'tmp break'
+            raw_input()
+            break
             self.BEAGLE_unite(chrom)
             fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
             fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
@@ -314,15 +306,37 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            fp_in = 'in_IMPUTE2/%s.gen' %(chrom)
+            bsub_IMPUTE2('IMPUTE2',chrom,)
+
+        return
+
+
+    def bsub_IMPUTE2(dn_suffix,chrom,):
+
+        s_legend = self.fp_impute2_legend
+        s_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
+        s_legend = s_legend.replace('${CHROMOSOME}',chrom)
+        cmd = 'zcat %s' %(s_legend)
+        cmd += " | awk 'NR>1{cnt[int($2/%i)]++}" %(self.i_IMPUTE2_size)
+        cmd += " END{for(j in cnt) print j+1,cnt[j]}'"
+        cmd += ' | sort -k1n,1'
+        d_index2variants = dict([s.split() for s in os.popen(
+            cmd).read().strip().split('\n')])
+        print max(d_index2variants.keys())
+        print int(math.ceil(d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+        for index,variants in d_index2variants.items():
+            memMB = int(5500.*variants/100000.)
+            print index,variants,memMB
+            stop
+            fp_in = 'in_%s/%s.gen' %(dn_suffix,chrom)
             if os.path.getsize(fp_in) == 0: continue ## redundant
             index_max = int(math.ceil(
                     d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-            J = '%s.%s[%i-%i]' %('IMPUTE2',chrom,1,index_max,)
-            std_suffix = '%s/%s.%s.%%I' %('IMPUTE2','IMPUTE2',chrom)
+            J = '%s.%s.%s' %(dn_suffix,chrom,index,)
+            std_suffix = '%s/%s.%s.%s' %(dn_suffix,dn_suffix,chrom,index,)
             cmd = self.bsub_cmd(
-                'IMPUTE2',J,std_suffix=std_suffix,
-                chrom=chrom, chromlen=d_chrom_lens[chrom],
+                dn_suffix,J,std_suffix=std_suffix,
+                chrom=chrom, chromlen=d_chrom_lens[chrom], index = index,
                 memMB=memMB,queue=queue,)
             os.system(cmd)
 
@@ -380,6 +394,7 @@ class main():
         lines += ['CHROM=$1']
 ##        lines += self.bash_chrom2len(l_chroms,d_chrom_lens,)
         lines += ['LENCHROMOSOME=$2']
+        lines += ['LSB_JOBINDEX=$3']
 
         lines += ['if [ -s %s ]; then\nexit\nfi\n' %(fp_out)] ## redundant
 
@@ -921,7 +936,7 @@ class main():
 
         ## fgrep Mem stdout/BEAGLE/BEAGLE.*.out | sort -k5n,5 | tail -n1 | awk '{print $5}'
         ## 2885 with lowmem=true
-        memMB = 4000
+        memMB = 3500 ## see scatter plot
         ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
         ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
@@ -1581,6 +1596,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         std_suffix=None,
         chrom=None,
         chromlen=None,
+        index=None,
         ):
 
         if not std_suffix:
@@ -1597,6 +1613,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             cmd += ' %s' %(chrom)
         if chromlen != None:
             cmd += ' %s' %(chromlen)
+        if index != None:
+            cmd += ' %s' %(index)
 
         return cmd
 
