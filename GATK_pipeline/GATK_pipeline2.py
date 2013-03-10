@@ -73,7 +73,7 @@ class main():
 
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 
-##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
+        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
 ##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
@@ -124,7 +124,6 @@ class main():
 ##                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
         if True:
 
-            memMB = 7000 ## Max Memory :      5894 MB
             queue = 'normal'
             fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
             fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
@@ -282,9 +281,6 @@ class main():
         ## BEAGLE gprobs > IMPUTE2 gen
         ##
         for chrom in l_chroms:
-            print 'tmp break'
-            raw_input()
-            break
             self.BEAGLE_unite(chrom)
             fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
             fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
@@ -1475,8 +1471,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         fd.close()
         lines += ['%s \\' %(line.strip()) for line in lines_resources]
 
-        l_TStranches = [100,]
-        l_TStranches += [99+i/10. for i in range(9,0,-1,)]
+        l_TStranches = []
+        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
+        l_TStranches += [99+i/10. for i in range(7,0,-1,)]
         l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
         s_TStranches = ''
         for TStranche in l_TStranches:
@@ -1743,6 +1740,12 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_UG_size)]
         lines += ['if [ $posmax -gt $LENCHROMOSOME ]']
         lines += ['then posmax=$LENCHROMOSOME']
+        lines += ['fi\n']
+
+        fn = 'out_UnifiedGenotyper/'
+        fn += 'UnifiedGenotyper.${CHROMOSOME}.{LSB_JOBINDEX}.vcf.idx'
+        lines += ['if [ -s %s ]; then' %(fn)]
+        lines += ['exit']
         lines += ['fi\n']
 
         return lines
