@@ -74,8 +74,7 @@ class main():
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 
 ##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
-##        sys.exit(0)
+        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
 
@@ -119,12 +118,13 @@ class main():
             print cmd
             os.system(cmd)
 
-        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('out_IMPUTE2_without_BEAGLE')
-            for chrom in l_chroms:
-                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
+##        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
+##            os.mkdir('out_IMPUTE2_without_BEAGLE')
+##            for chrom in l_chroms:
+##                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
+        if True:
 
-            memMB = 6000 ## Max Memory :      5894 MB
+            memMB = 7000 ## Max Memory :      5894 MB
             queue = 'normal'
             fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
             fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
@@ -1683,11 +1683,23 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             fp_out = fp_out
             lines += ['echo %s >> %s.touch;' %(fp_out,analysis_type,)]
             lines += ['touch touch/%s;' %(fp_out,)]
-        s = '/software/bin/python-2.7.3'
+
+        ## write continuation shell script
+        ## do not continue as part of previous command
+        ## as this will influence CPU statistics
+        ## and risk job of hitting CPU walltime
+        s = "bsub -R 'select[mem>1000] rusage[mem=1000]' -M1000000 \\\n"
+        s += ' /software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
         for k,v in vars(self.namespace_args).items():
             s += ' --%s %s' %(k,str(v).replace('$','\\\\\\$'))
-        lines += [s]
+        fd = open('rerun.sh','w')
+        fd.write(s)
+        fd.close()
+        self.execmd('chmod +x rerun.sh')
+
+        ## cont cmd
+        lines += ['bash ./rerun.sh']
         ## term cmd
         lines += ['"']
 
@@ -1918,7 +1930,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             '--i_BEAGLE_size',
             dest='i_BEAGLE_size',
             help='Size (Mbp) of divided parts.',
-            metavar='FILE',default=1, ## CPU bound (2Mbp=22hrs,3090MB) with lowmem option...
+            metavar='FILE',default=2, ## CPU bound (2Mbp=22hrs,3090MB) with lowmem option...
             required = False,
             )
 
