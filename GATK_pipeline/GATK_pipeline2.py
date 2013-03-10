@@ -12,16 +12,6 @@ import math, os, sys, time, re, pwd
 import argparse
 
 ##
-## todo20120724: tc9: split chromosomes into smaller parts before BEAGLE step
-## to avoid requesting 16gb of memory as those nodes are limited
-##
-
-##
-## todo20120816: tc9: automate split bgl file step
-## between producebeagleinput and BEAGLE
-##
-
-##
 ## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
 ## and for better variant calling? cf. slide 14 of https://www.dropbox.com/sh/e31kvbg5v63s51t/ajQmlTL6YH/ReduceReads.pdf
 ## "VQSR Filters are highly empowered by calling all samples together"
@@ -31,8 +21,6 @@ import argparse
 ##
 
 ## todo20130204: tc9: make memory sample size dependent... only tested on 3 datasets with 100 samples each...
-
-## todo20130206: tc9: mention problem with splitting and centromeres/telomers to ms23 and dg11 and come up with a better solution if necessary... for now opt for the quick/easy solution...
 
 ## todo20130207: tc9: get rid of orphant functions
 
@@ -141,7 +129,7 @@ class main():
             ## execute shell script
             ##
             for chrom in l_chroms:
-                bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,)
+                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,)
 
         return
 
@@ -261,10 +249,6 @@ class main():
         ## http://mathgen.stats.ox.ac.uk/impute/example_one_phased_panel.html
         ## http://www.stats.ox.ac.uk/~marchini/software/gwas/file_format.html
 
-        ## fgrep CPU */stdout/IMPUTE2/*.out | awk '{print $5}' | sort -nr | head -n1
-        ## 40589.07
-        queue = 'normal'
-
         ##
         ## 1) check input existence
         ##
@@ -277,14 +261,14 @@ class main():
         bool_return = self.touch('IMPUTE2')
         if bool_return == True: return
 
-        ##
-        ## BEAGLE gprobs > IMPUTE2 gen
-        ##
-        for chrom in l_chroms:
-            self.BEAGLE_unite(chrom)
-            fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
-            fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
-            self.gprobs2gen(fp_in,fp_out)
+##        ##
+##        ## BEAGLE gprobs > IMPUTE2 gen
+##        ##
+##        for chrom in l_chroms:
+##            self.BEAGLE_unite(chrom)
+##            fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
+##            fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
+##            self.gprobs2gen(fp_in,fp_out)
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -302,12 +286,16 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            bsub_IMPUTE2('IMPUTE2',chrom,)
+            self.bsub_IMPUTE2('IMPUTE2',chrom,d_chrom_lens,)
 
         return
 
 
-    def bsub_IMPUTE2(dn_suffix,chrom,):
+    def bsub_IMPUTE2(self,dn_suffix,chrom,d_chrom_lens,):
+
+        ## fgrep CPU */stdout/IMPUTE2/*.out | awk '{print $5}' | sort -nr | head -n1
+        ## 40589.07
+        queue = 'normal'
 
         s_legend = self.fp_impute2_legend
         s_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
@@ -318,14 +306,14 @@ class main():
         cmd += ' | sort -k1n,1'
         d_index2variants = dict([s.split() for s in os.popen(
             cmd).read().strip().split('\n')])
-        print max(d_index2variants.keys())
-        print int(math.ceil(d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
         for index,variants in d_index2variants.items():
-            memMB = int(5500.*variants/100000.)
-            print index,variants,memMB
-            stop
+            memMB = int(5500.*int(variants)/100000.)
             fp_in = 'in_%s/%s.gen' %(dn_suffix,chrom)
+            fp_out = 'out_%s/%s/%s.%s.gen' %(dn_suffix,chrom,chrom,index)
             if os.path.getsize(fp_in) == 0: continue ## redundant
+            if os.path.isfile(fp_out):
+                if os.path.getsize(fp_out) > 0:
+                    continue ## redundant
             index_max = int(math.ceil(
                     d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             J = '%s.%s.%s' %(dn_suffix,chrom,index,)
@@ -1568,13 +1556,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         ## execute shell script
         for chrom in l_chroms:
-            fp_stdout = 'stdout/%s.UnifiedGenotyper.%s.1.out' %(
-                self.project,chrom,)
-            if os.path.isfile(fp_stdout):
-                continue
             intervals = int(math.ceil(
                 d_chrom_lens[chrom]/float(self.i_UG_size)))
-
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
             std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
             cmd = self.bsub_cmd(
