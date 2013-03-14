@@ -605,13 +605,6 @@ class main():
             alleleA_like = l[1]
             alleleB_like = l[2]
 
-            if alleleA_like not in ['A','C','T','G',]:
-                print alleleA_like
-                stop1
-            if alleleB_like not in ['A','C','T','G',]:
-                print alleleB_like
-                stop2
-
             ##
             ## avoid multiple comparisons of large integers
             ## by means of booleans instead of nesting
@@ -644,13 +637,6 @@ class main():
                         bool_append_markphas = True
                         pass
                     else:
-                        if len(alleleA_phased) != 1 or len(alleleB_phased) != 1:
-                            print alleleA_like
-                            print alleleB_like
-                            print alleleA_phased
-                            print alleleB_phased
-                            stop2
-
                         bool_append_markphas = False
                         pos_phased_prev = pos_phased
                         while True:
@@ -668,9 +654,6 @@ class main():
                     break
                 ## continue loop over genotype likelihoods
                 elif position < pos_phased:
-                    if len(alleleA_phased) > 1 or len(alleleB_phased) > 1:
-                        print position, pos_phased
-                        stop
                     bool_append_markphas = False
                     break
                 ## continue loop over markers
@@ -684,17 +667,13 @@ class main():
                             lines_out_markers2 += [line_markers]
                             lines_out_phased2 += [line_phased]
                     ## SNP unique to panel 0
-                    elif pos_prev < pos_phased:
+##                    elif pos_prev < pos_phased:
+                    else:
                         lines_out_markers1 += [line_markers]
                         lines_out_phased1 += [line_phased]
                         if bool_BOF2 == True:
                             lines_out_markers2 += [line_markers]
                             lines_out_phased2 += [line_phased]
-                    else:
-                        print pos_prev, pos_phased, position
-                        print pos_phased
-                        print alleleA_phased, alleleB_phased
-                        stop3
                     ## append marker not present in genotype likehoods file
                     ## read markers and phased
                     line_phased = fd_phased.readline()
