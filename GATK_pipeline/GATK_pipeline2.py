@@ -668,23 +668,25 @@ class main():
                             if pos_phased > pos_phased_prev:
                                 break
                             else:
-                                if bool_append_panel0_indel == True:
-                                    print position
-                                    print pos_phased
-                                    stop
-                                bool_append_panel0_indel = True
-                                line_markers_panel0_indel = line_markers
-                                line_phased_panel0_indel = line_phased
-                                if alleleA_phased != '0':
-                                    print alleleA_phased, pos_phased, position
-                                    stoptmp
                                 if not os.path.isfile('case3b2.txt'):
                                     self.execmd('echo %s %s %s > case3b2.txt' %(chrom,pos_phased,index))
-##                                lines_out_markers1 += [line_markers]
-##                                lines_out_phased1 += [line_phased]
-##                                if bool_BOF2 == True:
-##                                    lines_out_markers2 += [line_markers]
-##                                    lines_out_phased2 += [line_phased]
+##                                if bool_append_panel0_indel == True:
+##                                    print position
+##                                    print pos_phased
+##                                    stop
+##                                bool_append_panel0_indel = True
+##                                line_markers_panel0_indel = line_markers
+##                                line_phased_panel0_indel = line_phased
+##                                if alleleA_phased != '0':
+##                                    print alleleA_phased, pos_phased, position
+##                                    stoptmp
+##                                if not os.path.isfile('case3b2.txt'):
+##                                    self.execmd('echo %s %s %s > case3b2.txt' %(chrom,pos_phased,index))
+####                                lines_out_markers1 += [line_markers]
+####                                lines_out_phased1 += [line_phased]
+####                                if bool_BOF2 == True:
+####                                    lines_out_markers2 += [line_markers]
+####                                    lines_out_phased2 += [line_phased]
                                 continue
                             continue
                         pass
@@ -725,7 +727,7 @@ class main():
                         lines_out_markers1 += [line_markers]
                         lines_out_phased1 += [line_phased]
                         if bool_BOF2 == True:
-                            lines_out_markers2 = [line_markers]
+                            lines_out_markers2 += [line_markers]
                             lines_out_phased2 += [line_phased]
                     else:
                         print pos_prev, pos_phased, position
@@ -1065,7 +1067,7 @@ class main():
 ##
 ##        for affix in ['panel2out','panel2in','markersin','markersout',]:
 ##            os.remove('%s%s' %(affix,chrom,))
-            
+
         return d_index2pos
 
 
@@ -1177,7 +1179,7 @@ class main():
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
-            if chrom != '3': continue ## tmp!!!
+##            if chrom != '3': continue ## tmp!!!
             d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
             continue
@@ -1198,7 +1200,7 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            if chrom != '3': continue ## tmp!!!
+##            if chrom != '3': continue ## tmp!!!
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
