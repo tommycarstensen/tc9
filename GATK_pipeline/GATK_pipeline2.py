@@ -676,11 +676,6 @@ class main():
                 ## continue loop over markers
                 ## elif position > pos_phased:
                 else:
-                    if pos_phased == 90211127:
-                        print pos_prev
-                        print line_markers
-                        print line_phased[:70]
-                        stopa
                     ## INDEL
                     if pos_phased == pos_prev:
                         lines_out_markers1 += [line_markers]
@@ -720,19 +715,7 @@ class main():
                 else: ## ms23/dg11 2013mar12
                     lines_out_markers2 += ['%s:%s %s %s %s\n' %(
                         chrom,position,position,alleleA_like,alleleB_like,)]
-                if pos == 90211127 or pos_phased == 90211127:
-                    print pos
-                    print pos_phased
-                    print bool_append_to_prev
-                    print bool_append_to_next
-                    print line_phased[:70]
-                    print line_markers[:70]
-                    stop3
             if bool_EOF1 == False:
-                if int(lines_out_markers1[-1].split()[0].split(':')[1]) == 90211127:
-                    print pos
-                    print pos_phased
-                    stop1
                 lines_out1 += [line]
                 ## match
                 if bool_append_markphas == True:
@@ -742,20 +725,8 @@ class main():
                 else: ## ms23/dg11 2013mar12
                     lines_out_markers1 += ['%s:%s %s %s %s\n' %(
                         chrom,position,position,alleleA_like,alleleB_like,)]
-                if pos == 90211127 or pos_phased == 90211127:
-                    print pos
-                    print pos_phased
-                    print bool_append_to_prev
-                    print bool_append_to_next
-                    print line_phased[:70]
-                    print line_markers[:70]
-                    stop2
             ## EOF1
             else:
-                if int(lines_out_markers1[-1].split()[0].split(':')[1]) == 90211127:
-                    print pos
-                    print pos_phased
-                    stop2
                 ## append to previous file if less than 1000 variants
                 if bool_append_to_prev == False and len(lines_out1) < 1000:
                     ## 2nd append to prev
@@ -797,14 +768,6 @@ class main():
                     mode = 'w'
                 print '%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
                     chrom,position,pos_init1,pos_term1,index,len(lines_out1))
-                if pos == 90211127 or pos_phased == 90211127:
-                    print pos
-                    print pos_phased
-                    print bool_append_to_prev
-                    print bool_append_to_next
-                    print line_phased[:70]
-                    print line_markers[:70]
-                    stop1
                 if bool_append_to_next == False:
                     ## write/append current lines to file
                     fd_out = open('%s.%i.like' %(fp_out_prefix,index,),mode)
@@ -915,6 +878,13 @@ class main():
         ##
         ## file i/o checks
         ##
+        self.BEAGLE_divide_fileIO_checks(chrom,fp_phased,)
+
+        return d_index2pos
+
+
+    def BEAGLE_divide_fileIO_checks(self,chrom,fp_phased,):
+
         cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
         cmd += ' | sort -u > panel2out%s' %(chrom)
         self.execmd(cmd)
@@ -981,7 +951,7 @@ class main():
             os.remove('%s%s' %(affix,chrom,))
         os.remove('panelsout')
 
-        return d_index2pos
+        return
 
 
     def remove_duplicate_lines(
@@ -1024,7 +994,7 @@ class main():
         lines_out_markers1 = lines_out_markers1[i+1:]
 
         for i in xrange(len(lines_out_phased1)):
-            if pos_prev_phased == int(lines_out_phased1[i].split()[0].split(':')[1]):
+            if pos_prev_phased == int(lines_out_phased1[i].split()[1].split(':')[1]):
                 break
         lines_out_phased1 = lines_out_phased1[i+1:]
 
@@ -1102,9 +1072,7 @@ class main():
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
-            if chrom != '2': continue
             d_index2pos = self.BEAGLE_divide(chrom,)
-            stoptmp
             d_indexes[chrom] = d_index2pos
             continue
             ## clean up
