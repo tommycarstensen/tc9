@@ -58,10 +58,9 @@ class main():
         self.BEAGLE(l_chroms,)
 
         self.IMPUTE2(l_chroms,d_chrom_lens,)
+##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
 
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
-
-        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
 ##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
@@ -106,11 +105,10 @@ class main():
             print cmd
             os.system(cmd)
 
-##        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
-##            os.mkdir('out_IMPUTE2_without_BEAGLE')
-##            for chrom in l_chroms:
-##                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
-        if True:
+        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
+            os.mkdir('out_IMPUTE2_without_BEAGLE')
+            for chrom in l_chroms:
+                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
 
             queue = 'normal'
             fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
@@ -129,7 +127,7 @@ class main():
             ## execute shell script
             ##
             for chrom in l_chroms:
-                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,)
+                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,d_chrom_lens)
 
         return
 
@@ -202,6 +200,11 @@ class main():
                     print 'error:', fp
                     bool_exit = True
 
+        s = os.popen('fgrep TERM stdout/UnifiedGenotyper/UnifiedGenotyper.*.out').read().strip()
+        if s != '':
+            print s
+            bool_exit = True
+
         if bool_exit == True: sys.exit(0)
 
         return
@@ -209,6 +212,30 @@ class main():
 
     def BEAGLE_unite(self,chrom):
 
+        ##
+        ## check that gprobs is identical to markers
+        ##
+        cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
+        cmd += ' | sort > markers%s' %(chrom)
+        self.execmd()
+
+        cmd = "awk 'FNR>1{print $1}' out_BEAGLE/%s/%s.*.like.gprobs" %(chrom,chrom)
+        cmd += ' | sort > gprobs%s' %(chrom)
+        self.execmd()
+
+        cmd = 'comm -3 gprobs%s markers%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+        os.remove('markers%s' %(chrom))
+        os.remove('gprobs%s' %(chrom))
+
+        ##
+        ##
+        ##
         fd = open('BEAGLE_divide_indexes.txt','r')
         lines = fd.readlines()
         fd.close()
@@ -261,14 +288,14 @@ class main():
         bool_return = self.touch('IMPUTE2')
         if bool_return == True: return
 
-##        ##
-##        ## BEAGLE gprobs > IMPUTE2 gen
-##        ##
-##        for chrom in l_chroms:
-##            self.BEAGLE_unite(chrom)
-##            fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
-##            fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
-##            self.gprobs2gen(fp_in,fp_out)
+        ##
+        ## BEAGLE gprobs > IMPUTE2 gen
+        ##
+        for chrom in l_chroms:
+            self.BEAGLE_unite(chrom)
+            fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
+            fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
+            self.gprobs2gen(fp_in,fp_out)
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -396,7 +423,7 @@ class main():
         lines += ['else']
         lines += ['map=%s' %(self.fp_impute2_map.replace(
             '$CHROMOSOME','\\${CHROMOSOME}'))]
-        lines += ['fi']
+        lines += ['fi\n']
 
         ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html
         ## IMPUTE2 requires that you specify an analysis interval
@@ -478,17 +505,20 @@ class main():
     def parse_marker(self,line_markers,):
 
         l_markers = line_markers.split()
-        pos_markers = int(l_markers[1])
-        alleleA_markers = l_markers[2]
-        alleleB_markers = l_markers[3]
+        pos_phased = int(l_markers[1])
+        alleleA_phased = l_markers[2]
+        alleleB_phased = l_markers[3]
 
-        return pos_markers, alleleA_markers, alleleB_markers
+        return pos_phased, alleleA_phased, alleleB_phased
 
 
     def BEAGLE_divide(self,chrom,):
 
         ## To save disk space I should rewrite this function to act directly on ProduceBeagleInput.bgl instead of ProduceBeagleInput.$CHROM.bgl
         ## I can't remember why I split up the bgl file per chromosome in the first place...
+
+        ## todo - instead of using "xxx.renamed.markers", just rename on the fly
+        ## out: chrom:pos pos alleleA alleleB\n
 
         ##
         ## size and edge
@@ -540,26 +570,32 @@ class main():
         ##
         min_bps = 400000
 
-        ##
-        ## get position of first SNP from genotype likelihood file
-        ##
+##        ##
+##        ## get position of first SNP from genotype likelihood file
+##        ##
+##        lines_out1 = [header]
+##        lines_out2 = [header]
+##        for line in fd_bgl:
+##            l = line.strip().split()
+##            if l[0] == 'marker': continue ## header
+##            lines_out1 += [line]
+##            position = int(l[0].split(':')[1])
+##            pos_init1 = position-position%size
+##            pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
+##            break
         lines_out1 = [header]
         lines_out2 = [header]
-        for line in fd_bgl:
-            l = line.strip().split()
-            if l[0] == 'marker': continue ## header
-            lines_out1 += [line]
-            position = int(l[0].split(':')[1])
-            pos_init1 = position-position%size
-            pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
-            break
+        position = 0
+        pos_init1 = position-position%size
+        pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
 
         d_index2pos = {}
         index = 1 ## LSF does not allow 0 for LSB_JOBINDEX! "Bad job name. Job not submitted." ## e.g. bsub -J"test[0-2]" echo A
-##        pos_markers = 0
+##        pos_phased = 0
         bool_append_markphas = False
         bool_append_to_prev = False
         bool_append_to_next = False
+        bool_append_panel0_indel = False
         pos_prev = 0
         pos_prev_EOF = None
         bool_BOF2 = False
@@ -570,63 +606,152 @@ class main():
         ##
         line_phased = fd_phased.readline()
         line_markers = fd_markers.readline()
-        pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+        pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
             line_markers)
 
         ## loop over BEAGLE genotype likelihood file lines
+        tmp3a = None
+        tmp3b = None
         for line in fd_bgl:
             l = line.strip().split()
             ## assume markers to be formatted like CHROM:POS
-            position = int(l[0].split(':')[1])
+            l_chrom_pos = l[0].split(':')
+            chrom_like = chrom = l_chrom_pos[0]
+            pos_panel2 = pos_like = pos = position = int(l_chrom_pos[1])
             alleleA_like = l[1]
             alleleB_like = l[2]
+
+            if alleleA_like not in ['A','C','T','G',]:
+                print alleleA_like
+                stop1
+            if alleleB_like not in ['A','C','T','G',]:
+                print alleleB_like
+                stop2
 
             ##
             ## loop to determine
             ## whether markers and phased should be appended or not
             ##
             while True:
-                if pos_markers == position:
+                if pos_phased == position:
                     if (
-                        alleleA_markers == alleleA_like
+                        alleleA_phased == alleleA_like
                         and
-                        alleleB_markers == alleleB_like
+                        alleleB_phased == alleleB_like
                         ):
+                        tmp3a = pos_phased
+                        if not os.path.isfile('case3a1.txt'):
+                            self.execmd('echo %s %s %s > case3a1.txt' %(chrom,position,index))
                         bool_append_markphas = True
-                        break
+                        pass
                     else:
+                        if len(alleleA_phased) != 1 or len(alleleB_phased) != 1:
+                            print alleleA_like
+                            print alleleB_like
+                            print alleleA_phased
+                            print alleleB_phased
+                            stop2
+                        else:
+                            tmp3b = pos_phased
+                            if not os.path.isfile('case3b1.txt'):
+                                self.execmd('echo %s %s %s > case3b1.txt' %(chrom,pos_phased,index))
+
                         bool_append_markphas = False
-                        pos_markers_prev = pos_markers
+                        pos_phased_prev = pos_phased
                         while True:
                             ## read markers and phased
                             line_phased = fd_phased.readline()
                             line_markers = fd_markers.readline()
-                            pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                            tmp1 = pos_phased
+                            pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
                                 line_markers)
-                            ## make sure all duplicates are skipped
-                            ## e.g. 9:81801344 TG and 01 in markers, TC in like
-                            if pos_markers > pos_markers_prev:
+                            if pos_phased > pos_phased_prev:
                                 break
-                        break
+                            else:
+                                if bool_append_panel0_indel == True:
+                                    print position
+                                    print pos_phased
+                                    stop
+                                bool_append_panel0_indel = True
+                                line_markers_panel0_indel = line_markers
+                                line_phased_panel0_indel = line_phased
+                                if alleleA_phased != '0':
+                                    print alleleA_phased, pos_phased, position
+                                    stoptmp
+                                if not os.path.isfile('case3b2.txt'):
+                                    self.execmd('echo %s %s %s > case3b2.txt' %(chrom,pos_phased,index))
+##                                lines_out_markers1 += [line_markers]
+##                                lines_out_phased1 += [line_phased]
+##                                if bool_BOF2 == True:
+##                                    lines_out_markers2 += [line_markers]
+##                                    lines_out_phased2 += [line_phased]
+                                continue
+                            continue
+                        pass
+                    break
                 ## continue loop over genotype likelihoods
-                elif position < pos_markers:
+                elif position < pos_phased:
+                    if len(alleleA_phased) > 1 or len(alleleB_phased) > 1:
+                        print position, pos_phased
+                        stop
+                    else:
+                        if not os.path.isfile('case1a.txt'):
+                            self.execmd('echo %s %s %s > case1a.txt' %(chrom,position,index))
                     bool_append_markphas = False
                     break
                 ## continue loop over markers
-                ## elif position > pos_markers:
+                ## elif position > pos_phased:
                 else:
+                    ## INDEL
+                    if pos_phased == tmp3a:
+                        if pos_phased != pos_prev:
+                            print pos_phased, pos_prev
+                            stop11
+                        if alleleA_phased != '0':
+                            print pos_phased
+                            print alleleA_phased
+                            stop
+                        if not os.path.isfile('case3a2.txt'):
+                            self.execmd('echo %s %s %s > case3a2.txt' %(chrom,pos_phased,index))
+                        lines_out_markers1 += [line_markers]
+                        lines_out_phased1 += [line_phased]
+                        if bool_BOF2 == True:
+                            lines_out_markers2 += [line_markers]
+                            lines_out_phased2 += [line_phased]
+                    ## SNP unique to panel 0
+                    elif pos_prev < pos_phased:
+                        if not os.path.isfile('case2a.txt'):
+                            self.execmd('echo %s %s %s > case2a.txt' %(chrom,pos_phased,index))
+                        lines_out_markers1 += [line_markers]
+                        lines_out_phased1 += [line_phased]
+                        if bool_BOF2 == True:
+                            lines_out_markers2 = [line_markers]
+                            lines_out_phased2 += [line_phased]
+                    else:
+                        print pos_prev, pos_phased, position
+                        print pos_phased
+                        print alleleA_phased, alleleB_phased
+                        stop3
+                    if pos_phased == tmp3b:
+                        print lines_out1[-1]
+                        print lines_out_markers1[-1]
+                        print lines_out_phased1[-1]
+                        print line_markers
+                        stop
+                        if not os.path.isfile('case3c.txt'):
+                            self.execmd('echo %s %s %s > case3c.txt' %(chrom,pos_phased,index))
                     ## append marker not present in genotype likehoods file
-                    lines_out_markers1 += [line_markers]
-                    lines_out_phased1 += [line_phased]
-                    if bool_BOF2 == True:
-                        lines_out_markers2 += [line_markers]
-                        lines_out_phased2 += [line_phased]
                     ## read markers and phased
+                    tmp2 = str(pos_phased)
                     line_phased = fd_phased.readline()
                     line_markers = fd_markers.readline()
-                    pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
+                    pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
                         line_markers)
+                    if str(pos_phased) == str(tmp2):
+                        if not os.path.isfile('case2b.txt'):
+                            self.execmd('echo %s %s %s > case2b.txt' %(chrom,pos_phased,index))
                     continue
+                continue
 
             ##
             ## avoid multiple comparisons of large integers
@@ -645,19 +770,81 @@ class main():
             else:
                 pass
 
+            if bool_append_panel0_indel == True and bool_append_markphas == True:
+                print position
+                stop
+
+##            if bool_append_panel0_indel == True:
+##                if pos_phased_prev == 64680589 and alleleA_phased == '0':
+##                    stop222
+##                if not os.path.isfile('case3c.txt'):
+##                    self.execmd('echo %s %s %s > case3c.txt' %(chrom,pos_phased,index))
+##                print '58701', lines_out_markers1[-1][:70].strip()
+##                print '705CT', line_markers[:70].strip()
+##                print '58701', lines_out_phased1[-1][:70]
+##                print '705CT', line_phased[:70]
+##                print '589TA', line[:70]
+##                print '322CA', lines_out1[-1][:70]
+##                print '58901', line_phased_panel0_indel[:70]
+##                print '58901', line_markers_panel0_indel[:70]
+##                print 589, position
+##                print 705, pos_phased
+##                print 589, pos_phased_prev
+##                print 322, pos_prev
+##                print bool_append_markphas
+##                stop
+##                lines_out_markers1 += [line_markers]
+##                lines_out_phased1 += [line_phased]
+##                if bool_BOF2 == True:
+##                    lines_out_markers2 += [line_markers]
+##                    lines_out_phased2 += [line_phased]
+##                bool_append_panel0_indel = False
+
             ## BOF2
             if bool_BOF2 == True:
+                if bool_append_panel0_indel == True:
+                    stop1
                 lines_out2 += [line]
+                ## match
                 if bool_append_markphas == True:
                     lines_out_markers2 += [line_markers]
                     lines_out_phased2 += [line_phased]
+                ## mismatch
+                else: ## ms23/dg11 2013mar12
+                    lines_out_markers2 += ['%s:%s %s %s %s\n' %(
+                        chrom,position,position,alleleA_like,alleleB_like,)]
+                ## indel after mismatch
+                if bool_append_panel0_indel == True:
+                    lines_out_markers2 += [line_markers_panel0_indel]
+                    lines_out_phased2 += [line_phased_panel0_indel]
+                    print lines_out_markers2[-3][:70]
+                    print lines_out_markers2[-2][:70]
+                    print lines_out_markers2[-1][:70]
+                    print lines_out_phased2[-2][:70]
+                    print lines_out_phased2[-1][:70]
+                    print lines_out2[-2][:70]
+                    print lines_out2[-1][:70]
+                    print position
+                    print bool_append_markphas
+                    stop2
             if bool_EOF1 == False:
                 lines_out1 += [line]
+                ## match
                 if bool_append_markphas == True:
                     lines_out_markers1 += [line_markers]
                     lines_out_phased1 += [line_phased]
+                ## mismatch
+                else: ## ms23/dg11 2013mar12
+                    lines_out_markers1 += ['%s:%s %s %s %s\n' %(
+                        chrom,position,position,alleleA_like,alleleB_like,)]
+                ## indel after mismatch
+                if bool_append_panel0_indel == True:
+                    lines_out_markers1 += [line_markers_panel0_indel]
+                    lines_out_phased1 += [line_phased_panel0_indel]
             ## EOF1
             else:
+                if bool_append_panel0_indel == True:
+                    stop3tmp_append_like_above
                 ## append to previous file if less than 1000 variants
                 if bool_append_to_prev == False and len(lines_out1) < 1000:
                     ## 2nd append to prev
@@ -715,11 +902,15 @@ class main():
                     lines_out_phased1 = lines_out_phased2
                     lines_out_markers1 = lines_out_markers2
                 ## append to current lines
+                ## elif bool_append_to_next == True
                 else:
                     lines_out1 += [line]
                     if bool_append_markphas == True:
                         lines_out_markers1 += [line_markers]
                         lines_out_phased1 += [line_phased]
+                    else: ## ms23/dg11 2013mar12
+                        lines_out_markers1 += ['%s:%s %s %s %s\n' %(
+                            chrom,position,position,alleleA_like,alleleB_like,)]
                 ## reset next lines
                 lines_out2 = [header]
                 lines_out_phased2 = [header_phased]
@@ -734,23 +925,27 @@ class main():
                     pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
                 else:
                     pos_term1 += size
-                ## reset booleans
-                bool_BOF2 = False
-                bool_EOF1 = False
-                bool_append_to_prev = False
-                bool_append_to_next = False
 
                 ## end of if bool_EOF == True
                 pass
 
             pos_prev = position
+            ## reset booleans
+            bool_append_panel0_indel = False
 
             ## read markers and phased
             if bool_append_markphas == True:
                 line_markers = fd_markers.readline()
                 line_phased = fd_phased.readline()
-                pos_markers, alleleA_markers, alleleB_markers = self.parse_marker(
-                    line_markers)
+                pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
+                    line_markers)                
+
+            if bool_EOF1 == True:
+                ## reset booleans
+                bool_BOF2 = False
+                bool_EOF1 = False
+                bool_append_to_prev = False
+                bool_append_to_next = False
 
             ## continue loop over genotype likelihoods
             continue
@@ -802,53 +997,75 @@ class main():
         fd_phased.close()
 
         ##
-        ## tmp check for different file i/o lengths
+        ## file i/o checks
         ##
+        cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
+        cmd += ' | sort -u > panel2out%s' %(chrom)
+        self.execmd(cmd)
 
-        ## out
-        cmd1 = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort -u | wc -l' %(chrom,chrom,)
-        ## in
-        cmd2 = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl | wc -l' %(chrom)
-        i1 = int(os.popen(cmd1).read())
-        i2 = int(os.popen(cmd2).read())+1
-        if i1 != i2:
-            print 'chrom', chrom
-            print cmd1
-            print i1
-            print cmd2
-            print i2
-            stop
+        cmd = 'cat %s' %(fp_phased)
+        cmd += "| awk 'NR>1{print $2}' | sort -u > panel0in%s" %(chrom)
+        self.execmd(cmd)
 
-##        ## out
-##        cmd1 = 'cat in_BEAGLE/%s/%s.*.markers | cut -d " " -f1 | sort -u | wc -l' %(chrom,chrom,)
-##        ## in
-##        cmd2 = 'cat %s | cut -f2 | sort -u | wc -l' %(fp_markers)
-##        i1 = int(os.popen(cmd1).read())
-##        i2 = int(os.popen(cmd2).read())
-##        if i1 != i2:
-##            print 'chrom', chrom
-##            print cmd1
-##            print i1
-##            print cmd2
-##            print i2
-##            stop
+        cmd = "awk 'FNR>1{print $2}' in_BEAGLE/%s/%s.*.phased" %(chrom,chrom)
+        cmd += "| sort -u > panel0out%s" %(chrom)
+        self.execmd(cmd)
 
-##        ## duplicate positions in input markers file (allow or disallow and carry out this check? currently allowed)
-##        cmd = 'cat in_BEAGLE/%s/%s.*.markers | sort -u | cut -d " " -f1 | sort | uniq -d' %(chrom,chrom)
-##        i = int(os.popen('%s | wc -l').read())
-##        if i > 0:
-##            print 'duplicates'
-##            print cmd
-##            print os.popen.cmd(cmd)
-##            sys.exit()
+        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
+        cmd += " | awk '{print $1}' | sort > panel2in%s" %(chrom)
+        self.execmd(cmd)
 
-        ## tmp check for duplicates
-        cmd = 'cat in_BEAGLE/%s/%s.*.like | cut -d " " -f1 | sort | uniq -d' %(chrom,chrom,)
-        i = int(os.popen('%s | wc -l').read())
+        cmd = "awk '{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
+        cmd += ' | sort -u > markers%s' %(chrom)
+        self.execmd(cmd)
+
+        ## check that like (panel2out) is identical to PBI (panel2in)
+        cmd = 'comm -3 panel2out%s panel2in%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen('%s | wc -l').readlines()[:10]
+            print os.popen(cmd).readlines()[:10]
+            print cmd
             sys.exit()
 
+        ## check that panel0out is a subset of panel0in
+        cmd = 'comm -23 panel0out%s panel0in%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+        ## check that like (panel2out) is a true subset of markers
+        cmd = 'comm -32 panel2out%s markers%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+        ## check that phased (panel0out) is a true subset of markers
+        cmd = 'comm -32 panel0out%s markers%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+        ## check that markers is identical to panel2in+panel0in
+        cmd = 'cat panel2out%s panel0out%s | sort -u > panelsout' %(chrom,chrom)
+        self.execmd(cmd)
+        cmd = 'comm -3 panelsout markers%s' %(chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+##        stoptmp
+##
+##        for affix in ['panel2out','panel2in','markersin','markersout',]:
+##            os.remove('%s%s' %(affix,chrom,))
+            
         return d_index2pos
 
 
@@ -954,13 +1171,13 @@ class main():
         cmd += 'NR>1{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"'
         cmd += "}'"
         print cmd
-##        os.system(cmd)
         if not os.path.isfile('out_ProduceBeagleInput/ProduceBeagleInput.22.bgl'): ## redundant
             os.system(cmd)
         ## split further into smaller fragments
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
+            if chrom != '3': continue ## tmp!!!
             d_index2pos = self.BEAGLE_divide(chrom,)
             d_indexes[chrom] = d_index2pos
             continue
@@ -981,6 +1198,7 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
+            if chrom != '3': continue ## tmp!!!
             J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
             cmd = self.bsub_cmd(
@@ -1460,9 +1678,10 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['%s \\' %(line.strip()) for line in lines_resources]
 
         l_TStranches = []
-        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
-        l_TStranches += [99+i/10. for i in range(7,0,-1,)]
+##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
+        l_TStranches += [99+i/10. for i in range(10,0,-1,)]
         l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
+        l_TStranches += [70+i for i in range(19,-1,-1,)]
         s_TStranches = ''
         for TStranche in l_TStranches:
             s_TStranches += '--TStranche %.1f ' %(TStranche)
@@ -1687,6 +1906,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## as this will influence CPU statistics
         ## and risk job of hitting CPU walltime
         s = "bsub -R 'select[mem>1000] rusage[mem=1000]' -M1000000 \\\n"
+        s += ' -o /dev/null \\\n'
+        s += ' -e /dev/null \\\n'
+        s += ' -G %s \\\n' %(self.project)
         s += ' /software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
         for k,v in vars(self.namespace_args).items():
