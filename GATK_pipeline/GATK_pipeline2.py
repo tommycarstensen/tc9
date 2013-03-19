@@ -57,11 +57,11 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
+        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
         self.IMPUTE2(l_chroms,d_chrom_lens,)
-##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
 
+        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
-##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
 
@@ -156,6 +156,7 @@ class main():
         if bool_return == True: return
 
         for chrom in l_chroms:
+            self.IMPUTE2_fileIO_checks(chrom)
             index_max = int(math.ceil(
                     d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             cmd = 'cat'
@@ -200,7 +201,9 @@ class main():
                     print 'error:', fp
                     bool_exit = True
 
-        s = os.popen('fgrep TERM stdout/UnifiedGenotyper/UnifiedGenotyper.*.out').read().strip()
+        print 'checking in stdout that no jobs were terminated prematurely'
+
+        s = os.popen('fgrep TERM_ stdout/*/*.out').read().strip()
         if s != '':
             print s
             bool_exit = True
@@ -210,18 +213,51 @@ class main():
         return
 
 
-    def BEAGLE_unite(self,chrom):
+    def IMPUTE2_fileIO_checks(self,chrom):
+
+        cmd = "cat in_IMPUTE2/%s.gen | awk '{print $3}'" %(chrom,chrom)
+        cmd += ' > in%s' %(chrom)
+        self.execmd(cmd)
+
+        fp_legend = self.fp_impute2_legend
+        fp_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
+        fp_legend = s_legend.replace('${CHROMOSOME}',chrom)
+        cmd = "zcat %s | awk '{print $2}'" %(fp_legend)
+        cmd += ' >> in%s' %(chrom)
+        self.execmd(cmd)
+
+        cmd = 'sort -u in%s -o in%s' %(chrom,chrom)
+        self.execmd(cmd)
+
+        cmd = "awk '{print $1}' out_IMPUTE2/%s/%s.*.gen" %(chrom,chrom)
+        cmd += ' | sort -u > out%s' %(chrom)
+        self.execmd(cmd)
+
+        cmd = 'comm -3 in%s out%s' %(chrom,chrom)
+        i = int(os.popen('%s | wc -l' %(cmd)).read())
+        if i > 0:
+            print os.popen(cmd).readlines()[:10]
+            print cmd
+            sys.exit()
+
+        os.remove('in%s' %(chrom))
+        os.remove('out%s' %(chrom))
+
+        return
+
+
+    def BEAGLE_fileIO_checks(self,chrom):
 
         ##
         ## check that gprobs is identical to markers
         ##
-        cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
+        cmd = "awk '{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
         cmd += ' | sort > markers%s' %(chrom)
-        self.execmd()
+        self.execmd(cmd)
 
-        cmd = "awk 'FNR>1{print $1}' out_BEAGLE/%s/%s.*.like.gprobs" %(chrom,chrom)
+        cmd = "awk '{print $1}' out_BEAGLE/%s/%s.*.like.r2" %(chrom,chrom)
         cmd += ' | sort > gprobs%s' %(chrom)
-        self.execmd()
+        self.execmd(cmd)
 
         cmd = 'comm -3 gprobs%s markers%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
@@ -232,6 +268,11 @@ class main():
 
         os.remove('markers%s' %(chrom))
         os.remove('gprobs%s' %(chrom))
+
+        return
+
+
+    def BEAGLE_unite(self,chrom):
 
         ##
         ##
@@ -292,6 +333,7 @@ class main():
         ## BEAGLE gprobs > IMPUTE2 gen
         ##
         for chrom in l_chroms:
+            self.BEAGLE_fileIO_checks(chrom)
             self.BEAGLE_unite(chrom)
             fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
             fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
@@ -321,8 +363,8 @@ class main():
     def bsub_IMPUTE2(self,dn_suffix,chrom,d_chrom_lens,):
 
         ## fgrep CPU */stdout/IMPUTE2/*.out | awk '{print $5}' | sort -nr | head -n1
-        ## 40589.07
-        queue = 'normal'
+        ## 41013.13
+        queue = 'long'
 
         s_legend = self.fp_impute2_legend
         s_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
@@ -334,7 +376,7 @@ class main():
         d_index2variants = dict([s.split() for s in os.popen(
             cmd).read().strip().split('\n')])
         for index,variants in d_index2variants.items():
-            memMB = int(5500.*int(variants)/100000.)
+            memMB = 250+int(5175.*int(variants)/100000.)
             fp_in = 'in_%s/%s.gen' %(dn_suffix,chrom)
             fp_out = 'out_%s/%s/%s.%s.gen' %(dn_suffix,chrom,chrom,index)
             if os.path.getsize(fp_in) == 0: continue ## redundant
@@ -475,6 +517,8 @@ class main():
         ## http://mathgen.stats.ox.ac.uk/impute/output_file_options.html
         ##
         lines += ['-o %s \\' %(fp_out)]
+        ## http://mathgen.stats.ox.ac.uk/impute/output_file_options.html#-pgs
+        lines += ['-pgs \\']
 
         ##
         ## Input file options
@@ -962,20 +1006,29 @@ class main():
         ## index position in current lines
         ## and remove duplicate lines
         ##
+        bool_found = False
         for i in xrange(len(lines_out1)):
             if pos_prev_like == int(lines_out1[i].split()[0].split(':')[1]):
+                bool_found = True
                 break
-        lines_out1 = lines_out1[i+1:]
+        if bool_found == True:
+            lines_out1 = lines_out1[i+1:]
 
+        bool_found = False
         for i in xrange(len(lines_out_markers1)):
             if pos_prev_markers == int(lines_out_markers1[i].split()[0].split(':')[1]):
+                bool_found = True
                 break
-        lines_out_markers1 = lines_out_markers1[i+1:]
+        if bool_found == True:
+            lines_out_markers1 = lines_out_markers1[i+1:]
 
+        bool_found = False
         for i in xrange(len(lines_out_phased1)):
             if pos_prev_phased == int(lines_out_phased1[i].split()[1].split(':')[1]):
+                bool_found = True
                 break
-        lines_out_phased1 = lines_out_phased1[i+1:]
+        if bool_found == True:
+            lines_out_phased1 = lines_out_phased1[i+1:]
 
         return lines_out1, lines_out_markers1, lines_out_phased1
 
@@ -1051,7 +1104,9 @@ class main():
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
+            if chrom != '2': continue ## tmp!!!
             d_index2pos = self.BEAGLE_divide(chrom,)
+            stoptmp
             d_indexes[chrom] = d_index2pos
             continue
             ## clean up
@@ -1411,7 +1466,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         cmd += '| mail -s "%s" ' %(self.project)
         cmd += '%s\n' %(address)
         self.execmd(cmd)
-        stoptmp_check_ts_filter_level
 
         lines += self.init_cmd(analysis_type,memMB,)
 
