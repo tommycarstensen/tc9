@@ -57,10 +57,10 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
-        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
+##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
         self.IMPUTE2(l_chroms,d_chrom_lens,)
 
-        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
+##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 
         return
@@ -87,6 +87,11 @@ class main():
     def IMPUTE2_without_BEAGLE(self,l_chroms,d_chrom_lens,):
 
         ## tmp function!!!
+
+        if not os.path.isdir('stderr/IMPUTE2_without_BEAGLE'):
+            os.mkdir('stderr/IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('stdout/IMPUTE2_without_BEAGLE'):
+            os.mkdir('stdout/IMPUTE2_without_BEAGLE')
 
         if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
             os.mkdir('in_IMPUTE2_without_BEAGLE')
@@ -134,20 +139,19 @@ class main():
 
     def IMPUTE2_unite(self,l_chroms,d_chrom_lens,):
 
-        ##
-        ## 1) check input existence
-        ##
-        l_fp_in = []
-        for chrom in l_chroms:
-            index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-            for index in xrange(1,index_max+1):
-                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen' %(chrom,chrom,index)]
-        fd = open('IMPUTE2.touch','r')
-        s = fd.read()
-        fd.close()
-        l_fp_out = s.strip().split('\n')
-        self.check_in('IMPUTE2',l_fp_out)
+##        ##
+##        ## 1) check input existence
+##        ##
+##        l_fp_in = []
+##        for chrom in l_chroms:
+##            index_max = int(math.ceil(
+##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+##            for index in xrange(1,index_max+1):
+##                ## use summary instead of genotype file, because of
+##                ## --read 0 SNPs in the analysis interval+buffer region
+##                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
+##                    chrom,chrom,index)]
+##        self.check_in('IMPUTE2',l_fp_in)
 
         ##
         ## 2) touch
@@ -215,21 +219,26 @@ class main():
 
     def IMPUTE2_fileIO_checks(self,chrom):
 
-        cmd = "cat in_IMPUTE2/%s.gen | awk '{print $3}'" %(chrom,chrom)
+        ## in
+        cmd = 'cat in_IMPUTE2/%s.gen' %(chrom)
+        cmd += """ | awk '{print $1}'"""
         cmd += ' > in%s' %(chrom)
         self.execmd(cmd)
 
         fp_legend = self.fp_impute2_legend
-        fp_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
-        fp_legend = s_legend.replace('${CHROMOSOME}',chrom)
-        cmd = "zcat %s | awk '{print $2}'" %(fp_legend)
+        fp_legend = fp_legend.replace('$CHROMOSOME','${CHROMOSOME}')
+        fp_legend = fp_legend.replace('${CHROMOSOME}',chrom)
+        cmd = 'zcat %s' %(fp_legend)
+        cmd += """ | awk -v CHROM=%s 'NR>1{print CHROM":"$2}'""" %(chrom)
         cmd += ' >> in%s' %(chrom)
         self.execmd(cmd)
 
         cmd = 'sort -u in%s -o in%s' %(chrom,chrom)
         self.execmd(cmd)
 
-        cmd = "awk '{print $1}' out_IMPUTE2/%s/%s.*.gen" %(chrom,chrom)
+        ## out
+        cmd = 'cat out_IMPUTE2/%s/%s.*.gen' %(chrom,chrom)
+        cmd += """ | awk -v CHROM=%s '{print CHROM":"$3}' """ %(chrom)
         cmd += ' | sort -u > out%s' %(chrom)
         self.execmd(cmd)
 
@@ -252,11 +261,11 @@ class main():
         ## check that gprobs is identical to markers
         ##
         cmd = "awk '{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
-        cmd += ' | sort > markers%s' %(chrom)
+        cmd += ' | sort -u > markers%s' %(chrom)
         self.execmd(cmd)
 
         cmd = "awk '{print $1}' out_BEAGLE/%s/%s.*.like.r2" %(chrom,chrom)
-        cmd += ' | sort > gprobs%s' %(chrom)
+        cmd += ' | sort -u > gprobs%s' %(chrom)
         self.execmd(cmd)
 
         cmd = 'comm -3 gprobs%s markers%s' %(chrom,chrom)
