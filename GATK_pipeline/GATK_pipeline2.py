@@ -1104,9 +1104,7 @@ class main():
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
         for chrom in l_chroms:
-            if chrom != '2': continue ## tmp!!!
             d_index2pos = self.BEAGLE_divide(chrom,)
-            stoptmp
             d_indexes[chrom] = d_index2pos
             continue
             ## clean up
