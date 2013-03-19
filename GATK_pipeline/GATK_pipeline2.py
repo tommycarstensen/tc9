@@ -238,7 +238,12 @@ class main():
 
         ## out
         cmd = 'cat out_IMPUTE2/%s/%s.*.gen' %(chrom,chrom)
-        cmd += """ | awk -v CHROM=%s '{print CHROM":"$3}' """ %(chrom)
+        cmd += """ | awk -v CHROM=%s '""" %(chrom)
+        cmd += '{'
+        cmd += ' max=0;'
+        cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
+        cmd += ' if(max>0.9) {print CHROM":"$3}'
+        cmd += "}'"
         cmd += ' | sort -u > out%s' %(chrom)
         self.execmd(cmd)
 
@@ -246,6 +251,7 @@ class main():
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
             print os.popen('%s | head' %(cmd)).readlines()
+            print i
             print cmd
             sys.exit()
 
