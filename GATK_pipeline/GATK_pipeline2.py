@@ -221,7 +221,11 @@ class main():
 
         ## in
         cmd = 'cat in_IMPUTE2/%s.gen' %(chrom)
-        cmd += """ | awk '{print $1}'"""
+        cmd += " | awk '{"
+        cmd += 'max=0;'
+        cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
+        cmd += " if(max>0.9) {print $1}"
+        cmd += "}'"
         cmd += ' > in%s' %(chrom)
         self.execmd(cmd)
 
