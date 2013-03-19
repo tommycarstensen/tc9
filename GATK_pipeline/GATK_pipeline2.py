@@ -236,7 +236,7 @@ class main():
         cmd = 'comm -3 in%s out%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -262,7 +262,7 @@ class main():
         cmd = 'comm -3 gprobs%s markers%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -932,7 +932,7 @@ class main():
         cmd = 'comm -3 panel2out%s panel2in%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -940,7 +940,7 @@ class main():
         cmd = 'comm -23 panel0out%s panel0in%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -948,7 +948,7 @@ class main():
         cmd = 'comm -32 panel2out%s markers%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -956,7 +956,7 @@ class main():
         cmd = 'comm -32 panel0out%s markers%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
         if i > 0:
-            print os.popen(cmd).readlines()[:10]
+            print os.popen('%s | head' %(cmd)).readlines()
             print cmd
             sys.exit()
 
@@ -1153,7 +1153,7 @@ class main():
         ##
         ## initiate BEAGLE
         ##
-        lines += ['java -Xmx%im -jar %s \\' %(
+        lines += ['java -Djava.io.tmpdir=tmp -Xmx%im -jar %s \\' %(
             memMB,self.fp_software_beagle)]
 
         lines += self.body_BEAGLE(fp_out,)
@@ -1301,6 +1301,10 @@ class main():
                     os.mkdir('%s/%s' %(dn,chrom))
                 if not os.path.isdir('touch/%s/%s' %(dn,chrom)):
                     os.mkdir('touch/%s/%s' %(dn,chrom))
+
+        ## java (i.e. BEAGLE) tmp dir
+        if not os.path.isdir('tmp'):
+            os.mkdir('tmp')
 
         return l_dn
 
