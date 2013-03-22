@@ -26,7 +26,9 @@ import argparse
 
 ## todo20130210: tc9: download markers from http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/ instead of asking user for their location by default... Make those arguments non-required... --- alternatively download as specified here http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/READ_ME_beagle_phase1_v3
 
-## todo20130217: tc9: make sure that IMPUTE2 doesn't run, if no SNPs in fragment
+## todo20130320: tc9: make the function BEAGLE_divide run in "parallel"; i.e. run a process for each chromosome
+
+## todo20130320: tc9: test memory requirements when more than 100 samples
 
 class main():
 
@@ -57,10 +59,10 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
-##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-        self.IMPUTE2(l_chroms,d_chrom_lens,)
+        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
+        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
-##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
+        self.IMPUTE2(l_chroms,d_chrom_lens,)
         self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 
         return
@@ -78,7 +80,9 @@ class main():
                 fp_gen = 'out_IMPUTE2_without_BEAGLE/%s/%s.%i.gen' %(chrom,chrom,index)
                 if not os.path.isfile(fp_gen): continue
                 cmd += ' %s' %(fp_gen)
-            cmd += ' > out_IMPUTE2_without_BEAGLE/%s.gen' %(chrom)
+            fp_out = 'out_IMPUTE2_without_BEAGLE/%s.gen' %(chrom)
+            if os.path.isfile(fp_out): continue
+            cmd += ' > %s' %(fp_out)
             self.execmd(cmd)
 
         return
@@ -92,6 +96,12 @@ class main():
             os.mkdir('stderr/IMPUTE2_without_BEAGLE')
         if not os.path.isdir('stdout/IMPUTE2_without_BEAGLE'):
             os.mkdir('stdout/IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('touch/out_IMPUTE2_without_BEAGLE'):
+            os.mkdir('touch/out_IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
+            os.mkdir('out_IMPUTE2_without_BEAGLE')
+            for chrom in l_chroms:
+                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
 
         if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
             os.mkdir('in_IMPUTE2_without_BEAGLE')
@@ -108,12 +118,9 @@ class main():
             cmd += '{print>"in_IMPUTE2_without_BEAGLE/"$1".gen"'
             cmd += "}'"
             print cmd
-            os.system(cmd)
+            self.execmd(cmd)
 
-        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('out_IMPUTE2_without_BEAGLE')
-            for chrom in l_chroms:
-                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
+        if True:
 
             queue = 'normal'
             fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
@@ -139,19 +146,19 @@ class main():
 
     def IMPUTE2_unite(self,l_chroms,d_chrom_lens,):
 
-##        ##
-##        ## 1) check input existence
-##        ##
-##        l_fp_in = []
-##        for chrom in l_chroms:
-##            index_max = int(math.ceil(
-##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-##            for index in xrange(1,index_max+1):
-##                ## use summary instead of genotype file, because of
-##                ## --read 0 SNPs in the analysis interval+buffer region
-##                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
-##                    chrom,chrom,index)]
-##        self.check_in('IMPUTE2',l_fp_in)
+        ##
+        ## 1) check input existence
+        ##
+        l_fp_in = []
+        for chrom in l_chroms:
+            index_max = int(math.ceil(
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+            for index in xrange(1,index_max+1):
+                ## use summary instead of genotype file, because of
+                ## --read 0 SNPs in the analysis interval+buffer region
+                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
+                    chrom,chrom,index)]
+        self.check_in('IMPUTE2',l_fp_in)
 
         ##
         ## 2) touch
@@ -159,8 +166,17 @@ class main():
         bool_return = self.touch('IMPUTE2_unite')
         if bool_return == True: return
 
+        ##
+        ## 3) file I/O checks
+        ##
         for chrom in l_chroms:
+            print 'chrom', chrom
             self.IMPUTE2_fileIO_checks(chrom)
+
+        ##
+        ## 4) IMPUTE output concatenation
+        ##
+        for chrom in l_chroms:
             index_max = int(math.ceil(
                     d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             cmd = 'cat'
@@ -194,7 +210,6 @@ class main():
     def check_stderr(self,l_chroms,l_dn,):
 
         print 'checking that stderr is empty'
-
         bool_exit = False
         for dn in l_dn:
             if dn[:3] != 'out': continue
@@ -204,28 +219,68 @@ class main():
                 if os.path.getsize(fp) > 0:
                     print 'error:', fp
                     bool_exit = True
-
-        print 'checking in stdout that no jobs were terminated prematurely'
-
-        s = os.popen('fgrep TERM_ stdout/*/*.out').read().strip()
-        if s != '':
-            print s
-            bool_exit = True
-
         if bool_exit == True: sys.exit(0)
+
+##        ## it takes too long to search all the output files
+##        ## instead do a tail on each and every file and check that
+##        ## os.popen("tail -n19 stdout/*/*.out | head -n1").read().strip()
+##        ## ==
+##        ## "Successfully completed."
+##        print 'checking in stdout that no jobs were terminated prematurely'
+##        s = os.popen('fgrep TERM_ stdout/*/*.out').read().strip()
+##        if s != '':
+##            print s
+##            bool_exit = True
+##        if bool_exit == True: sys.exit(0)
+
+        print 'checking in stdout that all jobs were successfully completed'
+        l = os.listdir('stdout')
+        for s in l:
+            if os.path.isdir('stdout/%s' %(s)):
+                for fn in os.listdir('stdout/%s' %(s)):
+                    fp = os.path.join('stdout',s,fn)
+                    self.check_out_line(fp)
+            ## elif os.path.isfile('stdout/%s' %(s)):
+            else:
+                fp = os.path.join('stdout',s)
+                self.check_out_line(fp)
+
+        return
+
+
+    def check_out_line(self,fp):
+
+        line = os.popen("tail -n19 %s | head -n1" %(fp)).read().strip()
+##        if line != "Successfully completed.":
+        if line not in [
+            "Successfully completed.",
+            "Exited with exit code 127.",
+            "Exited with exit code 1.",
+            ]: ## tmp!!!
+            print 'not finished:', fp
+            sys.exit()
 
         return
 
 
     def IMPUTE2_fileIO_checks(self,chrom):
 
+##        cmd = """awk 'FNR==1{print FILENAME":"$1}' out_IMPUTE2/*/*.gen """
+##        cmd += """| awk -F ":" '{if($3%5000000>100000) print $3%5000000,$0}'"""
+##        s = os.popen(cmd).read().strip()
+##        if s != '':
+##            print cmd
+##            print 'WARNING'
+##            print s
+
         ## in
         cmd = 'cat in_IMPUTE2/%s.gen' %(chrom)
         cmd += " | awk '{"
-        cmd += 'max=0;'
+        cmd += ' max=0;'
         cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
         cmd += " if(max>0.9) {print $1}"
-        cmd += "}'"
+##        cmd += 'print $1'
+        cmd += " }'"
         cmd += ' > in%s' %(chrom)
         self.execmd(cmd)
 
@@ -244,10 +299,11 @@ class main():
         cmd = 'cat out_IMPUTE2/%s/%s.*.gen' %(chrom,chrom)
         cmd += """ | awk -v CHROM=%s '""" %(chrom)
         cmd += '{'
-        cmd += ' max=0;'
-        cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
-        cmd += ' if(max>0.9) {print CHROM":"$3}'
-        cmd += "}'"
+##        cmd += ' max=0;'
+##        cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
+##        cmd += ' if(max>0.9) {print CHROM":"$3}'
+        cmd += 'print CHROM":"$3'
+        cmd += " }'"
         cmd += ' | sort -u > out%s' %(chrom)
         self.execmd(cmd)
 
@@ -317,14 +373,14 @@ class main():
                 stop
             if index == 1:
                 cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
-                os.system(cmd)
+                self.execmd(cmd)
             pos1 = d_index2pos[index][0]
             pos2 = d_index2pos[index][1]
             cmd = "awk 'NR>1{pos=int(substr($1,%i));" %(len(chrom)+2)
             cmd += "if(pos>%i&&pos<=%i) print $0}'" %(
                 pos1,pos2,)
             cmd += ' %s >> %s' %(fp_in,fp_out,)
-            os.system(cmd)
+            self.execmd(cmd)
 
         return
 
@@ -352,10 +408,12 @@ class main():
         ## BEAGLE gprobs > IMPUTE2 gen
         ##
         for chrom in l_chroms:
-            self.BEAGLE_fileIO_checks(chrom)
-            self.BEAGLE_unite(chrom)
+            print 'gprobs2gen', chrom
             fp_in = 'out_BEAGLE/%s.gprobs' %(chrom)
             fp_out = 'in_IMPUTE2/%s.gen' %(chrom)
+            if os.path.isfile(fp_out): continue
+            self.BEAGLE_fileIO_checks(chrom)
+            self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
@@ -374,6 +432,7 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
+            print 'bsub IMPUTE2', chrom
             self.bsub_IMPUTE2('IMPUTE2',chrom,d_chrom_lens,)
 
         return
@@ -388,14 +447,18 @@ class main():
         s_legend = self.fp_impute2_legend
         s_legend = s_legend.replace('$CHROMOSOME','${CHROMOSOME}')
         s_legend = s_legend.replace('${CHROMOSOME}',chrom)
-        cmd = 'zcat %s' %(s_legend)
-        cmd += " | awk 'NR>1{cnt[int($2/%i)]++}" %(self.i_IMPUTE2_size)
+        cmd = 'cat in_IMPUTE2/%s.gen' %(chrom)
+        cmd += " | awk '{cnt[int($3/%i)]++}" %(self.i_IMPUTE2_size)
         cmd += " END{for(j in cnt) print j+1,cnt[j]}'"
         cmd += ' | sort -k1n,1'
         d_index2variants = dict([s.split() for s in os.popen(
             cmd).read().strip().split('\n')])
         for index,variants in d_index2variants.items():
-            memMB = 250+int(5175.*int(variants)/100000.)
+            ## memory requirement/usage different if not 100 samples?
+            dev = fudgefactor = 120
+            intersect = 255
+            slope = 4247.268
+            memMB = dev+intersect+int(slope*int(variants)/100000.)
             fp_in = 'in_%s/%s.gen' %(dn_suffix,chrom)
             fp_out = 'out_%s/%s/%s.%s.gen' %(dn_suffix,chrom,chrom,index)
             if os.path.getsize(fp_in) == 0: continue ## redundant
@@ -428,7 +491,7 @@ class main():
         cmd += ' | cut -d " " -f 3 --complement'
         cmd += ' > %s' %(fp_out,)
         print cmd
-        os.system(cmd)
+        self.execmd(cmd)
 
         return
 
@@ -455,8 +518,6 @@ class main():
 
     
     def IMPUTE2_write_shell_script(self,fp_in,fp_out,):
-
-        fp_in = self.d_in['IMPUTE2']
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -927,10 +988,6 @@ class main():
 
     def BEAGLE_divide_fileIO_checks(self,chrom,fp_phased,):
 
-        cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
-        cmd += ' | sort -u > panel2out%s' %(chrom)
-        self.execmd(cmd)
-
         cmd = 'cat %s' %(fp_phased)
         cmd += "| awk 'NR>1{print $2}' | sort -u > panel0in%s" %(chrom)
         self.execmd(cmd)
@@ -941,6 +998,10 @@ class main():
 
         cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
         cmd += " | awk '{print $1}' | sort > panel2in%s" %(chrom)
+        self.execmd(cmd)
+
+        cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
+        cmd += ' | sort -u > panel2out%s' %(chrom)
         self.execmd(cmd)
 
         cmd = "awk '{print $1}' in_BEAGLE/%s/%s.*.markers" %(chrom,chrom)
@@ -1081,9 +1142,10 @@ class main():
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        ## fgrep Mem stdout/BEAGLE/BEAGLE.*.out | sort -k5n,5 | tail -n1 | awk '{print $5}'
-        ## 2885 with lowmem=true
-        memMB = 3500 ## see scatter plot
+        ## For haplotype phase inference and imputation of missing data
+        ## with default BEAGLE options,
+        ## memory usage increases with the number of markers.
+        memMB = 3900
         ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
         ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
@@ -1256,7 +1318,8 @@ class main():
 
         lines += [' verbose=false \\'] ## default false
 
-        lines += [' lowmem=true \\'] ## default false
+##        lines += [' lowmem=true \\'] ## default false
+        lines += [' lowmem=false \\'] ## tmp!!!
 
         ## non-optional output prefix
         lines += [' out=%s \\' %(fp_out)]
@@ -1346,8 +1409,9 @@ class main():
 
         bool_exit = False
         if len(set(l_fp_in)-set(l_fp_out)) > 0:
-            print '%s and possibly other files not generated.' %(
-                list(set(l_fp_in)-set(l_fp_out))[0])
+            print '%s and possibly %s other files not generated.' %(
+                list(set(l_fp_in)-set(l_fp_out))[0],
+                len(set(l_fp_in)-set(l_fp_out))-1,)
             print '%s has not run to completion. Exiting.' %(analysis_type)
             bool_exit = True
             sys.exit()
@@ -1404,7 +1468,7 @@ class main():
         ## execute shell script
         J = 'PBI'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-        os.system(cmd)
+        self.execmd(cmd)
 
         return
 
@@ -1483,7 +1547,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         cmd += ' (%s/out_VariantRecalibrator/VariantRecalibrator.tranches)' %(
             os.getcwd())
         cmd += ' to see if you are satisfied with the chosen TS level of'
-        cmd += ' $ts_filter_level" '
+        cmd += ' ${ts_filter_level}" '
         cmd += '| mail -s "%s" ' %(self.project)
         cmd += '%s\n' %(address)
         self.execmd(cmd)
@@ -1512,7 +1576,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         J = 'AR'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-        os.system(cmd)
+        self.execmd(cmd)
 
         return
 
@@ -1643,7 +1707,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
         J = 'VR'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue=queue,)
-        os.system(cmd)
+        self.execmd(cmd)
 
         return
 
@@ -1673,11 +1737,11 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         bool_return = False
         fn_touch = '%s.touch' %(analysis_type)
         if os.path.isfile(fn_touch):
-##            if time.time()-os.path.getmtime(fn_touch) < 60*60:
                 if self.verbose == True:
                     print 'in progress or completed:', analysis_type
                 bool_return = True
-        os.system('touch %s' %(fn_touch))
+        else:
+            self.execmd('touch %s' %(fn_touch))
 
         return bool_return
 
@@ -1729,7 +1793,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             cmd = self.bsub_cmd(
                 analysis_type,J,std_suffix=std_suffix,chrom=chrom,
                 memMB=memMB,queue=queue,)
-            os.system(cmd)
+            self.execmd(cmd)
 
         return
 
@@ -1852,14 +1916,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## do not continue as part of previous command
         ## as this will influence CPU statistics
         ## and risk job of hitting CPU walltime
-        s = "bsub -R 'select[mem>1000] rusage[mem=1000]' -M1000000 \\\n"
-        s += ' -o /dev/null \\\n'
-        s += ' -e /dev/null \\\n'
+        s = "bsub -R 'select[mem>1500] rusage[mem=1500]' -M1500000 \\\n"
+        s += ' -o stdout/post%s.out \\\n' %(analysis_type)
+        s += ' -e stderr/post%s.err \\\n' %(analysis_type)
         s += ' -G %s \\\n' %(self.project)
         s += ' /software/bin/python-2.7.3'
         s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
         for k,v in vars(self.namespace_args).items():
-            s += ' --%s %s' %(k,str(v).replace('$','\\\\\\$'))
+            s += ' --%s %s' %(k,str(v).replace('$','\\$'))
         fd = open('rerun.sh','w')
         fd.write(s)
         fd.close()
@@ -1921,43 +1985,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['LENCHROMOSOME=${LENCHROMOSOMES[$index]}\n']
 
         return lines
-
-
-    def BeagleOutputToVCF(self,chrom,):
-
-        ## this function is currently not called!!!
-
-        lines = self.init_cmd(analysis_type,memMB,)
-
-        ## GATKwalker, required, in
-        lines += [
-            '--beaglePhased:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.phased \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        lines += [
-            '--beagleProbs:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.gprobs \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        lines += [
-            '--beagleR2:BEAGLE out_BEAGLE/BeagleOutput.%s.bgl.ProduceBeagleInput.%s.bgl.r2 \\' %(
-                chromosome,chromosome,
-                ),
-            ]
-        ## GATKwalker, required, out
-        fp_out = 'out_GATK/%s.%s.vcf' %(analysis_type,chromosome,)
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += [
-            '--variant out_GATK/ApplyRecalibration.recalibrated.filtered.%s.vcf \\' %(
-                chromosome
-                )
-            ]
-
-        s = '\n'.join(lines)+'\n\n'
-
-        return s
 
 
     def parse_arguments(self,):
@@ -2115,8 +2142,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = False,
             )
 
-        s_help = 'Phased file to be divided (e.g. ../in_BEAGLE/'
-        s_help += 'ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.bgl'
+        s_help = 'Phased file to be divided (e.g.'
+        s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.bgl'
         parser.add_argument(
             '--fp_BEAGLE_phased',
             dest='fp_BEAGLE_phased',
@@ -2125,8 +2152,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = True,
             )
 
-        s_help = 'Markers file to be divided (e.g. ../in_BEAGLE/'
-        s_help += 'ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.markers'
+        s_help = 'Markers file to be divided (e.g.'
+        s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.markers'
         parser.add_argument(
             '--fp_BEAGLE_markers',
             dest='fp_BEAGLE_markers',
