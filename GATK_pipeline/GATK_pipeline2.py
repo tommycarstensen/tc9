@@ -685,9 +685,14 @@ class main():
         ## initiate lines out
         ##
         lines_out_phased1 = [header_phased]
-        lines_out_phased2 = [header_phased]
+##        lines_out_phased2 = [header_phased]
         lines_out_markers1 = []
         lines_out_markers2 = []
+
+        if os.path.isfile('%s.phased' %(fp_out_prefix,)):
+            os.remove('%s.phased' %(fp_out_prefix,))
+        fd = open('%s.phased' %(fp_out_prefix,),'w')
+        fd.close()
 
         ##
         ## set smallest fragment size
@@ -761,6 +766,8 @@ class main():
                         bool_append_markphas = True
                         pass
                     else:
+                        if position == 145832256:
+                            stop1a
                         bool_append_markphas = False
                         pos_phased_prev = pos_phased
                         while True:
@@ -789,7 +796,7 @@ class main():
                         lines_out_phased1 += [line_phased]
                         if bool_BOF2 == True:
                             lines_out_markers2 += [line_markers]
-                            lines_out_phased2 += [line_phased]
+##                            lines_out_phased2 += [line_phased]
                     ## SNP unique to panel 0
 ##                    elif pos_prev < pos_phased:
                     else:
@@ -797,7 +804,7 @@ class main():
                         lines_out_phased1 += [line_phased]
                         if bool_BOF2 == True:
                             lines_out_markers2 += [line_markers]
-                            lines_out_phased2 += [line_phased]
+##                            lines_out_phased2 += [line_phased]
                     ## append marker not present in genotype likehoods file
                     ## read markers and phased
                     line_phased = fd_phased.readline()
@@ -813,7 +820,7 @@ class main():
                 ## match
                 if bool_append_markphas == True:
                     lines_out_markers2 += [line_markers]
-                    lines_out_phased2 += [line_phased]
+##                    lines_out_phased2 += [line_phased]
                 ## mismatch
                 else: ## ms23/dg11 2013mar12
                     lines_out_markers2 += ['%s:%s %s %s %s\n' %(
@@ -857,10 +864,10 @@ class main():
                     print 'append prev'
                     mode = 'a'
                     (
-                        lines_out1, lines_out_markers1, lines_out_phased1,
+                        lines_out1, lines_out_markers1,
                         ) = self.remove_duplicate_lines(
                             index, fp_out_prefix,
-                            lines_out1, lines_out_markers1, lines_out_phased1)
+                            lines_out1, lines_out_markers1)
                     ##
                     index -= 1
                     if index != 0:
@@ -879,12 +886,16 @@ class main():
                     fd = open('%s.%i.markers' %(fp_out_prefix,index,),mode)
                     fd.writelines(lines_out_markers1)
                     fd.close()
-                    fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
+##                    fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
+                    fd = open('%s.phased' %(fp_out_prefix,),'a')
                     fd.writelines(lines_out_phased1)
                     fd.close()
                     ## replace current lines with next lines
                     lines_out1 = lines_out2
-                    lines_out_phased1 = lines_out_phased2
+##                    lines_out_phased1 = lines_out_phased2
+                    lines_out_phased1 = []
+                    if bool_append_markphas == True:
+                        lines_out_phased1 += [line_phased]
                     lines_out_markers1 = lines_out_markers2
                 ## append to current lines
                 ## elif bool_append_to_next == True
@@ -898,7 +909,7 @@ class main():
                             chrom,position,position,alleleA_like,alleleB_like,)]
                 ## reset next lines
                 lines_out2 = [header]
-                lines_out_phased2 = [header_phased]
+##                lines_out_phased2 = [header_phased]
                 lines_out_markers2 = []
                 if bool_append_to_next == False:
                     ## append index and positions to dictionary
@@ -936,10 +947,10 @@ class main():
         ## or minimum number of variants
         if position-pos_init1 < min_bps or len(lines_out1) < 1000:
             (
-                lines_out1, lines_out_markers1, lines_out_phased1
+                lines_out1, lines_out_markers1
                 ) = self.remove_duplicate_lines(
                     index, fp_out_prefix,
-                    lines_out1, lines_out_markers1, lines_out_phased1)
+                    lines_out1, lines_out_markers1)
             mode = 'a'
             index -= 1
             pos_init1 = d_index2pos[index][0]
@@ -964,7 +975,8 @@ class main():
         fd.writelines(lines_out_markers1)
         fd.close()
 
-        fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
+##        fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
+        fd = open('%s.phased' %(fp_out_prefix,),'a')
         fd.writelines(lines_out_phased1)
         fd.close()
 
@@ -992,7 +1004,7 @@ class main():
         cmd += "| awk 'NR>1{print $2}' | sort -u > panel0in%s" %(chrom)
         self.execmd(cmd)
 
-        cmd = "awk 'FNR>1{print $2}' in_BEAGLE/%s/%s.*.phased" %(chrom,chrom)
+        cmd = "awk 'FNR>1{print $2}' in_BEAGLE/%s/%s.phased" %(chrom,chrom)
         cmd += "| sort -u > panel0out%s" %(chrom)
         self.execmd(cmd)
 
@@ -1059,13 +1071,13 @@ class main():
 
     def remove_duplicate_lines(
         self, index, fp_out_prefix,
-        lines_out1, lines_out_markers1, lines_out_phased1):
+        lines_out1, lines_out_markers1):
 
         ##
         ## remove headers
         ##
         lines_out1 = lines_out1[1:]
-        lines_out_phased1 = lines_out_phased1[1:]
+##        lines_out_phased1 = lines_out_phased1[1:]
 
         ##
         ## get terminal positions in previous files
@@ -1078,9 +1090,9 @@ class main():
             fp_out_prefix,index-1)
         pos_prev_markers = int(os.popen(cmd).read().split(':')[1])
 
-        cmd = 'tail -n1 %s.%i.phased | cut -d " " -f2' %(
-            fp_out_prefix,index-1)
-        pos_prev_phased = int(os.popen(cmd).read().split(':')[1])
+##        cmd = 'tail -n1 %s.%i.phased | cut -d " " -f2' %(
+##            fp_out_prefix,index-1)
+##        pos_prev_phased = int(os.popen(cmd).read().split(':')[1])
 
         ##
         ## index position in current lines
@@ -1102,15 +1114,15 @@ class main():
         if bool_found == True:
             lines_out_markers1 = lines_out_markers1[i+1:]
 
-        bool_found = False
-        for i in xrange(len(lines_out_phased1)):
-            if pos_prev_phased == int(lines_out_phased1[i].split()[1].split(':')[1]):
-                bool_found = True
-                break
-        if bool_found == True:
-            lines_out_phased1 = lines_out_phased1[i+1:]
+##        bool_found = False
+##        for i in xrange(len(lines_out_phased1)):
+##            if pos_prev_phased == int(lines_out_phased1[i].split()[1].split(':')[1]):
+##                bool_found = True
+##                break
+##        if bool_found == True:
+##            lines_out_phased1 = lines_out_phased1[i+1:]
 
-        return lines_out1, lines_out_markers1, lines_out_phased1
+        return lines_out1, lines_out_markers1
 
 
     def calc_pos_term(self,pos_init1,position,size,min_bps):
@@ -1145,7 +1157,7 @@ class main():
         ## For haplotype phase inference and imputation of missing data
         ## with default BEAGLE options,
         ## memory usage increases with the number of markers.
-        memMB = 3900
+        memMB = 3700
         ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
         ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
@@ -1269,7 +1281,8 @@ class main():
     def body_BEAGLE(self,fp_out,):
 
         fp_like = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.like'
-        fp_phased = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.phased'
+##        fp_phased = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.phased'
+        fp_phased = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.phased'
         fp_markers = 'in_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.markers'
 
         lines = []
