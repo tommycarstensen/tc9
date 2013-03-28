@@ -66,10 +66,13 @@ class main:
         fd.write(s_tex)
         fd.close()
 
-        sys.exit(0) ## tmp!!!
+##        sys.exit(0) ## tmp!!!
 
         ## execute pdflatex
-        self.execmd('pdflatex %s' %(self.o))
+        self.execmd('pdflatex %s.tex' %(self.o))
+
+        print 'tmp exit!!!'
+        sys.exit(0) ## tmp!!!
 
         ## send QC report by mail
         cmd = '(cat "Here is your %s %s QC report"; uuencode %s.pdf %s.pdf)' %(
@@ -84,25 +87,48 @@ class main:
 
     def pdflatex_document(self,):
 
-        self.execmd('wget http://www.tommycarstensen.com/QCtemplate.tex')
+##        self.execmd('wget http://www.tommycarstensen.com/QCtemplate.tex')
         fd = open('QCtemplate.tex','r')
         s = fd.read()
         fd.close()
-        os.remove('QCtemplate.tex')
+##        os.remove('QCtemplate.tex')
+
+        l_keys_tex = []
+        l_vals_tex = []
 
         ## project description
         uid = pwd.getpwuid(os.getuid())[0]
         s = s.replace('${uid}',uid)
 
-        s = s.replace('${project}',self.opts.project)
-        s = s.replace('${bfile_in}',self.i)
+##        s = s.replace('${project}',self.opts.project)
+##        s = s.replace('${bfile_in}',self.i)
+        s = s.replace('${project}',self.opts.project.replace('_','\_')) ## tmp!!! underscore problem
+        s = s.replace('${bfile_in}','') ## tmp!!! underscore problem
 
         ##
-        ## data description
+        ## data description, samples
         ##
         n_samples = str(int(os.popen('cat %s.fam | wc -l' %(self.i)).read()))
         s = s.replace('${samples_preQC}',n_samples)
 
+        cmd = 'cat %s.fam' %(self.i)
+        cmd += " | awk '"
+        cmd += ' BEGIN{cntmale=0;cntfemale=0}'
+        cmd += ' {'
+        cmd += ' cnt++;'
+        cmd += ' if($5==1) {cntmale++}'
+        cmd += ' else if($5==2) {cntfemale++}'
+        cmd += ' }'
+        cmd += ' END{print cnt,cntmale,cntfemale}'
+        cmd += "'"
+        l = os.popen(cmd).read().strip().split()
+        l_keys_tex += [
+            'samples_preQC','samples_males_preQC','samples_females_preQC',]
+        l_vals_tex += l
+
+        ##
+        ## data description, SNPs
+        ##
         cmd = 'cat %s.bim' %(self.i)
         cmd += " | awk '"
         cmd += ' BEGIN{cntAUTO=0;cntX=0;cntY;cntXY=0;cntMT=0;cnt0=0}'
@@ -116,38 +142,79 @@ class main:
         cmd += ' else if($1==0) {cnt0++}'
         cmd += ' }'
         cmd += ' END{print cnt,cntAUTO,cntX,cntY,cntXY,cntMT,cnt0}'
-        cmd += '"'
+        cmd += "'"
         l = os.popen(cmd).read().strip().split()
-        s = s.replace('${SNPs_preQC_all}',l[0])
-        s = s.replace('${SNPs_preQC_autosomal}',l[1])
-        s = s.replace('${SNPs_preQC_X}',l[2])
-        s = s.replace('${SNPs_preQC_Y}',l[3])
-        s = s.replace('${SNPs_preQC_XY}',l[4])
-        s = s.replace('${SNPs_preQC_MT}',l[5])
-        s = s.replace('${SNPs_preQC_unplaced}',l[6])
+        l_vals_tex += l
+        l_keys_tex += [
+            'SNPs_preQC_all','SNPs_preQC_autosomal',
+            'SNPs_preQC_X','SNPs_preQC_Y','SNPs_preQC_XY','SNPs_preQC_MT',
+            'SNPs_preQC_unplaced',
+            ]
 
         ## sample call rate
-        s = s.replace('${threshold_imiss}',self.options.threshold_imiss)
-        s = s.replace('${fig_imiss}','%s.imiss.png' %(self.o))
+        s = s.replace('${threshold_imiss}',str(100*self.opts.threshold_imiss))
+
+        cmd = 'cat %s.imiss' %(self.o)
+        cmd += " | awk '"
+        cmd += ' BEGIN{sum1=0;sum2=0}'
+        cmd += ' NR>1{sum1+=$6;NR1++;if($6<1-0.999) {NR2++;sum2+=$6}}'
+        cmd += ' END{print 1-(sum1/NR1), 1-(sum2/NR2)}'
+        cmd += "'"
+        l = os.popen(cmd).read().strip().split()
+        l_vals_tex += l
+        l_keys_tex += ['imiss_presampleQC','imiss_postsampleQC',]
 
         ## heterozygosity
         s = s.replace(
-            '${threshold_het_stddev}',self.options.threshold_het_stddev)
+            '${threshold_het_stddev}',str(self.opts.threshold_het_stddev))
         l_cmds,average,stddev,het_min,het_max = self.het2stddev(
             float(self.opts.threshold_imiss),bool_execute=True)
         s = s.replace('${het_num_avg}',str(average))
         s = s.replace('${het_num_stddev}',str(stddev))
 
+        cmd = 'sort %s.imiss.samples > %s.imiss.samples.sorted' %(
+            self.o,self.o,)
+        self.execmd(cmd)
+        cmd = 'sort %s.het.samples > %s.het.samples.sorted' %(self.o,self.o,)
+        self.execmd(cmd)
+        cmd = 'comm -13 %s.imiss.samples.sorted %s.het.samples.sorted | wc -l' %(
+            self.o,self.o,)
+        s = s.replace('${samples_remove_het}',str(int(os.popen(cmd).read())))
+
+        ## sex check
+        cmd = 'sort %s.sexcheck.samples > %s.sexcheck.samples.sorted' %(
+            self.o,self.o,)
+        self.execmd(cmd)
+        cmd = 'cat %s.imiss.samples %s.het.samples | sort -u' %(self.o,self.o)
+        cmd += ' > %s.imiss.het.samples.sorted' %(self.o)
+        self.execmd(cmd)
+        cmd = 'comm -13'
+        cmd += ' %s.imiss.het.samples.sorted' %(self.o)
+        cmd += ' %s.sexcheck.samples.sorted' %(self.o)
+        cmd += ' | wc -l'
+        s = s.replace('${samples_remove_sex}',str(int(os.popen(cmd).read())))
+
         ## IBD
         s = s.replace(
             '${threshold_IBD_postHWE}',
-            self.options.threshold_pi_hat_max_postHWE,)
+            str(self.opts.threshold_pi_hat_max_postHWE),)
+        cmd = 'cat %s.prehardy.prune.in | wc -l' %(self.o)
+        s = s.replace('${SNPs_pruned}',str(int(os.popen(cmd).read())))
 
         ## SNP call rate
-        s = s.replace('${threshold_imiss}',self.options.threshold_lmiss)
+        s = s.replace('${threshold_lmiss}',str(100*self.opts.threshold_lmiss),)
 
         ## HWE
-        s = s.replace('${threshold_hwe}',str(self.options.threshold_hwe_min))
+        s = s.replace('${threshold_hwe}',str(self.opts.threshold_hwe_min),)
+        s = s.replace(
+            '${threshold_IBD_preHWE}',
+            str(self.opts.threshold_pi_hat_max_preHWE),)
+
+        ## SNP call rate, X chromosome
+        cmd = "cat %s.postQC.X.fam | awk '{if($5==1) print}' | wc -l" %(self.o)
+        s = s.replace('${samples_lmiss_X_males}',str(int(os.popen(cmd).read())))
+        cmd = "cat %s.postQC.X.fam | awk '{if($5==2) print}' | wc -l" %(self.o)
+        s = s.replace('${samples_lmiss_X_females}',str(int(os.popen(cmd).read())))
 
         ##
         ## various simple counts
@@ -155,32 +222,86 @@ class main:
         for suffix, var_tex in [
             ## sample QC
             ['sampleQC.samples','samples_remove_QC',],
+            ## IBD (pre HWE)
+            [
+                'genome.%.2f.samples' %(self.opts.threshold_pi_hat_max_preHWE),
+                'samples_remove_IBD_preHWE',],
             ## IBD (post HWE)
-            ['genome.0.90.samples','samples_remove_IBD_postHWE',],
+            [
+                'genome.%.2f.samples' %(self.opts.threshold_pi_hat_max_postHWE),
+                'samples_remove_IBD_postHWE',],
             ## SNP QC
             ['lmiss.hwe.SNPs','SNPs_exclude_SNPQC',],
-            ## SNP call rate
+            ## SNP call rate, autosomal
             ['lmiss.SNPs','SNPs_exclude_lmiss',],
+            ## HWE, autosomal
+            ['hwe.SNPs','SNPs_exclude_hwe',],
+            ## samples post QC
+            ['postQC.autosomes.fam','samples_postQC',],
+            ## SNPs post QC, autosomal
+            ['postQC.autosomes.bim','SNPs_postQC_autosomal',],
+            ## sample call rate
+            ['imiss.samples','samples_remove_imiss',],
+            ## SNP call rate, X
+            ['X.males.lmiss.SNPs','SNPs_lmissXMale',],
+            ['X.females.lmiss.SNPs','SNPs_lmissXFemale',],
+            ['X.lmiss.union.SNPs','SNPs_lmissXunion',],
+            ## HWE, X
+            ['X.females.hwe.SNPs','SNPs_exclude_X_HWE',],
+            ## SNPs post QC, X
+            ['postQC.X.bim','SNPs_postQC_X',],
             ]:
             cmd = 'cat %s.%s | wc -l' %(self.o,suffix)
             n = int(os.popen(cmd).read())
-            s = s.replace('${%s}' %(var_tex),n)
+            s = s.replace('${%s}' %(var_tex),str(n))
 
-        xxx
-        ${SNPs_exclude_hwe}
-        ${samples_postQC}
-        ${SNPs_postQC_autosomal}
-        ${samples_males_preQC}
-        ${samples_females_preQC}
-        ${samples_remove_imiss}
-        ${imiss_presampleQC}
-        ${imiss_postsampleQC}
-        ${samples_imiss_tr}
-        ${samples_remove_het}
-        ${samples_het_tr}
-        ${fig_het}
-        ${samples_remove_sex}
-        ${samples_sex_table}
+        ##
+        ## tables
+        ##
+        d_tables = {
+            'imiss':'samples_imiss_tr',
+            'het':'samples_het_tr',
+            'sexcheck':'samples_sexcheck_tr',
+            'lmiss':'SNPs_lmiss_tr',
+            'genome_outliers':'samples_genome_postHWE_tr',
+            'genome':'samples_genome_tr',
+            'hwe':'SNPs_hwe_tr',
+            'lmiss.X.males':'SNPs_lmissXMale_tr',
+            'lmiss.X.females':'SNPs_lmissXFemale_tr',
+            'hwe.X.females':'SNPs_hwe_X_tr',
+            }
+        for table_prefix,tex_key in d_tables.items():
+            cmd = 'cat %s.table' %(table_prefix)
+            cmd += ' | cut -f2-'
+            l = os.popen(cmd).read().strip().split('\n')[1:]
+            for i in xrange(len(l)):
+                l[i] = ' & '.join(l[i].replace('_','\\_').split())
+            s = s.replace('${%s}' %(tex_key),' \\\\\n'.join(l))
+
+        ##
+        ## figures
+        ##
+        s = s.replace('${fig_imiss}','{%s.imiss}.png' %(self.o))
+        s = s.replace('${fig_het}','{%s.het}.png' %(self.o))
+        s = s.replace('${fig_lmiss}','{%s.lmiss}.png' %(self.o))
+        s = s.replace('${fig_imiss_het}','{%s.het.call}.png' %(self.o))
+        s = s.replace('${fig_genome}','{%s.genome.max}.png' %(self.o))
+        s = s.replace('${fig_hwe}','{%s.hwe}.png' %(self.o))
+        s = s.replace('${fig_hwehet}','{%s.hwe.scatter}.png' %(self.o))
+        if os.path.isfile('%s.EIGENSOFT.evec' %(self.o)):
+            s = s.replace('${fig_PCAwithin12}','{%s.EIGENSOFT.evec.pc1.pc2}.png' %(self.o))
+            s = s.replace('${fig_PCAwithin34}','{%s.EIGENSOFT.evec.pc1.pc2}.png' %(self.o))
+        else:
+            s = s.replace('${fig_PCAwithin12}','{%s.imiss}.png' %(self.o))
+            s = s.replace('${fig_PCAwithin34}','{%s.imiss}.png' %(self.o))
+
+        for i in xrange(len(l_keys_tex)):
+            key_tex = l_keys_tex[i]
+            s = s.replace('${%s}' %(key_tex),l_vals_tex[i])
+
+##        if '${' in s:
+##            print s
+##            stop
 
         return s
 
@@ -424,11 +545,12 @@ the postscript terminal does not support transparency
         bool_remove = True,
         ## style
         color = 'blue',
-        xlabel=None, ylabel=None, title = None,
-        x_min=None,x_max=None,y_min=None,y_max=None,
+        xlabel=None, ylabel=None, title=None,
+        x_min=None,x_max=None,y_min=None,y_max='',
         x_step = None, ## width of boxes
         tic_step = None, ## tics on axis
         bool_timestamp = False,
+        lines_extra = None,
         ):
 
         if not prefix_out:
@@ -486,7 +608,7 @@ the postscript terminal does not support transparency
         ## smooth.dem
         sett += [
             'plot [:][:%s]"%s" u (hist(%s,width)):(1.0) smooth freq w boxes lc rgb"%s" notitle\n' %(
-                y_max, fileprefix, column, color,
+                y_max, prefix_in, column, color,
                 ),
             ]
 
@@ -526,6 +648,7 @@ the postscript terminal does not support transparency
 
 
     def gnuplot_scatter(
+        self,
         prefix,
         xlabel='',ylabel='',
         title=None,
@@ -555,23 +678,6 @@ the postscript terminal does not support transparency
             }
         
         sett = []
-
-    ##    regression = False ## tmp!!!
-
-        if regression == True:
-            sett += [
-    ##            'set fit logfile "%s.log"\n' %(prefix),
-                'f(x) = a*x+b\n',
-                ]
-            ## separate set of data to fit to? (e.g. if errorbars is main plot...)
-            if regression_data:
-                sett += [
-                    'fit f(x) "%s" via a,b\n' %(regression_data),
-                    ]
-            else:
-                sett += [
-                    'fit f(x) "%s" via a,b\n' %(prefix),
-                    ]
                
         sett += [
             'set terminal %s\n' %(d_terminal[terminal]),
@@ -634,7 +740,7 @@ the postscript terminal does not support transparency
         '''This function is not called from anywhere at the moment...'''
 
         for pc in xrange(1,11):
-            gnuplot_histogram((
+            self.gnuplot_histogram(
                 '%s.posthardy.EIGENSOFT.snpweight' %(self.o),
 ##                'tmp6.snpweight',
                 prefix_out = '%s.posthardy.EIGENSOFT.%i.snpweight' %(self.o,pc,),
@@ -803,7 +909,7 @@ the postscript terminal does not support transparency
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_scatter(
+        self.gnuplot_scatter(
             '%s.hwe.scatter' %(self.o),
             column1 = '$7', column2 = '$8',
             line_plot = line_plot,
@@ -1160,7 +1266,7 @@ the postscript terminal does not support transparency
         for i in xrange(numbins):
             pi_hat_max = (i+1)*((.20-0.)/numbins)
             l_pi_hat_max += [pi_hat_max]
-        l_pi_hat_max += [0.5,0.9,]
+        l_pi_hat_max += [0.5,0.9,1.0,]
 
         ##
         ## related samples at different thresholds
@@ -1172,13 +1278,16 @@ the postscript terminal does not support transparency
         l = [self.i]
         l_header = ['#']
         for pi_hat_max in l_pi_hat_max:
-            cmd = 'python %s/QC_IBD_prune.py ' %(os.path.dirname(sys.argv[0]))
-            cmd += '--pi_hat_max %.02f --genome %s.prehardy --imiss %s --out %s\n\n' %(
-                pi_hat_max, self.o, self.o, self.o,
-                )
-            self.execmd(cmd)
-            cmd = 'cat %s.genome.%.2f.samples | wc -l' %(self.o,pi_hat_max,)
-            n = n_samples-int(os.popen(cmd).read())
+            if pi_hat_max == 1:
+                n = n_samples
+            else:
+                cmd = 'python %s/QC_IBD_prune.py ' %(os.path.dirname(sys.argv[0]))
+                cmd += '--pi_hat_max %.02f --genome %s.prehardy --imiss %s --out %s\n\n' %(
+                    pi_hat_max, self.o, self.o, self.o,
+                    )
+                self.execmd(cmd)
+                cmd = 'cat %s.genome.%.2f.samples | wc -l' %(self.o,pi_hat_max,)
+                n = n_samples-int(os.popen(cmd).read())
             l += ['%s' %(n)]
             l_header += ['%.2f' %(pi_hat_max)]
 
@@ -1208,7 +1317,7 @@ the postscript terminal does not support transparency
         ##
         cmd = '''awk 'NR>1{if($10>0.9) print $1,$3,$10}' %s.prehardy.genome''' %(self.o)
         lines = os.popen(cmd).readlines()
-        s = ''
+        s = '## someheader\n'
         for line in lines:
             s += '%s\t%s\n' %(self.i,'\t'.join(line.split()))
         fn_out = 'genome_outliers.table'
@@ -1316,7 +1425,8 @@ the postscript terminal does not support transparency
 
         ## write stats to file
         fd = open('het.stats','w')
-        fd.write('%s %f %f\n' %(self.i,average,3*stddev,))
+        fd.write('%s %f %f\n' %(
+            self.i,average,self.opts.threshold_het_stddev*stddev,))
         fd.close()
 
         ## histogram
@@ -1355,10 +1465,22 @@ the postscript terminal does not support transparency
         l += [str(int(v)) for v in l_histogram[0]]
         ## greater than upper
         l += [str((cumfreq_extrapoints))]
+        l += [str(len(l_het))]
+
         s = '\t'.join(l)
-        line = '%s\t%s\n' %(self.i,s,)
+        tr = '%s\t%s\n' %(self.i,s,)
+
+        l = ['-$\\infty$']
+        l += [str(i) for i in xrange(
+            -int(self.opts.threshold_het_stddev),
+            +int(self.opts.threshold_het_stddev)+1,
+            )]
+        l += ['$\\infty$']
+        l = ['[%s:%s)' %(l[i],l[i+1]) for i in xrange(len(l)-1)]
+        th = '#\t'+'\t'.join(l)+'\n'
+
         fd = open(fn_table,'a')
-        fd.write(line)
+        fd.write(th+tr)
         fd.close()
 
         self.execmd('sort %s -k1,1 -u -o %s' %(fn_table,fn_table))
@@ -1482,7 +1604,7 @@ the postscript terminal does not support transparency
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_histogram((
+        self.gnuplot_histogram(
 ##                '%s.hwe' %(bfile),
             '%s.hwe.dat' %(self.o),
             prefix_out = '%s.hwe' %(self.o),
@@ -1677,7 +1799,7 @@ the postscript terminal does not support transparency
             if self.bool_verbose == True: bool_timestamp = True
             else: bool_timestamp = False
 
-            gnuplot_scatter(
+            self.gnuplot_scatter(
                 '%s.evec' %(self.o),
                 line_plot = line_plot,
                 xlabel = 'PC%i' %(pc1),
@@ -1857,7 +1979,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 if self.bool_verbose == True:
                     bool_timestamp = True
 
-                gnuplot_scatter(
+                self.gnuplot_scatter(
                     '%s.mds' %(self.o),
         ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(self.o,self.o),
         ##            s_plot = s_plot,
@@ -2078,7 +2200,7 @@ it's ugly and I will not understand it 1 year form now.'''
             if self.bool_verbose == True:
                 bool_timestamp = True
 
-            gnuplot_scatter(
+            self.gnuplot_scatter(
                 '%s.%s.mds' %(self.o,self.fn1000g,),
                 line_plot = line_plot,
                 column1 = 4-1+c1, column2 = 4-1+c2,
@@ -2134,7 +2256,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_scatter(
+        self.gnuplot_scatter(
             '%s.frq.hwe' %(self.o),
             line_plot = line_plot,
             column1 = '(1-$6)', column2 = 12,
@@ -2279,11 +2401,13 @@ it's ugly and I will not understand it 1 year form now.'''
         ## vertical lines
         if bool_with_stddev == True:
             l_arrows += ['set arrow from %f,graph(0) to %f,graph(1) ' %(
-                average-3*stddev,average-3*stddev,
+                average-self.opts.threshold_het_stddev*stddev,
+                average-self.opts.threshold_het_stddev*stddev,
                 )]
             l_arrows += ['nohead lc 0 lt 1 lw 3\n']
             l_arrows += ['set arrow from %f,graph(0) to %f,graph(1) ' %(
-                average+3*stddev,average+3*stddev,
+                average+self.opts.threshold_het_stddev*stddev,
+                average+self.opts.threshold_het_stddev*stddev,
                 )]
             l_arrows += ['nohead lc 0 lt 1 lw 3\n']
 
@@ -2306,13 +2430,13 @@ it's ugly and I will not understand it 1 year form now.'''
                 color = d_colors[threshold]
                 l_arrows += [
                     'set arrow from %f,graph(0) to %f,graph(1) ' %(
-                        average_w_exclusion-3*stddev_w_exclusion,
-                        average_w_exclusion-3*stddev_w_exclusion,
+                        average_w_exclusion-self.opts.threshold_het_stddev*stddev_w_exclusion,
+                        average_w_exclusion-self.opts.threshold_het_stddev*stddev_w_exclusion,
                         ),
                     'nohead lc rgb"%s" lt 2 lw 3\n' %(color),
                     'set arrow from %f,graph(0) to %f,graph(1) ' %(
-                        average_w_exclusion+3*stddev_w_exclusion,
-                        average_w_exclusion+3*stddev_w_exclusion,
+                        average_w_exclusion+self.opts.threshold_het_stddev*stddev_w_exclusion,
+                        average_w_exclusion+self.opts.threshold_het_stddev*stddev_w_exclusion,
                         ),
                     'nohead lc rgb"%s" lt 2 lw 3\n' %(color),
                     ]
@@ -2320,8 +2444,8 @@ it's ugly and I will not understand it 1 year form now.'''
 
         if bool_with_stddev == True:
             line_plot = 'plot [%f:%f][:1]' %(
-                min(het_min,average-3*stddev,)-0.001,
-                max(het_max,average+3*stddev,)+0.001,
+                min(het_min,average-self.opts.threshold_het_stddev*stddev,)-0.001,
+                max(het_max,average+self.opts.threshold_het_stddev*stddev,)+0.001,
                 )
         else:
             line_plot = 'plot [:][:1]'
@@ -2350,18 +2474,18 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_scatter(
+        self.gnuplot_scatter(
             '%s.het.call' %(self.o),
 ##            s_plot = '"< paste %s.het %s.imiss" u (($5-$3)/$5):(1-$12)' %(bfile,bfile,),
             line_plot = line_plot,
             column1 = '(1-$6)', column2 = 12,
             xlabel = 'heterozygosity',
             ylabel = 'call rate',
-            title='%s (n_{samples}=%i, n_{SNPs}=%i)' %(
+            title = '%s (n_{samples}=%i, n_{SNPs}=%i)' %(
                 self.i.replace('_','\\\\_'),n_samples,n_SNPs,
                 ),
             lines_extra = l_arrows,
-            bool_timestamp=bool_timestamp,
+            bool_timestamp = bool_timestamp,
             )
 
         os.remove('%s.sex.opposite.dat' %(self.o))
@@ -3213,6 +3337,8 @@ it's ugly and I will not understand it 1 year form now.'''
             l_cmds += [cmd]
 
         elif plink_cmd == 'check-sex':
+            cmd = 'echo %s.sexcheck >> %s.touch\n' %(self.o,self.o,)
+            l_cmds += [cmd]
             cmd = '''awk '{if($5=="PROBLEM") print $1,$2}' '''
             cmd += ' %s.sexcheck > %s.sexcheck.samples' %(self.o, self.o,)
             l_cmds += [cmd]
@@ -3258,6 +3384,8 @@ it's ugly and I will not understand it 1 year form now.'''
             ## if output exists
             ##
             cmd = 'if [ -s %s.hwe ]; then\n' %(self.o,)
+
+            cmd += 'echo %s.hwe >> %s.touch\n' %(self.o,self.o,)
 
             cmd += "awk '{if ($9 < %.1e) print $2}' %s.hwe > %s.hwe.SNPs\n" %(
                 float(self.opts.threshold_hwe_min), self.o,self.o,)
@@ -4141,16 +4269,18 @@ it's ugly and I will not understand it 1 year form now.'''
 
             l_arrows = [
                 'set arrow from %f,0 to %f,graph(1) nohead lc 0\n' %(
-                    average-3*stddev,average-3*stddev,
+                    average-self.opts.threshold_het_stddev*stddev,
+                    average-self.opts.threshold_het_stddev*stddev,
                     ),
                 'set arrow from %f,0 to %f,graph(1) nohead lc 0\n' %(
-                    average+3*stddev,average+3*stddev,
+                    average+self.opts.threshold_het_stddev*stddev,
+                    average+self.opts.threshold_het_stddev*stddev,
                     ),
                 ]
 
             s_plot = 'plot [%f:%f]"%s" ' %(
-                min(het_min,average-3*stddev,)-2*x_step,
-                max(het_max,average+3*stddev,)+2*x_step,
+                min(het_min,average-self.opts.threshold_het_stddev*stddev,)-2*x_step,
+                max(het_max,average+self.opts.threshold_het_stddev*stddev,)+2*x_step,
                 fn_plot,
                 )
             s_plot += 'u (hist($5,width)):(1.0) smooth freq w boxes '
@@ -4181,7 +4311,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_histogram((
+        self.gnuplot_histogram(
             '%s.het' %(self.o),
 ##            x_min=het_min,x_max=het_max,#tic_step=0.05,
             x_step = x_step,
@@ -4291,7 +4421,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 ],
             ]:
 
-            gnuplot_histogram((
+            self.gnuplot_histogram(
                 prefix,
                 x_min=x_min,
                 x_step=x_step,
@@ -4331,7 +4461,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_verbose == True:
             bool_timestamp = True
 
-        gnuplot_histogram((
+        self.gnuplot_histogram(
             '%s.postIBD.frq' %(self.o),
             x_step=x_step,
             x_max=0.5,
@@ -4376,7 +4506,7 @@ it's ugly and I will not understand it 1 year form now.'''
             float(self.opts.threshold_lmiss),
             min([float(s) for s in os.popen(cmd).readlines()]),)
     
-        gnuplot_histogram((
+        self.gnuplot_histogram(
             '%s.SNPQC.lmiss' %(self.o),
             prefix_out='%s.lmiss' %(self.o),
             column='(1-$5)',
@@ -4416,7 +4546,7 @@ it's ugly and I will not understand it 1 year form now.'''
         if self.bool_verbose == True:
             bool_timestamp = True
    
-        gnuplot_histogram((
+        self.gnuplot_histogram(
             '%s.imiss' %(self.o),
             column='(1-$6)',
 ##            x_step=.0001,
@@ -4429,6 +4559,7 @@ it's ugly and I will not understand it 1 year form now.'''
                 ),
             color = 'orange',
             bool_timestamp = True,
+            bool_remove = False,
             )
 
         return
