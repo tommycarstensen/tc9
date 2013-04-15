@@ -59,11 +59,11 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
-        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
-
         self.IMPUTE2(l_chroms,d_chrom_lens,)
-        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
+##        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
+##
+####        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
+####        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
 
@@ -146,19 +146,21 @@ class main():
 
     def IMPUTE2_unite(self,l_chroms,d_chrom_lens,):
 
-        ##
-        ## 1) check input existence
-        ##
-        l_fp_in = []
-        for chrom in l_chroms:
-            index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-            for index in xrange(1,index_max+1):
-                ## use summary instead of genotype file, because of
-                ## --read 0 SNPs in the analysis interval+buffer region
-                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
-                    chrom,chrom,index)]
-        self.check_in('IMPUTE2',l_fp_in)
+        print 'IMPUTE2_unite'
+
+##        ##
+##        ## 1) check input existence
+##        ##
+##        l_fp_in = []
+##        for chrom in l_chroms:
+##            index_max = int(math.ceil(
+##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+##            for index in xrange(1,index_max+1):
+##                ## use summary instead of genotype file, because of
+##                ## --read 0 SNPs in the analysis interval+buffer region
+##                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
+##                    chrom,chrom,index)]
+##        self.check_in('IMPUTE2',l_fp_in)
 
         ##
         ## 2) touch
@@ -233,30 +235,34 @@ class main():
 ##            bool_exit = True
 ##        if bool_exit == True: sys.exit(0)
 
-        print 'checking in stdout that all jobs were successfully completed'
-        l = os.listdir('stdout')
-        for s in l:
-            if os.path.isdir('stdout/%s' %(s)):
-                for fn in os.listdir('stdout/%s' %(s)):
-                    fp = os.path.join('stdout',s,fn)
-                    self.check_out_line(fp)
-            ## elif os.path.isfile('stdout/%s' %(s)):
-            else:
-                fp = os.path.join('stdout',s)
-                self.check_out_line(fp)
+##        print 'checking in stdout that all jobs were successfully completed'
+##        l = os.listdir('stdout')
+##        for s in l:
+##            if os.path.isdir('stdout/%s' %(s)):
+##                for fn in os.listdir('stdout/%s' %(s)):
+##                    fp = os.path.join('stdout',s,fn)
+##                    self.check_out_line(fp)
+##            ## elif os.path.isfile('stdout/%s' %(s)):
+##            else:
+##                fp = os.path.join('stdout',s)
+##                self.check_out_line(fp)
 
         return
 
 
     def check_out_line(self,fp):
 
-        line = os.popen("tail -n19 %s | head -n1" %(fp)).read().strip()
-##        if line != "Successfully completed.":
-        if line not in [
-            "Successfully completed.",
-            "Exited with exit code 127.",
-            "Exited with exit code 1.",
-            ]: ## tmp!!!
+        bool_exit = True
+        for i in [14,19,]:
+            line = os.popen("tail -n%i %s | head -n1" %(i,fp)).read().strip()
+            if line in [
+                "Successfully completed.",
+                "Exited with exit code 127.",
+                "Exited with exit code 1.",
+                ]: ## tmp!!!
+                bool_exit = False
+                break
+        if bool_exit == True:
             print 'not finished:', fp
             sys.exit()
 
@@ -330,7 +336,8 @@ class main():
         cmd += ' | sort -u > markers%s' %(chrom)
         self.execmd(cmd)
 
-        cmd = "awk '{print $1}' out_BEAGLE/%s/%s.*.like.r2" %(chrom,chrom)
+##        cmd = "awk '{print $1}' out_BEAGLE/%s/%s.*.like.r2" %(chrom,chrom)
+        cmd = "awk 'FNR>1{print $1}' out_BEAGLE/%s/%s.*.like.gprobs" %(chrom,chrom)
         cmd += ' | sort -u > gprobs%s' %(chrom)
         self.execmd(cmd)
 
@@ -365,15 +372,15 @@ class main():
             d_index2pos[index] = [pos1,pos2,]
         fp_out = 'out_BEAGLE/%s.gprobs' %(chrom,)
         for index in xrange(1,max(d_index2pos.keys())+1,):
+            fp_in = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index,)
+            if not os.path.isfile(fp_out):
+                cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
+                self.execmd(cmd)
             if index % 10 == 0:
                 print 'BEAGLE_unite', chrom, index
-            fp_in = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index,)
             if not os.path.isfile(fp_in):
                 print 'missing', fp_in
                 stop
-            if index == 1:
-                cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
-                self.execmd(cmd)
             pos1 = d_index2pos[index][0]
             pos2 = d_index2pos[index][1]
             cmd = "awk 'NR>1{pos=int(substr($1,%i));" %(len(chrom)+2)
@@ -416,6 +423,8 @@ class main():
             self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
+        sys.exit() ## tmp!!!
+
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
 
@@ -455,7 +464,7 @@ class main():
             cmd).read().strip().split('\n')])
         for index,variants in d_index2variants.items():
             ## memory requirement/usage different if not 100 samples?
-            dev = fudgefactor = 120
+            dev = fudgefactor = 120+175
             intersect = 255
             slope = 4247.268
             memMB = dev+intersect+int(slope*int(variants)/100000.)
@@ -584,13 +593,16 @@ class main():
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-m
         ## Ask Deepti whether a different recombination map file should be used
         lines += ['-m $map \\']
-        ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html#-int
-        lines += ['-int $(((${LSB_JOBINDEX}-1)*%i+1)) $posmax \\' %(self.i_IMPUTE2_size)]
 
         ##
         ## Basic options
-        ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html
+        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html#basic_options
         ##
+        ## http://mathgen.stats.ox.ac.uk/impute/basic_options.html#-int
+        lines += ['-int $(((${LSB_JOBINDEX}-1)*%i+1)) $posmax \\' %(self.i_IMPUTE2_size)]
+        lines += ['-buffer 250',]
+        lines += ['-Ne 20000',]
+        lines += ['-call_thresh 0.9',]
 
         ##
         ## Output file options
@@ -607,6 +619,15 @@ class main():
         lines += ['-l %s \\' %(s_legend,)]
         ## http://mathgen.stats.ox.ac.uk/impute/input_file_options.html#-h
         lines += ['-h %s \\' %(s_haps,)]
+
+        ##
+        ## MCMC OPTIONS
+        ##
+        ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html#mcmc_options
+        lines += ['-iter 30 \\']
+        lines += ['-burnin 10 \\']
+        lines += ['-k 80 \\']
+        lines += ['-k_hap 500 \\']
 
         return lines
 
@@ -757,7 +778,13 @@ class main():
             ## whether markers and phased should be appended or not
             ##
             while True:
+                ##
+                ## 1) same position
+                ##
                 if pos_phased == position:
+                    ##
+                    ## 1a) markers identical
+                    ##
                     if (
                         alleleA_phased == alleleA_like
                         and
@@ -765,17 +792,18 @@ class main():
                         ):
                         bool_append_markphas = True
                         pass
+                    ##
+                    ## 1b) markers different
+                    ##
                     else:
-                        if position == 145832256:
-                            stop1a
                         bool_append_markphas = False
                         pos_phased_prev = pos_phased
                         while True:
                             ## read markers and phased
                             line_phased = fd_phased.readline()
                             line_markers = fd_markers.readline()
-                            pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
-                                line_markers)
+                            (pos_phased, alleleA_phased, alleleB_phased
+                             ) = self.parse_marker(line_markers)
                             if pos_phased > pos_phased_prev:
                                 break
                             else:
@@ -783,18 +811,22 @@ class main():
                             continue
                         pass
                     break
-                ## continue loop over genotype likelihoods
+                ##
+                ## 2) continue loop over genotype likelihoods ("panel 2")
+                ##
                 elif position < pos_phased:
                     bool_append_markphas = False
                     break
-                ## continue loop over markers
+                ##
+                ## 3) continue loop over markers ("panel 0")
+                ##
                 ## elif position > pos_phased:
                 else:
                     ## INDEL
                     if pos_phased == pos_prev:
                         lines_out_markers1 += [line_markers]
                         lines_out_phased1 += [line_phased]
-                        if bool_BOF2 == True:
+                        if bool_BOF2 == True and pos_phased > pos_term1-edge:
                             lines_out_markers2 += [line_markers]
 ##                            lines_out_phased2 += [line_phased]
                     ## SNP unique to panel 0
@@ -809,6 +841,9 @@ class main():
                     ## read markers and phased
                     line_phased = fd_phased.readline()
                     line_markers = fd_markers.readline()
+                    if line_markers == '':
+                        bool_append_markphas = False
+                        break
                     pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
                         line_markers)
                     continue
@@ -938,7 +973,7 @@ class main():
                 line_markers = fd_markers.readline()
                 line_phased = fd_phased.readline()
                 pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
-                    line_markers)                
+                    line_markers)
 
             ## continue loop over genotype likelihoods
             continue
@@ -1086,9 +1121,12 @@ class main():
             fp_out_prefix,index-1)
         pos_prev_like = int(os.popen(cmd).read().split(':')[1])
 
-        cmd = 'tail -n1 %s.%i.markers | cut -d " " -f1' %(
+        cmd = 'tail -n1 %s.%i.markers' %(
             fp_out_prefix,index-1)
-        pos_prev_markers = int(os.popen(cmd).read().split(':')[1])
+        l = os.popen(cmd).read().strip().split()
+        pos_prev_markers = int(l[1])
+        alleleA_prev = l[2]
+        alleleB_prev = l[3]
 
 ##        cmd = 'tail -n1 %s.%i.phased | cut -d " " -f2' %(
 ##            fp_out_prefix,index-1)
@@ -1108,7 +1146,10 @@ class main():
 
         bool_found = False
         for i in xrange(len(lines_out_markers1)):
-            if pos_prev_markers == int(lines_out_markers1[i].split()[0].split(':')[1]):
+            l = lines_out_markers1[i].split()
+            alleleA = l[2]
+            alleleB = l[3]
+            if pos_prev_markers == int(l[1]):
                 bool_found = True
                 break
         if bool_found == True:
@@ -1154,10 +1195,11 @@ class main():
         ## and use the "known" option with the 1000G reference)"
         ## ask Deepti what the "known" option is...
 
-        ## For haplotype phase inference and imputation of missing data
+        ## "For haplotype phase inference and imputation of missing data
         ## with default BEAGLE options,
-        ## memory usage increases with the number of markers.
-        memMB = 3700
+        ## memory usage increases with the number of markers."
+        ## but not bloody linear...
+        memMB = 3900
         ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
         ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
@@ -1196,22 +1238,42 @@ class main():
         ## split further into smaller fragments
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
-        for chrom in l_chroms:
-            d_index2pos = self.BEAGLE_divide(chrom,)
-            d_indexes[chrom] = d_index2pos
-            continue
-            ## clean up
-            os.remove(
-                'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(
-                    chrom))
 
-        s = ''
-        for chrom,d_index2pos in d_indexes.items():
-            for index,[pos1,pos2,] in d_index2pos.items():
-                s += '%s %i %i %i\n' %(chrom,index,pos1,pos2,)
-        fd = open('BEAGLE_divide_indexes.txt','w')
-        fd.write(s)
-        fd.close()
+        if not (
+            os.path.isfile('BEAGLE_divide_indexes.txt')
+            and
+            os.path.isdir('in_BEAGLE')
+            ):
+            for chrom in l_chroms:
+                d_index2pos = self.BEAGLE_divide(chrom,)
+                d_indexes[chrom] = d_index2pos
+                continue
+                ## clean up
+                os.remove(
+                    'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(
+                        chrom))
+
+            s = ''
+            for chrom,d_index2pos in d_indexes.items():
+                for index,[pos1,pos2,] in d_index2pos.items():
+                    s += '%s %i %i %i\n' %(chrom,index,pos1,pos2,)
+            fd = open('BEAGLE_divide_indexes.txt','w')
+            fd.write(s)
+            fd.close()
+        else:
+            d_indexes = {}
+            for chrom in l_chroms:
+                d_indexes[chrom] = {}
+            fd = open('BEAGLE_divide_indexes.txt','r')
+            lines = fd.readlines()
+            fd.close()
+            for line in lines:
+                l = line.strip().split()
+                chrom = l[0]
+                index = int(l[1])
+                pos1 = int(l[2])
+                pos2 = int(l[3])
+                d_indexes[chrom][index] = [pos1,pos2,]
 
         ##
         ## execute shell script
@@ -1331,8 +1393,8 @@ class main():
 
         lines += [' verbose=false \\'] ## default false
 
-##        lines += [' lowmem=true \\'] ## default false
-        lines += [' lowmem=false \\'] ## tmp!!!
+##        lines += [' lowmem=false \\'] ## default false
+        lines += [' lowmem=true \\'] ## default false
 
         ## non-optional output prefix
         lines += [' out=%s \\' %(fp_out)]
@@ -1425,6 +1487,11 @@ class main():
             print '%s and possibly %s other files not generated.' %(
                 list(set(l_fp_in)-set(l_fp_out))[0],
                 len(set(l_fp_in)-set(l_fp_out))-1,)
+##            for fp in list(set(l_fp_in)-set(l_fp_out)):
+##                os.system('touch touch/%s' %(fp))
+##            for fp in list(set(l_fp_in)-set(l_fp_out)):
+##                if os.path.isfile('%s' %(fp[:-8])):
+##                    os.system('touch touch/%s' %(fp))
             print '%s has not run to completion. Exiting.' %(analysis_type)
             bool_exit = True
             sys.exit()
@@ -1768,7 +1835,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
         queue = 'normal'
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
-        memMB = 3000
+        memMB = 1900 ## 2600 if 250 samples at 4x
 
         ##
         ## 1) touch
@@ -1930,17 +1997,23 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## as this will influence CPU statistics
         ## and risk job of hitting CPU walltime
         s = "bsub -R 'select[mem>1500] rusage[mem=1500]' -M1500000 \\\n"
-        s += ' -o stdout/post%s.out \\\n' %(analysis_type)
-        s += ' -e stderr/post%s.err \\\n' %(analysis_type)
+        s += ' -o stdout/rerun.out \\\n'
+        s += ' -e stderr/rerun.err \\\n'
         s += ' -G %s \\\n' %(self.project)
-        s += ' /software/bin/python-2.7.3'
-        s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
-        for k,v in vars(self.namespace_args).items():
-            s += ' --%s %s' %(k,str(v).replace('$','\\$'))
+        s += ' bash ./rerun_python.sh'
         fd = open('rerun.sh','w')
         fd.write(s)
         fd.close()
         self.execmd('chmod +x rerun.sh')
+
+        s = ' /software/bin/python-2.7.3'
+        s += ' %s/GATK_pipeline2.py' %(os.path.dirname(sys.argv[0]))
+        for k,v in vars(self.namespace_args).items():
+            s += ' --%s %s' %(k,str(v).replace('$','\\$'))
+        fd = open('rerun_python.sh','w')
+        fd.write(s)
+        fd.close()
+        self.execmd('chmod +x rerun_python.sh')
 
         ## cont cmd
         lines += ['bash ./rerun.sh']
@@ -2291,6 +2364,10 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 k = l[0]
                 v = l[1]
                 setattr(self,k,v)
+
+        if self.f_ApplyRecalibration_ts_filter_level not in [None,'None',]:
+            if self.f_ApplyRecalibration_ts_filter_level < 1:
+                self.f_ApplyRecalibration_ts_filter_level *= 100.
 
         if self.name == None:
             self.name = os.path.basename(self.fp_bams)
