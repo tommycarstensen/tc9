@@ -30,6 +30,10 @@ import argparse
 
 ## todo20130320: tc9: test memory requirements when more than 100 samples
 
+## todo20130423: tc9: skip the ProduceBeagleInput (and ApplyRecalibration) step(s) to save disk space and CPU time
+
+## todo20130424: tc9: run BEAGLE_divide in parallel for each chromosome
+
 class main():
 
     def main(self):
@@ -229,12 +233,15 @@ class main():
 ##        ## ==
 ##        ## "Successfully completed."
 ##        print 'checking in stdout that no jobs were terminated prematurely'
-##        s = os.popen('fgrep TERM_ stdout/*/*.out').read().strip()
+##        s = os.popen('fgrep TERM stdout/*/*.out').read().strip()
 ##        if s != '':
 ##            print s
 ##            bool_exit = True
 ##        if bool_exit == True: sys.exit(0)
-
+##
+##        ##
+##        ## faster to just check for file output... this step is redundant...
+##        ##
 ##        print 'checking in stdout that all jobs were successfully completed'
 ##        l = os.listdir('stdout')
 ##        for s in l:
@@ -244,6 +251,7 @@ class main():
 ##                    self.check_out_line(fp)
 ##            ## elif os.path.isfile('stdout/%s' %(s)):
 ##            else:
+##                continue
 ##                fp = os.path.join('stdout',s)
 ##                self.check_out_line(fp)
 
@@ -257,8 +265,8 @@ class main():
             line = os.popen("tail -n%i %s | head -n1" %(i,fp)).read().strip()
             if line in [
                 "Successfully completed.",
-                "Exited with exit code 127.",
-                "Exited with exit code 1.",
+##                "Exited with exit code 127.",
+##                "Exited with exit code 1.",
                 ]: ## tmp!!!
                 bool_exit = False
                 break
@@ -284,7 +292,7 @@ class main():
         cmd += " | awk '{"
         cmd += ' max=0;'
         cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
-        cmd += " if(max>0.9) {print $1}"
+        cmd += " if(max>=0.9) {print $1}"
 ##        cmd += 'print $1'
         cmd += " }'"
         cmd += ' > in%s' %(chrom)
@@ -474,8 +482,8 @@ class main():
             if os.path.isfile(fp_out):
                 if os.path.getsize(fp_out) > 0:
                     continue ## redundant
-            index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+##            index_max = int(math.ceil(
+##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
             J = '%s.%s.%s' %(dn_suffix,chrom,index,)
             std_suffix = '%s/%s.%s.%s' %(dn_suffix,dn_suffix,chrom,index,)
             cmd = self.bsub_cmd(
@@ -754,6 +762,13 @@ class main():
             pos_panel2 = pos_like = pos = position = int(l_chrom_pos[1])
             alleleA_like = l[1]
             alleleB_like = l[2]
+            ## ignore INDELs
+##            if (
+##                alleleA_like not in ['A','C','G','T',] or
+##                alleleB_like not in ['A','C','G','T',]
+##                ): continue
+            if len(alleleA_like) > 1 or len(alleleB_like) > 1:
+                continue
 
             ##
             ## avoid multiple comparisons of large integers
@@ -802,6 +817,11 @@ class main():
                             ## read markers and phased
                             line_phased = fd_phased.readline()
                             line_markers = fd_markers.readline()
+                            ## last marker is in the genotype probability file and not the markers file
+                            ## e.g. 7:159128574 in fula4x
+                            if line_markers == '':
+                                bool_append_markphas = False
+                                break
                             (pos_phased, alleleA_phased, alleleB_phased
                              ) = self.parse_marker(line_markers)
                             if pos_phased > pos_phased_prev:
@@ -1044,7 +1064,11 @@ class main():
         self.execmd(cmd)
 
         cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
-        cmd += " | awk '{print $1}' | sort > panel2in%s" %(chrom)
+        cmd += " | awk '{if("
+        cmd += '($2=="A"||$2=="C"||$2=="G"||$2=="T")'
+        cmd += ' && '
+        cmd += '($3=="A"||$3=="C"||$3=="G"||$3=="T")'
+        cmd += ") print $1}' | sort > panel2in%s" %(chrom)
         self.execmd(cmd)
 
         cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
@@ -1279,13 +1303,17 @@ class main():
         ## execute shell script
         ##
         for chrom in l_chroms:
-            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
-            std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
-            cmd = self.bsub_cmd(
-                'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,
-                queue=queue,)
-            print cmd
-            os.system(cmd)
+
+            print 'bsub BEAGLE %s' %(chrom)
+
+##            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
+            for index in d_indexes[chrom].keys():
+                J = '%s.%s[%s-%s]' %('BEAGLE',chrom,index,index,)
+                std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
+                cmd = self.bsub_cmd(
+                    'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,
+                    queue=queue,)
+                os.system(cmd)
 
         return
 
@@ -1473,28 +1501,38 @@ class main():
 ##        fd.close()
 ##        l_fp_out = s.split('\n')
 
-        l = os.listdir(os.path.join('touch','out_%s' %(analysis_type)))
-        l_fp_out = [os.path.join('out_%s' %(analysis_type),fn) for fn in l]
-        ## append files in subdirectories (e.g. BEAGLE and IMPUTE2)
-        for s in l:
-            if os.path.isdir(os.path.join('out_%s' %(analysis_type),s)):
-                l = os.listdir(os.path.join('touch','out_%s' %(analysis_type),s))
-                for fn in l:
-                    l_fp_out += [os.path.join('out_%s' %(analysis_type),s,fn) ]
+        d_l_fp_out = {}
+        for dirname in ['','touch',]:
+            d_l_fp_out[dirname] = []
+            l = os.listdir(os.path.join(dirname,'out_%s' %(analysis_type)))
+            for s in l:
+                path1 = os.path.join('out_%s' %(analysis_type),s)
+                path2 = os.path.join(dirname,path1)
+                ## append files in chromosomal subdirectories (e.g. BEAGLE and IMPUTE2)
+                if os.path.isdir(path2):
+                    l = os.listdir(path2)
+                    for fn in l:
+                        d_l_fp_out[dirname] += [os.path.join(path1,fn)]
+                ## append files in main dir (e.g. UnifiedGenotyper)
+                elif os.path.isfile(path2):
+                    d_l_fp_out[dirname] += [path1]
 
         bool_exit = False
-        if len(set(l_fp_in)-set(l_fp_out)) > 0:
-            print '%s and possibly %s other files not generated.' %(
-                list(set(l_fp_in)-set(l_fp_out))[0],
-                len(set(l_fp_in)-set(l_fp_out))-1,)
-##            for fp in list(set(l_fp_in)-set(l_fp_out)):
-##                os.system('touch touch/%s' %(fp))
-##            for fp in list(set(l_fp_in)-set(l_fp_out)):
-##                if os.path.isfile('%s' %(fp[:-8])):
+        for dirname,l_fp_out in d_l_fp_out.items():
+            if len(set(l_fp_in)-set(l_fp_out)) > 0:
+                print '%s and possibly %s other files not generated.' %(
+                    list(set(l_fp_in)-set(l_fp_out))[0],
+                    len(set(l_fp_in)-set(l_fp_out))-1,)
+                print 'dirname', dirname
+##                for fp in list(set(l_fp_in)-set(l_fp_out)):
 ##                    os.system('touch touch/%s' %(fp))
-            print '%s has not run to completion. Exiting.' %(analysis_type)
-            bool_exit = True
-            sys.exit()
+##                stop
+    ##            for fp in list(set(l_fp_in)-set(l_fp_out)):
+    ##                if os.path.isfile('%s' %(fp[:-8])):
+    ##                    os.system('touch touch/%s' %(fp))
+                print '%s has not run to completion. Exiting.' %(analysis_type)
+                bool_exit = True
+                sys.exit()
 
         return bool_exit
 
@@ -1511,7 +1549,7 @@ class main():
         ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2154 MB
         ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2168 MB
         ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2171 MB
-        memMB = 4000
+        memMB = 1900
         ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   2483.24 sec.
         ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4521.89 sec.
         ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
@@ -1521,7 +1559,11 @@ class main():
         ## 1) check file in existence
         ##
         fp_in = self.d_in['ProduceBeagleInput']
-        bool_exit = self.check_in('ApplyRecalibration',[fp_in],)
+        l_fp_in = []
+        for mode in ['SNP',]:
+            fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.%s.vcf' %(mode)
+            l_fp_in += [fp_in]
+        bool_exit = self.check_in('ApplyRecalibration',l_fp_in,)
 
         ##
         ## 2) touch
@@ -1531,6 +1573,9 @@ class main():
 
         fp_out = self.d_out['ProduceBeagleInput']
 
+        ##
+        ## 3) init script
+        ##
         lines = ['#!/bin/bash']
 
         lines += self.init_cmd(analysis_type,memMB,)
@@ -1538,7 +1583,7 @@ class main():
         ## GATKwalker, required, out
         lines += ['--out %s \\' %(fp_out,)]
         ## GATKwalker, required, in
-        lines += ['--variant %s \\' %(fp_in)]
+        lines += ['--variant %s \\' %(l_fp_in[0])]
 
 ##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
         lines += self.term_cmd(analysis_type,[fp_out],)
@@ -1547,114 +1592,6 @@ class main():
 
         ## execute shell script
         J = 'PBI'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-        self.execmd(cmd)
-
-        return
-
-
-    def ApplyRecalibration(self,l_chroms,d_chrom_lens,):
-
-        '''
-Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
-http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
-http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
-http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
-"For new approach: just cut at 99% sensitivity"
-http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
-http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
-##
-http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
-'''
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
-
-        T = analysis_type = 'ApplyRecalibration'
-        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2187 MB
-        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2210 MB
-        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2233 MB
-        memMB = 4000
-        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   2316.11 sec.
-        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3448.45 sec.
-        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3575.38 sec.
-        queue = 'normal'
-
-        ##
-        ## 1) check input existence
-        ##
-        fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
-        fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
-##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
-##        l_fp_in = self.d_out[T_prev]
-        bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
-
-        ##
-        ## 2) touch
-        ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
-
-        ##
-        ## parse list of vcf input files
-        ##
-        l_vcfs_in = self.get_fps_in(l_chroms,d_chrom_lens,self.i_UG_size,)
-
-        fp_out_prefix = 'out_ApplyRecalibration'
-        fp_out_prefix += '/ApplyRecalibration.recalibrated.filtered'
-        fp_out_vcf = '%s.vcf' %(fp_out_prefix)
-        fp_out_idx = '%s.vcf.idx' %(fp_out_prefix)
-        if os.path.isfile(fp_out_vcf):
-            return
-
-        ##
-        ## initialize shell script
-        ##
-        lines = ['#!/bin/bash']
-
-        if self.f_ApplyRecalibration_ts_filter_level in [None,'None',]:
-            cmd = self.determine_TS_level(fp_in_tranches)
-            lines += [cmd]
-        else:
-            lines += [
-                'ts_filter_level=%f' %(
-                    float(self.f_ApplyRecalibration_ts_filter_level))]
-
-        ##
-        ## send e-mail to user about choice of ts_filter level
-        ##
-        address = '%s@sanger.ac.uk' %(pwd.getpwuid(os.getuid())[0],)
-        cmd = 'echo "Check your tranches file'
-        cmd += ' (%s/out_VariantRecalibrator/VariantRecalibrator.tranches)' %(
-            os.getcwd())
-        cmd += ' to see if you are satisfied with the chosen TS level of'
-        cmd += ' ${ts_filter_level}" '
-        cmd += '| mail -s "%s" ' %(self.project)
-        cmd += '%s\n' %(address)
-        self.execmd(cmd)
-
-        lines += self.init_cmd(analysis_type,memMB,)
-
-        ## GATKwalker, required, in
-        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out_vcf,)]
-        ## GATKwalker, required, in
-        lines += ['--recal_file %s \\' %(fp_in_recal)]
-        lines += ['--tranches_file %s \\' %(fp_in_tranches)]
-        ## GATKwalker, optional, in
-        ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
-        ## default is 99.00
-##        lines += ['--ts_filter_level 99.0 \\']
-        lines += ['--ts_filter_level $ts_filter_level \\']
-
-        lines += self.term_cmd(analysis_type,[fp_out_vcf,fp_out_idx,],)
-
-        self.write_shell('shell/ApplyRecalibration.sh',lines,)
-
-        ##
-        ## execute shell script
-        ##
-        J = 'AR'
         cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
         self.execmd(cmd)
 
@@ -1719,75 +1656,223 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     12840 MB
         ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13710 MB
         ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13950 MB
-        memMB = 16000
+        ##pipeline/ethiopia4x/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     15092 MB
+        memMB = 15900
         ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :   9635.38 sec.
         ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  10015.61 sec.
         ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11657.10 sec.
+        ##pipeline/zulu1x/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11309.62 sec.
         queue = 'normal'
+        queue = 'yesterday'
 
         ##
-        ## 1) check input existence
+        ## 1) check input existence (vcf)
         ##
         l_vcfs_in = self.get_fps_in(
             l_chroms,d_chrom_lens,self.i_UG_size,)
         bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
 
         ##
-        ## 2) touch
+        ## 1b) check input size (vcf.idx)
         ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
+        bool_exit = False
+        for vcf_in in l_vcfs_in:
+            fp_vcf_idx = '%s.idx' %(vcf_in)
+            if not os.path.isfile(fp_vcf_idx):
+                continue
+            if os.path.getsize(fp_vcf_idx) == 0:
+                print 'zero size:', fp_vcf_idx
+                bool_exit = True
+        if bool_exit == True: sys.exit(0)
 
-        fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.tranches'
-        fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.recal'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
+        for mode in ['SNP',]:
+
+            ##
+            ## 2) touch
+            ##
+            bool_return = self.touch('%s.%s' %(analysis_type,mode))
+            if bool_return == True: continue
+
+            fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
+            fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
+
+            ##
+            ## initiate GATK walker
+            ##
+            lines = self.init_cmd(analysis_type,memMB,)
+
+            ## GATKwalker, required, in
+            lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
+            ## GATKwalker, required, out
+            lines += ['--recal_file %s \\' %(fp_recal)]
+            lines += ['--tranches_file %s \\' %(fp_tranches)]
+            ## GATKwalker, required, in (ask Deepti about this...)
+            lines += [
+                '--use_annotation QD \\',
+                '--use_annotation HaplotypeScore \\',
+                '--use_annotation MQRankSum \\',
+                '--use_annotation ReadPosRankSum \\',
+                '--use_annotation MQ \\',
+                '--use_annotation FS \\',
+                '--use_annotation DP \\',
+                ]
+            ## GATKwalker, optional, in
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
+            lines += ['--mode %s \\' %(mode)]
+            ## Ugandan QCed to be added..!
+            fd = open('%s' %(self.fp_resources),'r')
+            lines_resources = fd.readlines()
+            fd.close()
+            ## resources
+            lines += ['%s \\' %(line.strip()) for line in lines_resources]
+
+            l_TStranches = []
+    ##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
+            l_TStranches += [99+i/10. for i in range(10,0,-1,)]
+            l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
+            l_TStranches += [70+i for i in range(19,-1,-1,)]
+            s_TStranches = ''
+            for TStranche in l_TStranches:
+                s_TStranches += '--TStranche %.1f ' %(TStranche)
+            lines += ['%s \\' %(s_TStranches)]
+
+            ## GATKwalker, optional, out
+            lines += ['--rscript_file out_%s/%s.%s.plots.R \\' %(T,T,mode,)]
+
+            lines += self.term_cmd(
+                '%s.%s' %(analysis_type,mode),[fp_tranches,fp_recal,],)
+
+            self.write_shell('shell/%s.%s.sh' %(analysis_type,mode,),lines,)
+
+            J = 'VR'
+            cmd = self.bsub_cmd(
+                '%s.%s' %(analysis_type,mode),J,memMB=memMB,queue=queue,
+                std_suffix='%s/%s.%s' %(analysis_type,analysis_type,mode,),)
+            self.execmd(cmd)
+
+        return
+
+
+    def ApplyRecalibration(self,l_chroms,d_chrom_lens,):
+
+        '''
+Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
+http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
+http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
+http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
+"For new approach: just cut at 99% sensitivity"
+http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
+http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
+##
+http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
+'''
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
+
+        T = analysis_type = 'ApplyRecalibration'
+        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2187 MB
+        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2210 MB
+        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2233 MB
+        memMB = 2900
+        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   2316.11 sec.
+        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3448.45 sec.
+        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3575.38 sec.
+        queue = 'normal'
 
         ##
-        ## initiate GATK walker
+        ## parse list of vcf input files
         ##
-        lines = self.init_cmd(analysis_type,memMB,)
+        l_vcfs_in = self.get_fps_in(l_chroms,d_chrom_lens,self.i_UG_size,)
 
-        ## GATKwalker, required, in
-        lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
-        ## GATKwalker, required, out
-        lines += ['--recal_file %s \\' %(fp_recal)]
-        lines += ['--tranches_file %s \\' %(fp_tranches)]
-        ## GATKwalker, required, in (ask Deepti about this...)
-        lines += [
-            '--use_annotation QD \\',
-            '--use_annotation HaplotypeScore \\',
-            '--use_annotation MQRankSum \\',
-            '--use_annotation ReadPosRankSum \\',
-            '--use_annotation MQ \\',
-            '--use_annotation FS \\',
-            '--use_annotation DP \\',
-            ]
-        ## GATKwalker, optional, in
-        ## Ugandan QCed to be added..!
-        fd = open('%s' %(self.fp_resources),'r')
-        lines_resources = fd.readlines()
-        fd.close()
-        lines += ['%s \\' %(line.strip()) for line in lines_resources]
+        for mode in ['SNP',]:
 
-        l_TStranches = []
-##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
-        l_TStranches += [99+i/10. for i in range(10,0,-1,)]
-        l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
-        l_TStranches += [70+i for i in range(19,-1,-1,)]
-        s_TStranches = ''
-        for TStranche in l_TStranches:
-            s_TStranches += '--TStranche %.1f ' %(TStranche)
-        lines += ['%s \\' %(s_TStranches)]
+            ##
+            ## 1) check input existence
+            ##
+            fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
+            fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
+    ##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
+    ##        l_fp_in = self.d_out[T_prev]
+            bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
 
-        ## GATKwalker, optional, out
-        lines += ['--rscript_file out_%s/%s.plots.R \\' %(T,T,)]
+            ##
+            ## 2) touch
+            ##
+            bool_return = self.touch('%s.%s' %(analysis_type,mode))
+            if bool_return == True: continue
 
-        lines += self.term_cmd(analysis_type,[fp_tranches,fp_recal,],)
+            ##
+            ## send e-mail to user about choice of ts_filter level
+            ##
+            address = '%s@sanger.ac.uk' %(pwd.getpwuid(os.getuid())[0],)
+            cmd = 'echo "Check your tranches file'
+            cmd += ' (%s/%s)' %(os.getcwd(),fp_in_tranches,)
+            cmd += ' to see if you are satisfied with the chosen TS level of'
+            cmd += ' ${ts_filter_level}" '
+            cmd += '| mail -s "%s" ' %(self.project)
+            cmd += '%s\n' %(address)
+            self.execmd(cmd)
 
-        self.write_shell('shell/%s.sh' %(analysis_type),lines,)
+            ##
+            ## set output prefix
+            ##
+            fp_out_prefix = 'out_ApplyRecalibration'
+            fp_out_prefix += '/ApplyRecalibration.recalibrated.filtered.%s' %(mode)
+            fp_out_vcf = '%s.vcf' %(fp_out_prefix)
+            fp_out_idx = '%s.vcf.idx' %(fp_out_prefix)
+            if os.path.isfile(fp_out_vcf):
+                return
 
-        J = 'VR'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,queue=queue,)
-        self.execmd(cmd)
+            ##
+            ## initialize shell script
+            ##
+            lines = ['#!/bin/bash']
+
+            ##
+            ## --ts-filter-level
+            ##
+            if self.f_ApplyRecalibration_ts_filter_level in [None,'None',]:
+                cmd = self.determine_TS_level(fp_in_tranches)
+                lines += [cmd]
+            else:
+                lines += [
+                    'ts_filter_level=%f' %(
+                        float(self.f_ApplyRecalibration_ts_filter_level))]
+
+            ##
+            ## initialize GATK java command
+            ##
+            lines += self.init_cmd(analysis_type,memMB,)
+
+            ## GATKwalker, required, in
+            lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
+            ## GATKwalker, required, out
+            lines += ['--out %s \\' %(fp_out_vcf,)]
+            ## GATKwalker, required, in
+            lines += ['--recal_file %s \\' %(fp_in_recal)]
+            lines += ['--tranches_file %s \\' %(fp_in_tranches)]
+            ## GATKwalker, optional, in
+            ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
+            ## default is 99.00
+    ##        lines += ['--ts_filter_level 99.0 \\']
+            lines += ['--ts_filter_level $ts_filter_level \\']
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html#--mode
+            lines += ['--mode %s \\' %(mode)]
+
+            lines += self.term_cmd(
+                '%s.%s' %(analysis_type,mode),[fp_out_vcf,fp_out_idx,],)
+
+            self.write_shell('shell/ApplyRecalibration.%s.sh' %(mode),lines,)
+
+            ##
+            ## execute shell script
+            ##
+            J = 'AR'
+            cmd = self.bsub_cmd(
+                '%s.%s' %(analysis_type,mode),J,memMB=memMB,
+                std_suffix='%s/%s.%s' %(analysis_type,analysis_type,mode,),)
+            self.execmd(cmd)
 
         return
 
@@ -1833,9 +1918,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         T = analysis_type = 'UnifiedGenotyper'
         ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
-        queue = 'normal'
+##        queue = 'normal'
+        ## ../ethiopia8x/stdout/UnifiedGenotyper/UnifiedGenotyper.1.7.out:    CPU time   :  63554.28 sec.
+        queue = 'long'
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
-        memMB = 1900 ## 2600 if 250 samples at 4x
+        if self.fp_intervals:
+            memMB = 5900
+        else:
+            memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
 
         ##
         ## 1) touch
@@ -1938,6 +2028,10 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += [
             '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
                 self.i_UG_size)]
+        if self.fp_intervals:
+            lines += ['--intervals %s \\' %(self.fp_intervals)]
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
+            lines += ['--interval_set_rule INTERSECTION \\']
 
         ##
         ## UnifiedGenotyper, optional
@@ -1957,12 +2051,35 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## and Q10 otherwise.
         lines += [' -stand_call_conf 4 \\'] ## ask Deepti if OK
         lines += [' -stand_emit_conf 4 \\'] ## ask Deepti if OK
-        lines += [' --output_mode EMIT_VARIANTS_ONLY \\'] ## default value EMIT_VARIANTS_ONLY
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotype_likelihoods_model
+        lines += [' --genotype_likelihoods_model BOTH \\'] ## default value SNP
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
+        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
+        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
+##        if self.fp_alleles:
+##            lines += [' -alleles %s \\' %(self.fp_alleles)]
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
         s_annotation = ''
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
-        s_annotation += ' --annotation DepthOfCoverage'
+
+        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
+        if '2.4' in self.fp_GATK:
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+            s_annotation += ' --annotation Coverage'
+        elif (
+            '2.3' in self.fp_GATK
+            or
+            '2.2' in self.fp_GATK
+            or
+            '2.1' in self.fp_GATK
+            ):
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
+            s_annotation += ' --annotation DepthOfCoverage'
+        else:
+            print 'Unknown version of GATK. Please see why the version number must be known here:'
+            print 'http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage'
+            sys.exit()
+
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
         s_annotation += ' -A FisherStrand'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
@@ -2045,7 +2162,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['fi\n']
 
         fn = 'out_UnifiedGenotyper/'
-        fn += 'UnifiedGenotyper.${CHROMOSOME}.{LSB_JOBINDEX}.vcf.idx'
+        fn += 'UnifiedGenotyper.${CHROMOSOME}.${LSB_JOBINDEX}.vcf.idx'
         lines += ['if [ -s %s ]; then' %(fn)]
         lines += ['exit']
         lines += ['fi\n']
@@ -2141,6 +2258,42 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             dest='i_UG_size',
             help='Size (bp) of divided parts.',
             metavar='FILE',default=10*10**6,
+            required = False,
+            )
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
+        parser.add_argument(
+            '--genotyping_mode','-gt_mode',
+            dest='genotyping_mode',
+            help='Specifies how to determine the alternate alleles to use for genotyping.',
+            metavar='STR',default='DISCOVERY',
+            required = False,
+            )
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--output_mode
+        parser.add_argument(
+            '--output_mode','-out_mode',
+            dest='output_mode',
+            help='Specifies which type of calls we should output.',
+            metavar='STR',default='EMIT_VARIANTS_ONLY',
+            required = False,
+            )
+
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--alleles
+##        parser.add_argument(
+##            '--alleles','-alleles','--fp_alleles',
+##            dest='fp_alleles',
+##            help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',
+##            metavar='FILE',default=None,
+##            required = False,
+##            )
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
+        parser.add_argument(
+            '--intervals','-L','--fp_intervals',
+            dest='fp_intervals',
+            help='Additionally, one may specify a rod file to traverse over the positions for which there is a record in the file (e.g. -L file.vcf).',
+            metavar='FILE',default=None,
             required = False,
             )
 
