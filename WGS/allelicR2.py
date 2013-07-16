@@ -1,4 +1,4 @@
-#!/software/bin/python
+#!/software/bin/python3
 
 ## T. Carstensen (tc9), M.S. Sandhu (ms23), D. Gurdasani (dg11)
 ## Wellcome Trust Sanger Institute, 2012-2013
@@ -17,21 +17,28 @@ class main():
 
         if self.extension1 in ['bed','ped',]:
             self.PLINK_transpose(self.fp1)
+            self.fn1 = os.path.basename(self.fp1)
             self.extension1 = 'tped'
-            self.fn1 = self.fn1[:-4]+'.tped'
             self.fp1 = self.fn1
-        if self.extension2 in ['bed','ped',]:
-            self.PLINK_transpose(self.fp2)
-            self.extension2 = 'tped'
-            self.fn2 = self.fn2[:-4]+'.tped'
-            self.fp2 = self.fn2
 
         if self.extension1 == 'tped' and self.extension2 == 'bgl':
-            self.compare_tped_with_bgl_or_gen(
-                self.fp1,self.fp2,self.affix,'bgl',)
+            self.compare_tped_with_bgl_or_gen_or_gprobs(
+                self.l_fp1,self.l_fp2,self.affix,header2=True,)
+        elif self.extension1 == 'tped' and self.extension2 == 'gprobs':
+            self.compare_tped_with_bgl_or_gen_or_gprobs(
+                self.l_fp1,self.l_fp2,self.affix,header2=True,)
+        elif self.extension1 == 'tped' and self.extension2 == 'gen':
+            self.compare_tped_with_bgl_or_gen_or_gprobs(
+                self.l_fp1,self.l_fp2,self.affix,header2=False,)
+        elif self.extension1 == 'gprobs' and self.extension2 == 'imputed':
+            self.compare_tped_with_bgl_or_gen_or_gprobs(
+                self.l_fp1,self.l_fp2,self.affix,header2=False,)
+        elif self.format1 == 'IMPUTE2' and self.format2 == 'IMPUTE2':
+            self.compare_tped_with_bgl_or_gen_or_gprobs(
+                self.l_fp1,self.l_fp2,self.affix,header2=False,)
         else:
-            print self.extension1, self.extension2
-            print 'did I write code for handling this???'
+            print(self.extension1, self.extension2)
+            print('did I write code for handling this???')
             sys.exit(0)
 
     ####    ped = 'omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped'
@@ -57,239 +64,523 @@ class main():
         l = marker_bgl.split(':')
         chrom_bgl = l[0]
         pos_bgl = int(l[1])
-        alleleA_bgl = l_bgl[1]
-        alleleB_bgl = l_bgl[2]
 
-        return l_bgl, chrom_bgl, pos_bgl, alleleA_bgl, alleleB_bgl
+        return l_bgl, chrom_bgl, pos_bgl
 
 
-    def compare_tped_with_bgl_or_gen(self,fp_tped,fp_bgl,affix,extension,):
+    def compare_tped_with_bgl_or_gen_or_gprobs(
+        self,l_fp1,l_fp2,affix,header2=True,):
 
         ## todo: replace all instances of bgl in this function with something generic...
 
         ##
-        ## open bgl file stream
+        ## open fp2 file stream
         ##
-        fd_bgl = open(fp_bgl,'r')
+        index_fp2 = 0
+        chrom2 = str(index_fp2+1)
+        fp2 = l_fp2[index_fp2]
+        ##
+        ## open file2
+        ##
+        fd2 = open(fp2,'r')
+
+        if self.extension1 in ['tped']:
+            header1 = False
+        elif self.extension1 == 'gprobs':
+            header1 = True
+        else:
+            print(self.extension1)
+            stop
 
         ##
-        ## parse bgl header/samples
+        ## parse file2 header/samples
         ##
-        if extension == 'bgl':
-            for line_bgl in fd_bgl:
-                l = line_bgl.split()
-                l_samples_bgl = [l[i] for i in xrange(3,len(l),3)]
-                break
-        else:
+        if self.extension2 in ['bgl','gprobs',] and self.fp_samples2 == None:
+            line2 = fd2.readline()
+            l = line2.split()
+            l_samples2 = [l[i] for i in xrange(3,len(l),3)]
+            parse = 'gprobs'
+            i_alleleA = 1
+            i_alleleB = 2
+        elif self.extension2 in ['gen','imputed',] and self.fp_samples2 != None:
             fd = open(self.fp_samples2,'r')
             s = fd.read()
             fd.close()
-            l_samples_bgl = s.strip().split('\n')
+            l_samples2 = s.strip().split('\n')
+            parse = 'gen'
+            i_alleleA = 3
+            i_alleleB = 4
+        else:
+            print(self.extension2)
+            print(self.fp_samples2)
+            stop
 
         ##
         ## find relevant line numbers in ped
         ## instead of doing lookup in samples from gprobs all the time
         ##
-        l_samples_tfam = []
-        fd_tfam = open('%s.tfam' %(fp_tped[:-5]),'r')
-        for line_tfam in fd_tfam:
-            l_tfam = line_tfam.strip().split()
-            s = l_tfam[1]
+        if self.extension1 == 'tped':
+            l_samples1 = self.parse_samples(self.fp_samples1)
+            func1 = self.parse_line_tped
+        elif self.fp_samples1:
+            print(self.fp_samples1)
+            stoptmp
+        elif self.extension1 == 'gprobs':
+            print(l_fp1[0])
+            fd = open(l_fp1[0],'r')
+            s = fd.readline()
+            fd.close()
+            l_samples1 = s.strip().split()[3:-1:3]
+            func1 = self.parse_line_gprobssss
+            stop
+            ## parse_line_gprobssss and parse_line_tped must rreturn the same output
+            ## i.e. same number of variables and a list with genotype probabilities
+        else:
+            print(self.extension1)
+            stop
 
-            ## convert plate_well_sample format to sample format
-            keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(APP\d\d\d\d\d\d\d)')
-            match = result = keyword.search(s)
-            if match:
-                sample_tfam = match.group(2)
-            else:
-                sample_tfam = s
-
-            l_samples_tfam += [sample_tfam]
-        fd_tfam.close()
+        d_samples = {}
+        if self.fp_sampledic:
+            fd = open(self.fp_sampledic)
+            for line in fd.read().split('\n'):
+                if line.strip() == '': continue
+                sample1 = line.split()[1]
+                sample2 = line.split()[0]
+                d_samples[sample1] = sample2
+            fd.close()
+        else:
+            for sample in l_samples1:
+                d_samples[sample] = sample
 
         ##
-        ## match sequence of bgl and tfam sample IDs
+        ## match sequence of file2 and tfam sample IDs
         ##
-        l_indexes_bgl = [
-            3+3*l_samples_bgl.index(sample_tfam) for sample_tfam in l_samples_tfam]
-        n_samples = len(l_indexes_bgl)
+        l_indexes1 = []
+        l_indexes2 = []
+        if parse == 'gprobs':
+            for sample1 in l_samples1:
+                if not sample1 in d_samples.keys():
+                    continue
+                sample2 = d_samples[sample1]
+                if not sample2 in l_samples2:
+                    continue
+                l_indexes2 += [
+                    ## marker alleleA alleleB
+                    3+3*l_samples2.index(sample2)]
+##            l_indexes2 = [
+##                ## marker alleleA alleleB
+##                3+3*l_samples2.index(sample1) for sample1 in l_samples1]
+        else:
+            for index1 in xrange(len(l_samples1)):
+                sample1 = l_samples1[index1]
+                if not sample1 in l_samples2:
+                    continue
+                ## --- rsID position alleleA alleleB
+                index2 = 5+3*l_samples2.index(sample1)
+                l_indexes2 += [index2]
+        for index1 in xrange(len(l_samples1)):
+            sample1 = l_samples1[index1]
+            if not sample1 in d_samples.keys():
+                continue
+            sample2 = d_samples[sample1]
+            if not sample2 in l_samples2:
+                continue
+            l_indexes1 += [4+2*index1]
+
+        n_samples = len(l_indexes1)# = len(l_indexes2)
+
+        if n_samples == 0:
+            print(l_samples1)
+            print(l_samples2)
+            print('n_samples=0')
+            print(d_samples)
+            sys.exit()
+
+        ##
+        ## set counts and lists
+        ##
+        ## sets
+        cnt1 = 0
+        cnt2 = 0
+        ## complement set
+        cnt_1_not_2 = 0
+        cnt_2_not_1 = 0
+        ## intersection set
+        cnt_1_and_2 = 0
+        ## maybe use unix utility join instead of memory hungry python lists...
+        ## list of rsIDs sets; complement and intersection
+        l_1_not_2 = []
+        l_1_and_2 = []
+        l_corr = []
+        l_conc = []
+        ## discordant count
+        cnt_discordant_all_SNPs = 0
+        cnt_missing_all_SNPs = 0
+        index_fp1 = 0
+        fp1 = l_fp1[index_fp1]
+        ##
+        ## open file1
+        ##
+        fd1 = open(fp1,'r')
+        fd_discordant = open('%s.discordant' %(affix),'w')
+
+        if header1 == True:
+            fd1.readline()
 
         ##
         ## parse first line
         ##
-        for line_bgl in fd_bgl:
-            break
-        l_bgl, chrom_bgl, pos_bgl, alleleA_bgl, alleleB_bgl = self.parse_line_bgl(line_bgl)
+        bool_EOF1 = False
+        bool_EOF2 = False
+        bool_read1 = True
+        bool_read2 = True
+        while True:
 
-        ##
-        ## loop over markers from map file
-        ##
-        cnt_tped_not_bgl = 0
-        cnt_bgl_not_tped = 0
-        cnt_bgl_and_tped = 0
-        cnt_discordant_all_SNPs = 0
-        cnt_missing_all_SNPs = 0
-        cnt_missing_tped_all_SNPs = 0
-        cnt_missing_bgl_all_SNPs = 0
-        cnt_missing_tped_and_bgl_all_SNPs = 0
-        ## use unix utility join instead of memory hungry python lists...
-        l_tped_not_bgl = []
-        l_tped_and_bgl = []
-        n_SNPs_tped = 0
-        n_SNPs_bgl = 0
-        fd_tped = open(fp_tped,'r')
-        fd_discordant = open('%s.discordant' %(affix),'w')
-        for line_tped in fd_tped:
-##            break ## tmp!!!
-            n_SNPs_tped += 1
-            if n_SNPs_tped % 10000 == 0: print 'line/variant/SNP', n_SNPs_tped
-            l_tped, chrom_tped, pos_tped = self.parse_line_tped(line_tped)
-            if l_tped[1] == 'kgp22831798': print 'a'
-##            while True:
-            if chrom_tped != chrom_bgl:
-                if l_chroms.index(chrom_tped) > l_chroms.index(chrom_bgl):
-                    cnt_bgl_not_tped += 1
-                    for line_bgl in fd_bgl:
-                        n_SNPs_bgl += 1
-                        (
-                            l_bgl, chrom_bgl, pos_bgl, alleleA_bgl, alleleB_bgl,
-                            ) = self.parse_line_bgl(line_bgl)
-                        if chrom_bgl == chrom_tped:
-                            break
-                        cnt_bgl_not_tped += 1
-                        ## continue loop over bgl lines
-                        continue
-                else:
-                    cnt_tped_not_bgl += 1
-                    l_tped_not_bgl += [l_tped[1]]
-                    ## continue loop over tped lines
-                    continue
-            ## continue loop over bgl lines
-            if pos_tped > pos_bgl:
-                if l_tped[1] == 'kgp22831798': print 'e'
-                cnt_bgl_not_tped += 1
-                bool_continue = False
-                for line_bgl in fd_bgl:
-                    n_SNPs_bgl += 1
-                    (
-                        l_bgl, chrom_bgl, pos_bgl, alleleA_bgl, alleleB_bgl
-                        ) = self.parse_line_bgl(line_bgl)
-                    if chrom_tped != chrom_bgl:
-                        ## continue loop over tped lines
-                        bool_continue = True
-                        if l_tped[1] == 'kgp22831798': print 'e1'
-                        break
-                    elif pos_tped > pos_bgl:
-                        cnt_bgl_not_tped += 1
-                        ## continue loop over bgl lines
-                        if l_tped[1] == 'kgp22831798': print 'e2'
-                        continue
-                    elif pos_bgl > pos_tped:
-                        cnt_tped_not_bgl += 1
-                        l_tped_not_bgl += [l_tped[1]]
-                        ## continue loop over tped lines
-                        bool_continue = True
-                        if l_tped[1] == 'kgp22831798': print 'e3'
-                        break
+            ##
+            ## parse lines
+            ##
+            if bool_EOF1 == False:
+                if bool_read1 == True:
+                    line1 = fd1.readline()
+                    if line1=='':
+                        if index_fp1+1 == len(l_fp1):
+                            bool_EOF1 = True
+                        else:
+                            index_fp1 += 1
+                            fp1 = l_fp1[index_fp1]
+                            fd1 = open(fp1,'r')
+                            if header1 == True:
+                                line1 = fd1.readline()
+                            line1 = fd1.readline()
+                            l1, chrom1, pos1 = func1(line1)
+                            cnt1 += 1
                     else:
-                        if l_tped[1] == 'kgp22831798': print 'e4'
-                        bool_continue = False
-                        break
-                if l_tped[1] == 'kgp22831798': print 'f', bool_continue
-                ## continue loop over tped lines
-                if bool_continue == True:
+                        l1, chrom1, pos1 = func1(line1)
+                        cnt1 += 1
+                        if cnt1 % 10000 == 0: print('line/variant/SNP', cnt1, chrom1, pos1)
+            if bool_EOF2 == False:
+                if bool_read2 == True:
+                    line2 = fd2.readline()
+                    if line2=='':
+                        ## last file
+                        if index_fp2+1 == len(l_fp2):
+                            bool_EOF2 = True
+                        ## open next file
+                        else:
+                            index_fp2 += 1
+                            fp2 = l_fp2[index_fp2]
+                            fd2 = open(fp2,'r')
+                            if header2 == True:
+                                line2 = fd2.readline()
+                            line2 = fd2.readline()
+                            if parse == 'gprobs':
+                                l2, chrom2, pos2 = self.parse_line_bgl(line2)
+                            else:
+                                chrom2 = str(index_fp2+1)
+                                l2, pos2 = self.parse_line_gen(line2)
+                            cnt2 += 1
+                    else:
+                        if parse == 'gprobs':
+                            l2, chrom2, pos2 = self.parse_line_bgl(line2)
+                        else:
+                            chrom2 = str(index_fp2+1)
+                            l2, pos2 = self.parse_line_gen(line2)
+                        cnt2 += 1
+
+            ##
+            ## continue or break or pass?
+            ##
+            if bool_EOF1 == True:
+                bool_read2 = True
+                if bool_EOF2 == True:
+                    break
+                else:
+                    cnt_2_not_1 += 1
                     continue
-            ## continue loop over tped lines
-            elif pos_bgl > pos_tped:
-                cnt_tped_not_bgl += 1
-                l_tped_not_bgl += [l_tped[1]]
+            elif bool_EOF2 == True:
+                bool_read1 = True
+                cnt_1_not_2 += 1
+                l_1_not_2 += [l1[1]]
                 continue
-            else:
-                pass
-            cnt_bgl_and_tped += 1
-            l_tped_and_bgl += [l_tped[1]]
-            cnt_discordant, cnt_missing = self.count_discordant(
-                l_tped, l_bgl, l_indexes_bgl,
+
+            (
+                bool_continue, bool_read1, bool_read2,
+                cnt_1_not_2, cnt_2_not_1, cnt_1_and_2,
+                l_1_not_2, l_1_and_2,) = self.check_positions(
+                    chrom1,chrom2,pos1,pos2,
+                    cnt_1_not_2, cnt_2_not_1, cnt_1_and_2,
+                    l_1_not_2,l_1_and_2,
+                    l1,
+                    )
+            if bool_continue == True:
+                continue
+
+            alleleA2 = l2[i_alleleA]
+            alleleB2 = l2[i_alleleB]
+
+            ## deletion
+            if len(alleleA2) > 1:
+                continue
+            ## insertion
+            if len(alleleB2) > 1:
+                continue
+
+            cnt_discordant, cnt_missing, r2 = self.count_discordant(
+                l1, l2, l_indexes1, l_indexes2,
                 fd_discordant,
                 n_samples,
-                alleleA_bgl, alleleB_bgl,
-                chrom_tped, pos_tped,
+                alleleA2, alleleB2,
+                chrom1, pos1,
                 )
+            ## maybe move slow file I/O outside of loop...
+            l_corr += ['%s %s\n' %(l1[1],r2,)]
+            l_conc += ['%s %s\n' %(l1[1],cnt_discordant,)]
+            ## append count for current SNP to cumulative count across all SNPs
             cnt_discordant_all_SNPs += cnt_discordant
             cnt_missing_all_SNPs += cnt_missing
 
-            ## continue loop over tped lines
             continue
         
         ##
         ## close files
         ##
         fd_discordant.close()
-        fd_tped.close()
-        for line_bgl in fd_bgl:
-            n_SNPs_bgl += 1
-            cnt_bgl_not_tped += 1
-        fd_bgl.close()
+        fd1.close()
+        fd2.close()
+
+        ##
+        ## correlation / concordance
+        ##
+        fd = open('%s.correlation' %(affix),'w')
+        fd.writelines(l_corr)
+        fd.close()
+        
+        fd = open('%s.concordance' %(affix),'w')
+        fd.writelines(l_conc)
+        fd.close()
+
+        cmd = 'cat %s.correlation' %(affix)
+        cmd += ''' | awk '{if($2!="None") {sum+=$2;n++}} END{print sum/n}' '''
+        r2_avg = float(os.popen(cmd).read())
 
         ##
         ##
         ##
-        print 'n_samples', n_samples
-        print 'n_SNPs_tped', n_SNPs_tped
-        print 'n_SNPs_bgl', n_SNPs_bgl
-        print '***tmp', chrom_tped, pos_tped, chrom_bgl, pos_bgl
-        print 'cnt_discordant_all_SNPs', cnt_discordant_all_SNPs
-        print 'cnt_missing_all_SNPs', cnt_missing_all_SNPs
-        print 'cnt_missing_tped_all_SNPs', cnt_missing_tped_all_SNPs
-        print 'cnt_missing_bgl_all_SNPs', cnt_missing_bgl_all_SNPs
-        print 'cnt_missing_tped_and_bgl_all_SNPs', cnt_missing_tped_and_bgl_all_SNPs
-        print 'cnt_bgl_and_tped', cnt_bgl_and_tped
-        print 'concordance', 1-(float(cnt_discordant_all_SNPs)/float(n_samples*cnt_bgl_and_tped))
-        print 'cnt_tped_not_bgl', cnt_tped_not_bgl
-        print 'cnt_bgl_not_tped', cnt_bgl_not_tped
-        print 'cnt_bgl_and_tped', cnt_bgl_and_tped
-        for fn_SNPs,l_SNPs,color in [
-            ['%s.tped_not_bgl.SNPs' %(affix),l_tped_not_bgl,'red',],
-            ['%s.tped_and_bgl.SNPs' %(affix),l_tped_and_bgl,'green',],
+        s = ''
+        s += 'fp1: %s\n' %(fp1)
+        s += 'fp2: %s\n' %(fp2)
+        s += 'fp1: %i variants/SNPs\n' %(cnt_1_not_2+cnt_1_and_2)
+        s += 'fp2: %i variants/SNPs\n' %(cnt_2_not_1+cnt_1_and_2)
+        s += 'intersection: %i variants/SNPs\n' %(cnt_1_and_2)
+        s += 'n_samples: %i\n' %(n_samples)
+        if cnt1 != cnt_1_not_2+cnt_1_and_2:
+            print(cnt1, cnt_1_not_2+cnt_1_and_2)
+            print(cnt_1_not_2, cnt_1_and_2)
+            stoptmp1
+        if cnt2 != cnt_2_not_1+cnt_1_and_2:
+            print(cnt2, cnt_2_not_1+cnt_1_and_2)
+            print(cnt_2_not_1, cnt_1_and_2)
+            stoptmp2
+        if chrom1 != '22' or chrom2 not in['22','Y',]:
+            print(chrom1, chrom2, pos1, pos2)
+            stoptmp3
+        ## discordant
+        s += 'cnt_discordant_all_SNPs: %i\n' %(cnt_discordant_all_SNPs)
+        ## missing
+        s += 'cnt_missing_all_SNPs: %i\n' %(cnt_missing_all_SNPs)
+        s += 'concordance: %.4f\n' %(
+            1-(float(cnt_discordant_all_SNPs)/float(n_samples*cnt_1_and_2)))
+        s += 'correlation: %.4f\n' %(r2_avg)            
+        print(s)
+        fd = open('%s.stats' %(affix),'a')
+        fd.write(s)
+        fd.close()
+        for fn_SNPs,l_SNPs in [
+            ['%s.1_not_2.SNPs' %(affix),l_1_not_2,],
+            ['%s.1_and_2.SNPs' %(affix),l_1_and_2,],
             ]:
             s_SNPs = '\n'.join(l_SNPs)+'\n'
-            if n_SNPs_tped > 0:
-                fd = open(fn_SNPs,'w')
-                fd.write(s_SNPs)
-                fd.close()
+            fd = open(fn_SNPs,'w')
+            fd.write(s_SNPs)
+            fd.close()
 
         return
 
 
+    def parse_samples(self,fp_samples,):
+        
+        if fp_samples:
+            if fp_samples[fp_samples.rindex('.'):] in ['.sample','.tfam',]:
+                cmd = "cat %s | awk '{print $2}'" %(fp_samples)
+                l_samples1 = os.popen(cmd).read().strip().split('\n')
+        else:
+            print(fp_samples)
+            stop
+
+        ## convert plate_well_sample format to sample format
+        ## remove info about plate and well
+##        keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(APP\d\d\d\d\d\d\d)')
+        keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(.+\d\d\d\d\d\d\d)')
+        l = []
+        for sampleID in l_samples1:
+            match = result = keyword.search(sampleID)
+            if match:
+                l += [match.group(2)]
+            else:
+                l += [sampleID]
+        l_samples1 = l
+
+        return l_samples1
+
+
+    def parse_line_gen(self,line):
+
+        ## slow split
+        l = line.strip().split()
+##        marker = l[0]
+        pos = int(l[2])
+
+        return l, pos
+
+
+    def check_positions(
+        self,
+        chrom1,chrom2,pos1,pos2,
+        cnt_1_not_2, cnt_2_not_1, cnt_1_and_2,
+        l_1_not_2, l_1_and_2,
+        l1,
+        ):
+
+        bool_read1 = False
+        bool_read2 = False
+        if chrom1 != chrom2:
+            if l_chroms.index(chrom1) > l_chroms.index(chrom2):
+                bool_read2 = True
+                cnt_2_not_1 += 1
+                bool_continue = True
+            else:
+                bool_read1 = True
+                cnt_1_not_2 += 1
+                l_1_not_2 += [l1[1]]
+                bool_continue = True
+        elif pos1 > pos2:
+            bool_read2 = True
+            cnt_2_not_1 += 1
+            bool_continue = True
+        elif pos2 > pos1:
+            bool_read1 = True
+            cnt_1_not_2 += 1
+            l_1_not_2 += [l1[1]]
+            bool_continue = True
+        else:
+            ## continue loop over both lines
+            bool_read1 = True
+            bool_read2 = True
+            cnt_1_and_2 += 1
+            l_1_and_2 += [l1[1]]
+            bool_continue = False
+
+        return (
+            bool_continue, bool_read1, bool_read2,
+            cnt_1_not_2, cnt_2_not_1, cnt_1_and_2,
+            l_1_not_2, l_1_and_2,
+            )
+
+
     def count_discordant(
-        self, l_tped, l_bgl, l_indexes_bgl,
+        self, l_tped, l_bgl,
+        l_indexes1, l_indexes2,
         fd_discordant,
-        n_samples, ## derived from l_indexes_bgl
+        n_samples, ## derived from l_indexes_bgl/l_indexes2
         alleleA_bgl, alleleB_bgl, ## derived from l_bgl
         chrom_tped, pos_tped, ## derived from l_tped
         ):
 
+        sum_xy = 0
+        sum_xx = 0
+        sum_yy = 0
+        sum_x = 0
+        sum_y = 0
+        n = 0
+
         cnt_discordant = 0
         cnt_missing = 0
+        bool_return = False
         for i in xrange(n_samples):
-            index_tfam = 4+2*i
+##            index_tfam = 4+2*i
+            index_tfam = l_indexes1[i]
             alleleA_tped = l_tped[index_tfam]
             alleleB_tped = l_tped[index_tfam+1]
-            index_bgl = l_indexes_bgl[i]
+            index_bgl = l_indexes2[i]
+            ## l_probs_bgl is the BEAGLE genotype triplet
             l_probs_bgl = l_bgl[index_bgl:index_bgl+3]
+            x = None
+            y = None
             if alleleA_tped == '0' and alleleB_tped == '0':
                 cnt_missing += 1
+                continue
+            ## insertion/deletion
+            elif alleleA_bgl == '0' and alleleB_bgl == '1':
+                continue
+            elif alleleA_tped == alleleA_bgl:
+                if alleleB_tped == alleleA_bgl:
+                    x = 0.
+                elif alleleB_tped == alleleB_bgl:
+                    x = 1
+                else:
+                    bool_return = True
+                    break
+                    print(alleleA_tped, alleleB_tped, alleleA_bgl, alleleB_bgl)
+                    stop
+            elif alleleA_tped == alleleB_bgl:
+                if alleleB_tped == alleleA_bgl:
+                    x = 1
+                elif alleleB_tped == alleleB_bgl:
+                    x = 2
+                else:
+                    bool_return = True
+                    break
+                    print(alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs)
+                    stop
+            else:
+                if (
+                    alleleA_tped in [alleleA_bgl, alleleB_bgl]
+                    and
+                    alleleB_tped in [alleleA_bgl, alleleB_bgl]
+                    ):
+                    print(alleleA_tped, alleleB_tped, alleleA_bgl, alleleB_bgl, pos_tped)
+                    stop
+                bool_return = True
+                break
+##            if True:
+##                pass ## tmp!!!
+            if False: pass
             ## homozygous, AA
             elif float(l_probs_bgl[0]) > 0.9:
-                if all([
-                    alleleA_bgl == alleleA_tped,
-                    alleleA_bgl == alleleB_tped,
-                    ]):
+##                stop1
+##                y = 0
+                if (
+                    alleleA_bgl == alleleA_tped
+                    and
+                    alleleA_bgl == alleleB_tped
+                    ):
+                    if x != 0: print(x, stop)
+                    x = 0
                     pass
                 else:
+                    ## homozygous
+                    if alleleA_tped == alleleB_tped:
+                        if x != 2: print(x, stop)
+                        x = 2
+                    ## heterozygous
+                    else:
+                        if x != 1: print(x, stop)
+                        x = 1
                     cnt_discordant += 1
             ## heterozygous, Aa or aA
             elif float(l_probs_bgl[1]) > 0.9:
+##                stop2
+##                y = 1
                 if any([
                     all([
                         alleleA_bgl == alleleA_tped,
@@ -300,35 +591,168 @@ class main():
                         alleleA_bgl == alleleB_tped,
                         ]),
                     ]):
+                    if x != 1: print(x, stop)
+                    x = 1
                     pass
                 else:
+                    ## homozygous 1
+                    if (
+                        alleleA_tped == alleleA_bgl
+                        and
+                        alleleB_tped == alleleA_bgl
+                        ):
+                        if x != 0: print(x, stop)
+                        x = 0
+                    ## homozygous 2
+                    else:
+                        if x != 2: print(x, stop)
+                        x = 2
                     cnt_discordant += 1
             ## homozygous, aa
             elif float(l_probs_bgl[2]) > 0.9:
-                if all([
-                    alleleB_bgl == alleleA_tped,
-                    alleleB_bgl == alleleB_tped,
-                    ]):
+##                stop3
+##                y = 2
+                if (
+                    alleleB_bgl == alleleA_tped
+                    and
+                    alleleB_bgl == alleleB_tped
+                    ):
+                    if x != 2: print(x, stop)
+                    x = 2
                     pass
                 else:
+                    ## homozygous
+                    if alleleA_tped == alleleB_tped:
+                        if x != 0: print(x, stop)
+                        x = 0
+                    ## heterozygous
+                    else:
+                        if x != 1: print(x, stop)
+                        x = 1
                     cnt_discordant += 1
-            ## pmax<.9
-            else:
-                cnt_missing += 1
+##            ## pmax<.9
+##            else:
+##                stop4
+##                cnt_missing += 1
+
+            if x != None:
+                ## x is chip "dosage", y is sequence/imputation dosage
+                ## use dosage instead
+                y = 0
+##                y += 0*float(l_probs_bgl[0])
+                y += 1*float(l_probs_bgl[1])
+                y += 2*float(l_probs_bgl[2])
+                sum_xy += x*y
+                sum_xx += x*x
+                sum_yy += y*y
+                sum_x += x
+                sum_y += y
+                n += 1.
 
             ## continue loop over samples
             continue
 
+        if bool_return == True:
+            cnt_discordant = 0
+            cnt_missing = 0
+            r2 = None
+            return cnt_discordant, cnt_missing, r2
+
         fd_discordant.write('%s %s:%s %s %s\n' %(
             l_tped[1],chrom_tped,pos_tped,cnt_discordant,cnt_missing,))
 
-        return cnt_discordant, cnt_missing
+        ## apply a 90% sample call rate threshold
+        if n > .9*n_samples:
+##        if n > 0: ## tmp!!!
+            nom = (sum_xy-sum_x*sum_y/n)
+            den_sq = (sum_xx-sum_x**2/n)*(sum_yy-sum_y**2/n)
+            ## problem if n=94, xx=2 x=2 yy=0.00274104 y=0.5076
+            ## den_sq = -1.21430643318e-17
+##            den = math.sqrt(round(den_sq,16))
+            den = math.sqrt(abs(den_sq))
+            ## likely monomorphic
+            if den == 0:
+##                ## monomorphic
+##                if sum_xx == 2*sum_x or sum_yy == 2*sum_y:
+##                    r2 = None
+##                else:
+##                    print sum_xx, sum_x, sum_yy, sum_y
+##                    stop
+                r2 = None
+            else:
+                r = nom/den
+                r2 = r**2
+        else:
+            r2 = None
+
+##        if r2 != None:
+####            for i in xrange(n_samples):
+####                index_tfam = l_indexes1[i]
+####                alleleA_tped = l_tped[index_tfam]
+####                alleleB_tped = l_tped[index_tfam+1]
+####                index_bgl = l_indexes2[i]
+####                l_probs_bgl = l_bgl[index_bgl:index_bgl+3]
+####                print alleleA_tped, alleleB_tped, l_probs_bgl
+##            print r2
+
+##        if l_tped[1] == 'rs9958437' or r2 == 1/3. and l_tped[1] not in ['kgp15191706']:
+##            ii = 0
+##            for i in xrange(n_samples):
+##                index_tfam = l_indexes1[i]
+##                alleleA_tped = l_tped[index_tfam]
+##                alleleB_tped = l_tped[index_tfam+1]
+##                index_bgl = l_indexes2[i]
+##                l_probs_bgl = l_bgl[index_bgl:index_bgl+3]
+##                if alleleA_tped == '0' and alleleB_tped == '0':
+##                    continue
+##                if max(
+##                    float(l_probs_bgl[0]),
+##                    float(l_probs_bgl[1]),
+##                    float(l_probs_bgl[2]),
+##                    ) <= 0.9:
+##                    print 'xxx', i
+##                    continue
+##                if lx[ii] != ly[ii]:
+##                    print alleleA_tped, alleleB_tped, l_probs_bgl, lx[i], ly[i]
+##                ii += 1
+##            import scipy
+##            from scipy import stats
+##            r = scipy.stats.pearsonr(lx,ly)
+##            print lx
+##            print ly
+##            print l_tped[1]
+##            print r2
+##            print nom, den
+##            print sum_x, sum_xx, sum_y, sum_yy, n
+##            print r[0]**2
+##            print r
+##            print r2
+##            print n_samples, n
+##            print len(lx)
+##            stop
+
+##        if n > 0.9*n_samples and r2 == None:
+##            import scipy
+##            from scipy import stats
+##            import numpy
+##            r = scipy.stats.pearsonr(lx,ly)
+##            if r[0] == numpy.float('nan'):
+##                print lx
+##                print ly
+##                print r
+##                print sum_x, sum_xx, sum_y, sum_yy
+##                print nom, den
+##                print type(r[0])
+##                print r[0]
+##                stop2
+
+        return cnt_discordant, cnt_missing, r2
 
 
     def parse_line_tped(self,line_tped,):
 
         ## slow split
-        l_tped = line_tped.split()
+        l_tped = line_tped.strip().split()
         chrom_tped = l_tped[0]
         pos_tped = int(l_tped[3])
 
@@ -337,7 +761,7 @@ class main():
 
     def execmd(self,cmd):
 
-        print cmd
+        print(cmd)
         os.system(cmd)
 
         return
@@ -370,7 +794,7 @@ class main():
         return d_centromere_ranges
 
 
-    def parse_line_gen(self,line):
+    def parse_line_gen_old(self,line):
 
         ## slow split
         l = line.strip().split()
@@ -492,7 +916,7 @@ class main():
             ## identical marker found in map file
             else:
                 r2 = allelic_R2_ped(ped,row_map,l_indexes_samples,l_gprobs,alleleA_gprobs,alleleB_gprobs,)
-                print r2, marker_map, marker_gprobs
+                print(r2, marker_map, marker_gprobs)
                 l_r2_allelic += ['%s %s\n' %(marker_map,r2,)]
         fd_gprobs.close()
 
@@ -528,7 +952,7 @@ class main():
             if alleleA_ped == '0' and alleleB_ped == '0':
                 continue
             if alleleA_ped == '0' or alleleB_ped == '0':
-                print l_tped
+                print(l_tped)
                 stop
             if alleleA_ped == alleleA_gprobs:
                 if alleleB_ped == alleleA_gprobs:
@@ -538,7 +962,7 @@ class main():
                     y = dosage_genotype = 1.
                     count_1 += 1
                 else:
-                    print alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs
+                    print(alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs)
                     stop
             elif alleleA_ped == alleleB_gprobs:
                 if alleleB_ped == alleleA_gprobs:
@@ -548,12 +972,12 @@ class main():
                     y = dosage_genotype = 2.
                     count_2 += 1
                 else:
-                    print alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs
+                    print(alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs)
                     stop
             else:
-                print 'discordance',
-                print alleleA_ped, alleleB_ped,
-                print alleleA_gprobs, alleleB_gprobs, l_gprobs[0]
+                print('discordance',)
+                print(alleleA_ped, alleleB_ped,)
+                print(alleleA_gprobs, alleleB_gprobs, l_gprobs[0])
                 bool_break = True
                 break
 
@@ -624,7 +1048,7 @@ class main():
                 elif alleleB_ped == alleleB_gprobs:
                     y = dosage_genotype = 1.
                 else:
-                    print alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs
+                    print(alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs)
                     stop
             elif alleleA_ped == alleleB_gprobs:
                 if alleleB_ped == alleleA_gprobs:
@@ -632,12 +1056,12 @@ class main():
                 elif alleleB_ped == alleleB_gprobs:
                     y = dosage_genotype = 2.
                 else:
-                    print alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs
+                    print(alleleA_ped, alleleB_ped, alleleA_gprobs, alleleB_gprobs)
                     stop
             else:
-                print alleleA_ped, alleleB_ped
-                print alleleA_gprobs, alleleB_gprobs
-                print sample_ped
+                print(alleleA_ped, alleleB_ped)
+                print(alleleA_gprobs, alleleB_gprobs)
+                print(sample_ped)
                 stop
                 bool_break = True
                 break
@@ -662,15 +1086,15 @@ class main():
         if bool_break == False and n > 1:
             r = (sum_xy-sum_x*sum_y/n)/math.sqrt((sum_xx-sum_x**2/n)*(sum_yy-sum_y**2/n))
             r2 = r**2
-            print n,
+            print(n,)
         else:
-            print alleleA_ped
-            print alleleB_ped
-            print n
-            print marker_map
-            print marker_gprobs
-            print pos_map
-            print pos_gprobs
+            print(alleleA_ped)
+            print(alleleB_ped)
+            print(n)
+            print(marker_map)
+            print(marker_gprobs)
+            print(pos_map)
+            print(pos_gprobs)
             stop
 
         return r2
@@ -691,8 +1115,8 @@ class main():
         elif extension == 'bed':
             cmd += '--bfile %s \\\n' %(os.path.join(dn,basename))
         else:
-            print extension
-            print fn
+            print(extension)
+            print(fn)
             stop
         cmd += '--recode \\\n'
         cmd += '--transpose \\\n'
@@ -751,14 +1175,14 @@ class main():
         (
             l_gen, marker_gen, pos_gen,
             alleleA_gen, alleleB_gen
-            ) = parse_line_gen(line_gen)
+            ) = parse_line_gen_old(line_gen)
 
         ##
         ## loop over markers in tped file
         ##
         l_r2_allelic = []
         pos_add = 0
-        print 'chromosome', chromosome
+        print('chromosome', chromosome)
         fd_tped = open('%s.tped' %(ped),'r')
         for line_tped in fd_tped:
             l_tped = line_tped.strip().split()
@@ -766,7 +1190,7 @@ class main():
             marker_tped = l_tped[1]
             pos_tped = int(l_tped[3])
             if chromosome != chromosome_tped:
-                print 'chromosome', chromosome_tped
+                print('chromosome', chromosome_tped)
                 fd_gen.close()
                 pos_add += d_chromosome_lengths[chromosome]
                 chromosome = chromosome_tped
@@ -777,7 +1201,7 @@ class main():
                 (
                     l_gen, marker_gen, pos_gen,
                     alleleA_gen, alleleB_gen,
-                    ) = parse_line_gen(line_gen)
+                    ) = parse_line_gen_old(line_gen)
             if pos_tped < pos_gen:
                 continue
             elif pos_tped > pos_gen:
@@ -785,7 +1209,7 @@ class main():
                     (
                         l_gen, marker_gen, pos_gen,
                         alleleA_gen, alleleB_gen
-                        ) = parse_line_gen(line_gen)
+                        ) = parse_line_gen_old(line_gen)
                     if pos_tped > pos_gen:
                         continue
                     elif pos_gen > pos_tped:
@@ -850,8 +1274,8 @@ class main():
 
         fd = fd_map_omni = open('omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped.map','r')
         fd_ped_omni = open('omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped.ped','r')
-        print len(fd_map_omni.readlines())
-        print len(fd_ped_omni.readlines())
+        print(len(fd_map_omni.readlines()))
+        print(len(fd_ped_omni.readlines()))
         stop
 
     ##    i = 0
@@ -869,12 +1293,12 @@ class main():
             l = line.split()
             pos_wgs = l[2]
             if bool_continue == True:
-                print pos_wgs, pos_omni
+                print(pos_wgs, pos_omni)
                 if int(pos_wgs) > int(pos_omni):
                     bool_continue = False
                 elif pos_wgs == pos_omni:
-                    print line
-                    print line_map_omni
+                    print(line)
+                    print(line_map_omni)
                     stop0
                     bool_continue = False
                 ## wgs still lagging
@@ -885,20 +1309,20 @@ class main():
                 pos_omni = line_map_omni.split()[3]
                 if line_map_omni[:2] != 'xx':
                     continue
-                print pos_wgs, pos_omni
+                print(pos_wgs, pos_omni)
                 if int(pos_wgs) < int(pos_omni):
                     bool_continue = True
                     break
                 stop
                 if pos_wgs == pos_omni:
-                    print line
-                    print line_map_omni
+                    print(line)
+                    print(line_map_omni)
                     stop1
 
             if bool_continue == True:
                 continue
             if d.has_key(pos_wgs):
-                print d[pos_wgs]
+                print(d[pos_wgs])
             else:
                 continue
             stop2
@@ -922,7 +1346,7 @@ class main():
 
     def omni2dic(self,):
 
-        print 'read map'
+        print('read map')
 
         fd = fd_map_omni = open('omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped.map','r')
 
@@ -950,13 +1374,13 @@ class main():
         ##
         ## loop chromosomes
         ##
-        print 'read gprobs'
+        print('read gprobs')
         l_wgs_markers_all = []
         wgs_not_omni = 0
         wgs = 0
         wgs_omni_intersect = 0
         for chromosome in xrange(1,22+1):
-            print chromosome
+            print(chromosome)
             l_wgs_markers = []
             ##
             ## read gprobs
@@ -983,9 +1407,9 @@ class main():
             wgs += len(set_wgs_markers)
             wgs_not_omni += len(set_wgs_markers-set_omni_markers)
             wgs_omni_intersect += len(set_wgs_markers&set_omni_markers)
-        print 'wgs', wgs
-        print 'wgs not omni', wgs_not_omni
-        print 'wgs and omni overlap', wgs_omni_intersect
+        print('wgs', wgs)
+        print('wgs not omni', wgs_not_omni)
+        print('wgs and omni overlap', wgs_omni_intersect)
 
     ##    ##
     ##    ## initiate dictionary
@@ -1009,8 +1433,8 @@ class main():
 
         set_omni_markers = set(l_map)
         set_wgs_markers = set(l_wgs_markers_all)
-        print 'omni', len(set_omni_markers)
-        print 'omni not wgs', len(set_omni_markers-set_wgs_markers)
+        print('omni', len(set_omni_markers))
+        print('omni not wgs', len(set_omni_markers-set_wgs_markers))
         stop
 
         n_samples = len(l_samples)
@@ -1026,19 +1450,19 @@ class main():
             alleleA_imputation = l[1]
             alleleB_imputation = l[2]
             if d_map.has_key(marker):
-                print d_map[marker]
-                print l[:6]
+                print(d_map[marker])
+                print(l[:6])
                 for i_sample in xrange(n_samples):
     ##                x = dosage_imputation = 0*l[6+i_sample+0]+l[6+i_sample+1]+2*l[6+i_sample+1]
                     x = dosage_imputation = l[6+i_sample+1]+2*l[6+i_sample+1]
                     sample = l_samples[i_sample]
                     alleles = d_ped[sample][marker]
-                    print alleleA_imputation
-                    print alleleB_imputation
+                    print(alleleA_imputation)
+                    print(alleleB_imputation)
                     alleleA_omni = alleles[0]
                     alleleB_omni = alleles[1]
-                    print alleleA_omni
-                    print alleleB_omni
+                    print(alleleA_omni)
+                    print(alleleB_omni)
                     ## homozygous
                     if alleleA_omni == alleleA_imputation and alleleB_omni == alleleA_imputation:
                         y = dosage_genotype = 0
@@ -1047,8 +1471,8 @@ class main():
                         y = dosage_genotype = 2
                     ## homozygous
                     else:
-                        print alleleA_omni, alleleA_imputation
-                        print alleleB_omni, alleleB_imputation
+                        print(alleleA_omni, alleleA_imputation)
+                        print(alleleB_omni, alleleB_imputation)
                         stop
                     stop
                 stop
@@ -1115,7 +1539,7 @@ class main():
         ##
         l_r2_allelic = []
         pos_add = 0
-        print 'chromosome', chromosome
+        print('chromosome', chromosome)
         fd_tped = open('%s.tped' %(ped),'r')
         for line_tped in fd_tped:
             l_tped = line_tped.strip().split()
@@ -1123,7 +1547,7 @@ class main():
             marker_tped = l_tped[1]
             pos_tped = int(l_tped[3])
             if chromosome != chromosome_tped:
-                print 'chromosome', chromosome_tped
+                print('chromosome', chromosome_tped)
                 fd_gprobs.close()
                 pos_add += d_chromosome_lengths[chromosome]
                 chromosome = chromosome_tped
@@ -1237,7 +1661,7 @@ class main():
 
     ##    cmd = 'convert -rotate 90 %s.ps %s.png' %(prefix,prefix,)
         cmd = 'convert %s.ps %s.png' %(prefix,prefix,)
-        print cmd
+        print(cmd)
         execmd(cmd)
         if os.path.isfile('%s.png' %(prefix)):
             os.remove('%s.ps' %(prefix))
@@ -1255,16 +1679,16 @@ class main():
 
         parser.add_argument(
             '--fp1',
-            dest='fp1',
-            help='File path 1',
+            dest='l_fp1',nargs='+',
+            help='List of file paths 1 in sequential order',
             metavar='FILE',default=None,
             required = True,
             )
 
         parser.add_argument(
             '--fp2',
-            dest='fp2',
-            help='File path 2',
+            dest='l_fp2',nargs='+',
+            help='List of file paths 2 in sequential order (e.g. chrom1 chrom2...).',
             metavar='FILE',default=None,
             required = True,
             )
@@ -1293,23 +1717,45 @@ class main():
             required = False,
             )
 
+        parser.add_argument(
+            '--fp_sampledic',
+            dest='fp_sampledic',
+            help='Translation of sample IDs from file1 to file2',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
+        parser.add_argument(
+            '--format1',
+            dest='format1',
+            metavar='STRING',default=None,
+            required = False,
+            )
+
+        parser.add_argument(
+            '--format2',
+            dest='format2',
+            metavar='STRING',default=None,
+            required = False,
+            )
+
         ## http://docs.python.org/2/library/functions.html#vars
         for k,v in vars(parser.parse_args()).items():
             setattr(self,k,v)
             continue
 
-        if not os.path.isfile(self.fp1):
-            print 'missing', self.fp1
-            sys.exit(0)
-        if not os.path.isfile(self.fp2):
-            print 'missing', self.fp2
-            sys.exit(0)
+        for l_fp in [self.l_fp1,self.l_fp2,]:
+            for fp in l_fp:
+                if not os.path.isfile(fp):
+                    print('missing', fp)
+                    sys.exit(0)
 
-        self.fn1 = os.path.basename(self.fp1)
-        self.fn2 = os.path.basename(self.fp2)
+        self.extension1 = self.l_fp1[0][self.l_fp1[0].rindex('.')+1:]
+        self.extension2 = self.l_fp2[0][self.l_fp2[0].rindex('.')+1:]
 
-        self.extension1 = self.fn1[self.fn1.rindex('.')+1:]
-        self.extension2 = self.fn2[self.fn2.rindex('.')+1:]
+        if self.fp_samples1 == None:
+            if self.extension1 == 'tped':
+                self.fp_samples1 = '%s.tfam' %(self.l_fp1[0][:-5])
 
         return
 
