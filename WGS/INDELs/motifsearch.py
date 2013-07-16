@@ -463,7 +463,7 @@ class motifsearch():
 
         line = file_rm.readline().decode("utf-8")
         l_rm = line.rstrip().split()
-        chrom_rm = int(l_rm[4][3:])
+        chrom_rm = l_rm[4][3:]
         pos1_rm = int(l_rm[5])
         pos2_rm = int(l_rm[6])
 
@@ -475,6 +475,9 @@ class motifsearch():
         print('loop over vcf(s)')
 
         d_cnt_all = {'1':0,'2':0,}
+
+        ## define sequence of human chromosomes
+        l_chromosomes = [str(chrom) for chrom in range(1,23)]+['X','Y',]
 
         self.cnt_newlines_minimum = self.size_window//60
         self.window_line_mod = self.size_window%60
@@ -500,12 +503,22 @@ class motifsearch():
             for i in range(3):
                 file_rm.readline().decode("utf-8")
             chrom_rm, pos1_rm, pos2_rm = next(self.parse_rm(file_rm))
-##            chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
-##            while True:
-##            stop
-            for chrom,pos,l_vcf in self.generate_line_vcf_INDEL(file_vcf):
+            chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+            while True:
+                if chrom_rm != chrom:
+                    print(chrom_rm,chrom)
+                    stop
+                elif pos > pos2_rm:
+                    chrom_rm, pos1_rm, pos2_rm = next(self.parse_rm(file_rm))
+                    continue
+                elif pos > pos1_rm:
+                    chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+                    continue
+                ## parse INDEL line
                 self.parse_line(
                     chrom,pos,l_vcf,d_cnt,d_cnt_all,file_odd,file_even,)
+                ## find next INDEL line
+                chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
 
         return d_cnt, d_cnt_all
 
@@ -559,8 +572,6 @@ class motifsearch():
                     except KeyError:
                         d_cnt_samples[int(s)] = 1
 
-        bool1 = False
-        bool2 = False
         for alleleA in l_vcf[3].split(','):
             lenA = len(alleleA)
             l_alleleB = l_vcf[4].split(',')
@@ -585,18 +596,20 @@ class motifsearch():
                 elif lenINDEL%2 == 0: ## even
                     d_cnt_all['1'] += self.append_total_count(cnt_samples)
                     self.append_motif(d_cnt['1'],seq,cnt_samples,)
-                    bool1 = True
+                    s = ''
                     for x in range(cnt_samples):
-                        file_even.write('>%s|%s|%s|%s\n%s\n' %(
-                            chrom,pos,l_vcf[3],l_vcf[4],seq,))
+                        s += '>%s|%s|%s|%s\n%s\n' %(
+                            chrom,pos,l_vcf[3],l_vcf[4],seq,)
+                    file_even.write(s)
 ##                elif lenINDEL%4 == 0:
                 else: ## odd
                     d_cnt_all['2'] += self.append_total_count(cnt_samples)
                     self.append_motif(d_cnt['2'],seq,cnt_samples,)
-                    bool2 = True
+                    s = ''
                     for x in range(cnt_samples):
-                        file_odd.write('>%s|%s|%s|%s\n%s\n' %(
-                            chrom,pos,l_vcf[3],l_vcf[4],seq,))
+                        s += '>%s|%s|%s|%s\n%s\n' %(
+                            chrom,pos,l_vcf[3],l_vcf[4],seq,)
+                    file_odd.write(s)
 ##            if bool3n == True:
 ##                file_FASTA3.write('>%s|%s|%s|%s\n%s\n' %(chrom,pos,l_vcf[3],l_vcf[4],seq,))
 ##            if bool4n == True:
