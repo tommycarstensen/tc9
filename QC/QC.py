@@ -4204,7 +4204,7 @@ it's ugly and I will not understand it 1 year form now.'''
             cmd = 'if [ -f %s.X.females.lmiss.SNPs ]; then\n' %(
                 self.o,)
             cmd += 'cat %s.X.females.lmiss.SNPs | sort -u > %s.X.lmiss.union.SNPs\n' %(
-                self.o,self.o,self.o,)
+                self.o,self.o,)
         else:
             cmd = 'if [ -f %s.X.males.lmiss.SNPs -a -f %s.X.females.lmiss.SNPs ]; then\n' %(
                 self.o,self.o,)

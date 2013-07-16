@@ -1,20 +1,20 @@
 #!/software/bin/python
 
-## T. Carstensen (tc9), M.S. Sandhu (ms23), D. Gurdasani (dg11)
+## Tommy Carstensen (tc9)
 ## Wellcome Trust Sanger Institute, 2012-2013
 
 ## built-ins
 import os, sys, time, inspect
 ## add-ons
 import numpy
+from xml.dom import minidom
 ## my own modules
 sys.path.append(os.path.dirname(sys.argv[0]))
 import QC
 sys.path.append('/nfs/users/nfs_t/tc9/github/sandbox')
 import gnuplot
 
-
-hours = 24
+hours = 24000
 
 
 def main():
@@ -25,16 +25,52 @@ def main():
         '../preQC/omni2.5-8_agv_20120910_gtu_exclconsent_commonID_flipped_commonpos',
         ]
 
-    if True:
+    if False:
         plots(l_populations)
+##        sys.exit(0)
         tables(l_populations)
-        sys.exit(0)
+##        sys.exit(0)
 
     ## 15) analyze discordance
     analyze_discordance(
         l_populations,d_pops2coords,l_bfiles,)
 
     return
+
+
+def parse_peakware():
+
+    ## http://peakware.com/googleearth.html?map=area&id=432
+    ## http://en.wikipedia.org/wiki/List_of_mountain_ranges#Africa
+    ## http://en.wikipedia.org/wiki/List_of_mountains#Africa
+    lines_mountains = []
+    fn_xml = 'peakware-africa.kml'
+    xmldoc = minidom.parse(fn_xml)
+    placemarks = xmldoc.getElementsByTagName('Placemark')
+    for placemark in placemarks:
+        LookAts = placemark.getElementsByTagName("LookAt")
+        NodeList_name = placemark.getElementsByTagName("name")
+        for node_name in NodeList_name:
+            name = node_name.childNodes[0].nodeValue
+        for LookAt in LookAts:
+            ## loop over NodeList
+            for node_longitude in LookAt.getElementsByTagName('longitude'):
+                longitude = node_longitude.childNodes[0].nodeValue
+            ## loop over NodeList
+            for node_latitude in LookAt.getElementsByTagName('latitude'):
+                latitude = node_latitude.childNodes[0].nodeValue
+##        for description in NodeList_description:
+##            print description.getElements
+##            for node_li in description.getElementsByTagName('li'):
+##                li = node_li.childNodes[0].nodeValue
+##                print li
+        lines_mountains += ['%s %s %s\n' %(longitude,latitude,name,)]
+
+    fd = open('mountains.txt','w')
+    fd.writelines(lines_mountains)
+    fd.close()
+
+    return lines_mountains
 
 
 def write_eigensoft_parameter_file(bfile_out):
@@ -320,7 +356,7 @@ def frqlmisshwe_discordant():
 
     for chip in ['quad','octo',]:
 
-        cmd = 'cat ../pops/Baganda_%s/Baganda_%s.SNPQC.fam | wc -l' %(chip,chip,)
+        cmd = 'cat ../pops/Baganda_%s/Baganda_%s.postQC.autosomes.fam | wc -l' %(chip,chip,)
         n_samples = int(os.popen(cmd).read())
 
         for flag,prefix in [
@@ -633,8 +669,8 @@ def analyze_discordance(
 ##
 ##    ## 15b) identify discordant SNPs post SNP QC
 ##    n_samples_SNPQC, fn_common_SNPs_SNPQC = allelic_concordance_Baganda(
-##        '../pops/Baganda_quad/Baganda_quad.SNPQC',
-##        '../pops/Baganda_octo/Baganda_octo.SNPQC',
+##        '../pops/Baganda_quad/Baganda_quad.postQC.autosomes',
+##        '../pops/Baganda_octo/Baganda_octo.postQC.autosomes',
 ##        )
 
 ##    ##
@@ -1283,9 +1319,9 @@ def super_MDS(d_pops2coords,l_bfiles,l_populations,):
     l_population_sets = list(d_l_popset2bfiles.keys())
     l_population_sets = [
         'Africa',
-        'Africa1000G',
-        'BBGZ',
-        '1000G',
+##        'Africa1000G',
+##        'BBGZ',
+##        '1000G',
         ]
 
     ##
@@ -1310,69 +1346,71 @@ def super_MDS(d_pops2coords,l_bfiles,l_populations,):
         ## continue loop over populations
         continue
 
-    ##
-    ## 3) find component with greatest "quad/octo correlation"
-    ##
-    for bfile in l_bfiles:
-        cmd = 'cat %s.fam | sort -k1,1 > %s.fam.sorted' %(bfile,bfile,)
-        execmd(cmd)
-    d_max_correlation = {}
-    for population_set in l_population_sets:
-
-        for bool_exclude in [
-            False,
-            True,
-            ]:
-
-            bfile = '%s_%s' %(population_set,str(bool_exclude))
-
-            if not os.path.isfile('%s.mds' %(bfile)):
-                continue
-
-            cmd = 'cat %s.mds | sort -k1,1 > %s.mds.sorted' %(bfile,bfile,)
-            execmd(cmd)
-            l_keys = ['quad','octo',]
-            d_arrays = {'quad':None,'octo':None,}
-            for i in xrange(2):
-                bfile_main = l_bfiles[i]
-                fn_array = '%s.%s.mds' %(bfile,l_keys[i],)
-                cmd = 'join -1 1 -2 1 %s.fam.sorted %s.mds.sorted' %(
-                    bfile_main,bfile,)
-                cmd += ' > %s' %(fn_array)
-                execmd(cmd)
-                cmd = 'cat %s | wc -l' %(fn_array)
-                i_lines = int(os.popen(cmd).read())
-                ## read array
-                cmd = 'cat %s' %(fn_array)
-                cmd += " | sed 's/ /\\t/g' | cut -f%i-" %(1+(6-1)+(3-1)+1)
-                s = os.popen(cmd).read()
-####                print s[:12]
-####                print s[-12:]
-    ##            array = numpy.fromstring(s,sep='\n').reshape((1+(6-1)+(3-1)+1+4,i_lines))
-####                print len(numpy.fromstring(s,sep='\n')), 500, i_lines
-                array = numpy.fromstring(s,sep='\n').reshape((i_lines,500))
-                d_arrays[l_keys[i]] = array
-            l = []
-            for component in xrange(500):
-                l_quad = d_arrays['quad'][:,component]
-                l_octo = d_arrays['octo'][:,component]
-                l1 = list(l_quad)+list(l_octo) ## numpy.column_stack
-                l2 = len(l_quad)*[0]+len(l_octo)*[1] ## numpy.tile
-    ##            instance_tests = statistics.tests()
-    ##            a,b,r,p_correlation = instance_tests.do_regression(l1,l2)
-    ##            print a,b,r,p_correlation
-    ##            r = instance_tests.correlation(l1,l2)
-    ##            print r
-                ndarray = numpy.corrcoef(l1,l2)
-                r = ndarray[0][1]
-                l += [[abs(r),component]]
-                l.sort()
-            d_max_correlation[bfile] = [
-                l[-1][1],l[-2][1],
-                l[-1][0],l[-2][0],]
-            fd = open('tmp.txt','a')
-            fd.write('%s %s\n' %(bfile,str(d_max_correlation[bfile])))
-            fd.close()
+##    ##
+##    ## 3) find component with greatest "quad/octo correlation"
+##    ##
+##    for bfile in l_bfiles:
+##        cmd = 'cat %s.fam | sort -k1,1 > %s.fam.sorted' %(bfile,bfile,)
+##        execmd(cmd)
+##    d_max_correlation = {}
+##    for population_set in l_population_sets:
+##
+##        for bool_exclude in [
+##            False,
+##            True,
+##            ]:
+##
+##            bfile = '%s_%s' %(population_set,str(bool_exclude))
+##
+##            if not os.path.isfile('%s.mds' %(bfile)):
+##                continue
+##
+##            cmd = 'cat %s.mds | sort -k1,1 > %s.mds.sorted' %(bfile,bfile,)
+##            execmd(cmd)
+##            l_keys = ['quad','octo',]
+##            d_arrays = {'quad':None,'octo':None,}
+##            for i in xrange(2):
+##                bfile_main = l_bfiles[i]
+##                fn_array = '%s.%s.mds' %(bfile,l_keys[i],)
+##                cmd = 'join -1 1 -2 1 %s.fam.sorted %s.mds.sorted' %(
+##                    bfile_main,bfile,)
+##                cmd += ' > %s' %(fn_array)
+##                execmd(cmd)
+##                cmd = 'cat %s | wc -l' %(fn_array)
+##                i_lines = int(os.popen(cmd).read())
+##                if i_lines == 0:
+##                    continue
+##                ## read array
+##                cmd = 'cat %s' %(fn_array)
+##                cmd += " | sed 's/ /\\t/g' | cut -f%i-" %(1+(6-1)+(3-1)+1)
+##                s = os.popen(cmd).read()
+######                print s[:12]
+######                print s[-12:]
+##    ##            array = numpy.fromstring(s,sep='\n').reshape((1+(6-1)+(3-1)+1+4,i_lines))
+######                print len(numpy.fromstring(s,sep='\n')), 500, i_lines
+##                array = numpy.fromstring(s,sep='\n').reshape((i_lines,500))
+##                d_arrays[l_keys[i]] = array
+##            l = []
+##            for component in xrange(500):
+##                l_quad = d_arrays['quad'][:,component]
+##                l_octo = d_arrays['octo'][:,component]
+##                l1 = list(l_quad)+list(l_octo) ## numpy.column_stack
+##                l2 = len(l_quad)*[0]+len(l_octo)*[1] ## numpy.tile
+##    ##            instance_tests = statistics.tests()
+##    ##            a,b,r,p_correlation = instance_tests.do_regression(l1,l2)
+##    ##            print a,b,r,p_correlation
+##    ##            r = instance_tests.correlation(l1,l2)
+##    ##            print r
+##                ndarray = numpy.corrcoef(l1,l2)
+##                r = ndarray[0][1]
+##                l += [[abs(r),component]]
+##                l.sort()
+##            d_max_correlation[bfile] = [
+##                l[-1][1],l[-2][1],
+##                l[-1][0],l[-2][0],]
+##            fd = open('tmp.txt','a')
+##            fd.write('%s %s\n' %(bfile,str(d_max_correlation[bfile])))
+##            fd.close()
 
     ##
     ## 2) plot MDS
@@ -1399,7 +1437,6 @@ def super_MDS(d_pops2coords,l_bfiles,l_populations,):
                 d_l_popset2bfiles,
                 l_colors, d_bfiles2chips, d_bfiles2pts,
                 d_pops2coords,
-                d_max_correlation,
                 )
 
     stop_end
@@ -1581,7 +1618,6 @@ def MDS_super_plot(
     d_l_popset2bfiles,
     l_colors, d_bfiles2chips, d_bfiles2pts,
     d_pops2coords,
-    d_max_correlation,
     ):
 
     bfile1 = '%s_%s' %(population_set,str(bool_exclude))
@@ -1628,6 +1664,8 @@ def MDS_super_plot(
     for c1 in xrange(4):
         for c2 in xrange(4):
             if c2 <= c1:
+                continue
+            if os.path.isfile('mds.3D.%s.%i.%i.%i.png' %(bfile1,c1,c2,c2+1,)):
                 continue
 ##    for c1 in [0]+[d_max_correlation[bfile1][0]]:
 ##        for c2 in [1]+[d_max_correlation[bfile1][1]]:
@@ -1680,13 +1718,14 @@ def MDS_super_plot(
                     'color':color,'pt':pt,'ps':ps,
                     }
                 
-                cmd = 'cat ../pops/%s/%s.SNPQC.fam | sort -k1,1 -k2,2 > %s.fam.sorted' %(
+                cmd = 'cat ../pops/%s/%s.postQC.autosomes.fam | sort -k1,1 -k2,2 > %s.fam.sorted' %(
                     bfile2,bfile2,bfile2,)
                 execmd(cmd)
                 cmd = 'join -1 2 -2 2'
                 cmd += ' %s.fam.sorted %s.mds.sorted ' %(bfile2,bfile1,)
                 cmd += ' > %s.%s.mds' %(bfile1,bfile2,)
                 execmd(cmd)
+##                os.remove('%s.fam.sorted' %(bfile2))
                 line_plot += '"%s.%s.mds" u %i:%i lc rgb "#%s" pt %i ps %i t "%s (%s)",' %(
                     bfile1,bfile2,
                     1+(6-1)+(3-1)+1+c1,
@@ -1697,6 +1736,12 @@ def MDS_super_plot(
                     bfile2.replace('_quad','').replace('_octo',''),
                     d_bfiles2chips[bfile2],
                     )
+##                if bfile2 in ['Baganda_quad','Banyarwanda_quad','Kikuyu','Kalenjin','LWK','Zulu_quad',]: color = 'ff0000' ## quad/red
+##                elif bfile2 in ['Baganda_octo','Banyarwanda_octo','Barundi','Zulu_octo','Sotho',]: color = 'ff8080' ## octo/pink
+##                elif bfile2 in ['Ethiopia',]: color = '00ff00'
+##                elif bfile2 in ['Igbo','YRI','Ga-Adangbe_quad',]: color = '0000ff' ## blue/quad
+##                elif bfile2 in ['Ga-Adangbe_octo',]: color = '8080ff' ## bright blue/octo
+##                elif bfile2 in ['Mandinka','Wolof','Jola','Fula',]: color = 'ffff00' ## orange/octo
                 line_splot += '"%s.%s.mds" u %i:%i:%i lc rgb "#%s" pt %i ps %i t "%s (%s)",' %(
                     bfile1,bfile2,
                     1+(6-1)+(3-1)+1+c1,
@@ -1769,34 +1814,87 @@ def MDS_super_plot(
 
 def Africa_map_term(population_set,s,d_pops2style,d_pops2coords,):
 
+    d_pops2style['Baganda']['color'] = '01559D'
+    d_pops2style['Zulu']['color'] = '01559D'
+    d_pops2style['Fula']['color'] = '01559D'
+    d_pops2style['Ethiopia']['color'] = '01559D'
+    d_pops2style['Baganda']['pt'] = 7
+    d_pops2style['Zulu']['pt'] = 7
+    d_pops2style['Fula']['pt'] = 7
+    d_pops2style['Ethiopia']['pt'] = 7
+
     for pop in d_pops2style.keys():
         if not pop in d_pops2coords.keys():
             continue
+        if not pop in ['Baganda','Zulu','Fula','Ethiopia',]: continue
 ##        s += '"-" lc rgb "#%s" pt %s ps %s\n%f %f,' %(
-        s += '''"<echo '%f %f'" lc rgb "#%s" pt %i ps %i,''' %(
+        s += '''"<echo '%f,%f'" lc rgb "#%s" pt %i ps %i,''' %(
             d_pops2coords[pop][1],d_pops2coords[pop][0],
             d_pops2style[pop]['color'],
-            d_pops2style[pop]['pt'],d_pops2style[pop]['ps'],
+            d_pops2style[pop]['pt'],
+##            5,#d_pops2style[pop]['ps'],
+            5,#d_pops2style[pop]['ps'],
             )
         x = d_pops2coords[pop][1]
         y = d_pops2coords[pop][0]
-        if pop in ['Jola','Kalenjin','Ga-Adangbe',]:
-            y -= 1
+        if True:
+            y += 1.25
+        elif pop in ['Kalenjin','Ga-Adangbe',]:
+##            y -= 1
+            y -= 2.25
+        elif pop in ['Jola',]:
+##            y -= 1
+            y -= 1.75
+            x -= 1.50
         elif pop in ['LWK']:
-            y += 1.5
+            x += 0.25
+            y += 1.25
+        elif pop in ['YRI']:
+            x -= 0.5
+            y += 0.75
+        elif pop in ['Igbo']:
+            x += 0.50
+            y += 1.20
         else:
             y += 1
-        if pop in ['Mandinka',]:
-            x += 2.5
+        if True:
+            pass
+        elif pop in ['Mandinka',]:
+##            x += 2.5
+            x += 4.00
+            y -= 0.25
         elif pop in ['Kikuyu',]:
-            x += 1.5
+            x += 2.75
+            y -= 0.00
+        elif pop in ['Wolof',]:
+            y += 0.00
+            x -= 1.50
         elif pop in ['Baganda',]:
-            x -= 1
+            x -= 4.50
+            y -= 0.25
+        elif pop in ['Barundi',]:
+            y -= 2.75
         elif pop in ['Banyarwanda',]:
-            x -= 1.75
-        s += '''"<echo '%f %f %s'" lc rgb "#000000" w labels font "Helvetica,24",''' %(
+##            x -= 1.75
+            x -= 6.25
+            y -= 0.75
+        elif pop in ['Sotho',]:
+            x -= 1.00
+            y += 0.25
+        elif pop in ['Zulu',]:
+            x += 0.50
+            y += 0.25
+        elif pop in ['Ethiopia',]:
+            y += 0.25
+        s += '''"<echo '%f,%f,%s'" lc rgb "#000000" w labels font "Helvetica,36",''' %(
             x,y,
-            pop,
+##            pop,
+##            pop.replace('LWK','Luhya').replace('YRI','Yoruba'),
+            pop.replace(
+                'Baganda','Uganda\\\\n\\\\nOmni 4778\\\\nHiSeq 100\\\\nIntersection 94').replace(
+                'Fula','Fula\\\\n\\\\nOmni 74\\\\nHiSeq 67\\\\nIntersection 0').replace(
+                'Zulu','Zulu\\\\n\\\\nOmni 95\\\\nHiSeq 100\\\\nIntersection 95').replace(
+                'Ethiopia','Ethiopia\\\\n\\\\nOmni 108\\\\nHiSeq 120\\\\nIntersection 63'),
             )
     s = s[:-1]+'\n'
 
@@ -1818,6 +1916,7 @@ def Africa_map_term(population_set,s,d_pops2style,d_pops2coords,):
         'set noborder\n',
     ####    ## background color
     ##    'set object 20 rect from graph 0, 0, 0 to graph 1, 1, 0 behind lw 1.0 fc  rgb "blue"  fillstyle  solid 0.15 border -1\n',
+        'set datafile separator ","\n',
         s,
         ])
     fd.close()
@@ -1927,6 +2026,7 @@ def plots(l_populations):
         l1=l_imiss,l2=l_het,l3=l_sexcheck,
         suffix='agv',
         text1='call rate',text2='heterozygosity',text3='sex',
+##        bool_labels=False,
         )
 
     return
@@ -2005,13 +2105,12 @@ def plot_heterozygosities(l_populations):
     cmd += ' END{i2=NR; print "\\""pop"\\"",0.5* ( i1+i2 )}'
     cmd += "'"
     s_xtics = ', '.join(os.popen(cmd).read().split('\n'))[:-2].replace('_',' ')
-   
 
     lines = []
     ## http://www.gnuplotting.org/using-a-palette-as-line-color/
     lines += ['h1 = 0/360.\n']
     lines += ['h2 = 320/360.\n']
-    lines += ['set palette model HSV functions (1-gray)*(h2-h1)+h1,1,0.5\n']
+    lines += ['set palette model HSV functions (1-gray)*(h2-h1)+h1,1,1.0\n']
     lines += ['set boxwidth 1.0 relative\n']
     lines += ['set style fill solid 1.0\n']
 ##    lines += ['unset xtics\n']
@@ -2019,14 +2118,33 @@ def plot_heterozygosities(l_populations):
     lines += ['unset colorbox\n']
     lines += ['set xtics (%s)\n' %(s_xtics)] ## or xtic(col) http://stackoverflow.com/questions/4805930/making-x-axis-tics-from-column-in-data-file-in-gnuplot
     lines += ['set xtics rotate by -45 left autojustify\n']
-    lines += ['set bmargin 8\n']
+    lines += ['set xtics font "Helvetica,30"\n']
+    lines += ['set bmargin 12\n']
+    lines1 = list(lines)
+    lines2 = list(lines)
     ## http://gnuplot.sourceforge.net/demo_cvs/varcolor.html
     ## "2D plots cannot color by Z value" unless lc pal z instead of lc pal
-    lines += ['plot "agv.het.joined2" u 1:4:5 w boxes lc pal z notitle\n']
-    gnuplot.plot_and_convert(
-        lines,'het_impulses',bool_remove=False,
-        ylabel='heterozygosity',
-        )
+    lines1 += ['plot [:][0:0.25]"agv.het.joined2" u 1:4:5 w boxes lc pal z notitle\n']
+    lines2 += ['''plot [:][0:0.25]"< awk '{if($2==\"LWK\"||$2==\"YRI\"||length($2)>3) print}' agv.het.joined2" u 1:4:5 w boxes lc pal z notitle\n''']
+    for lines,prefix in [
+        [lines1,'all',],
+        [lines2,'africa',],
+        ]:
+        gnuplot.plot_and_convert(
+            lines,'het_impulses_%s' %(prefix),bool_remove=False,
+            ylabel='heterozygosity',
+            )
+
+    ##
+    ## clean up
+    ##
+    for fn in [
+        'populations.sorted',
+        'agv.het.sorted',
+        'agv.het.joined1',
+        'agv.het.joined2',
+        ]:
+        os.remove(fn)
 
     return
 
@@ -2162,7 +2280,9 @@ def tables(l_populations,):
     print os.popen(cmd).read()
 
     print 'wc -l ../pops/*/*.sampleQC.fam'
-    print 'wc -l ../pops/*/*.SNPQC.fam'
+    print 'wc -l ../pops/*/*.postQC.autosomes.fam'
+
+    print '''awk 'BEGIN{filename="None"} {if(FILENAME!=filename) {if(filename!="None") {print m,f,filename}; filename=FILENAME;m=0;f=0}; if($5==1) m++; if($5==2) f++}' pops/*/*.X.fam'''
 
     return
 
@@ -2190,7 +2310,8 @@ def super_MDS_PLINK(bfile,l_populations,bool_exclude,):
     ##
     ## 1) find common SNPs
     ##
-    if not os.path.isfile('%s.SNPs.comm' %(bfile)):
+##    if not os.path.isfile('%s.SNPs.comm' %(bfile)):
+    if True:
         l_cmds += find_common_SNPs(bfile,l_populations,)
 
     ##
@@ -2246,7 +2367,7 @@ def merge_populations(prefix,l_populations,bool_exclude,):
 
     s = ''
     for population in l_populations[1:]:
-        bfile = '../pops/%s/%s.SNPQC' %(population,population,)
+        bfile = '../pops/%s/%s.postQC.autosomes' %(population,population,)
         fn_bed = '%s.bed' %(bfile)
         if not os.path.isfile(fn_bed):
             print fn_bed, 'not found'
@@ -2256,7 +2377,7 @@ def merge_populations(prefix,l_populations,bool_exclude,):
     fd.write(s)
     fd.close()
 
-    bfile0 = '../pops/%s/%s.SNPQC' %(l_populations[0],l_populations[0],)
+    bfile0 = '../pops/%s/%s.postQC.autosomes' %(l_populations[0],l_populations[0],)
     cmd = 'plink \\\n'
     cmd += '--bfile %s \\\n' %(bfile0)
     cmd += '--merge-list allfiles_%s.txt \\\n' %(prefix)
@@ -2277,7 +2398,7 @@ def find_common_SNPs(prefix,l_populations,):
     l_cmds = []
 
     population = l_populations[0]
-    bfile = '../pops/%s/%s.SNPQC' %(population,population,)
+    bfile = '../pops/%s/%s.postQC.autosomes' %(population,population,)
     cmd = "cat %s.bim | awk '{print $2}' | sort > %s.SNPs.comm" %(
         bfile,prefix,)
 ##    execmd(cmd)
@@ -2287,7 +2408,7 @@ def find_common_SNPs(prefix,l_populations,):
 ##    print population, int(os.popen(cmd).read())
 
     for population in l_populations[1:]:
-        bfile = '../pops/%s/%s.SNPQC' %(population,population,)
+        bfile = '../pops/%s/%s.postQC.autosomes' %(population,population,)
         ## sort
         cmd = "cat %s.bim | awk '{print $2}' | sort > %s.%s.SNPs.sorted" %(
             bfile,population,prefix,)
@@ -2424,12 +2545,12 @@ def init_MDS(l_populations_all):
         'Africa1000G':list(l_populations_all),
         'Africa':l_Africa,
         'BBGZ':l_BBGZ,
-##        'Africa_exclEthiopia':l_Africa_exclEthiopia,
-##        'Africa_exclEthiopiaZuluSotho':l_Africa_exclEthiopiaZuluSotho,
-##        'Africa_South':l_Africa_South,
-##        'Africa_East_exclEthiopia':l_Africa_East_exclEthiopia,
-##        'Africa_East':l_Africa_East,
-##        'Africa_West':l_Africa_West,
+        'Africa_exclEthiopia':l_Africa_exclEthiopia,
+        'Africa_exclEthiopiaZuluSotho':l_Africa_exclEthiopiaZuluSotho,
+        'Africa_South':l_Africa_South,
+        'Africa_East_exclEthiopia':l_Africa_East_exclEthiopia,
+        'Africa_East':l_Africa_East,
+        'Africa_West':l_Africa_West,
         '1000G':l_1000g,
         }
 
@@ -2470,7 +2591,10 @@ def Africa_map_init():
                 segment = int(lines[i1].split()[1])
                 rank = int(lines[i1].split()[3])
                 points = int(lines[i1].split()[5])
-                if segment in [1212,1213,1214,]: continue ## Victoria Lake
+                ##
+                ## append line breaks between segments
+                ##
+                if k == 'cil' and segment in [1212,1213,1214,]: continue ## Victoria Lake
                 if len(lines_coast) > 0 and not lines_coast[-1] == ['\n']:
                     lines_coast += ['\n']
                 if len(lines_islands) > 0 and not lines_islands[-1] == ['\n']:
@@ -2483,13 +2607,13 @@ def Africa_map_init():
                     if len(lines_boundary) > 0 and not lines_boundary[-1] == ['\n']:
                         lines_boundary += ['\n']
                 continue
-            if k == 'bdy' and rank > 1:
-                continue
+##            if k == 'bdy' and rank > 2:
+##                continue
             if k == 'riv' and rank > 2:
                 continue
             if k == 'cil' and rank > 1:
                 continue
-            if k not in ['cil','riv',]:
+            if k not in ['cil','riv','bdy',]:
                 continue
             y = float(lines[i1].split()[0])
             x = float(lines[i1].split()[1])
@@ -2583,21 +2707,21 @@ def Africa_map_init():
                 
             ## national boundaries
             if k == 'bdy':
-                lines_boundary += ['%s %s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
+                lines_boundary += ['%s,%s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
             ## rivers
             elif k == 'riv':
-                lines_rivers += ['%s %s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
+                lines_rivers += ['%s,%s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
             ## coastline
             elif k == 'cil' and rank == 1:
                 if segment in [
                     502, ## Bugala Island (Victoria Lake)
                     534, ## Ukerewe Island (Victoria Lake)
                     ]:
-                    lines_islands += ['%s %s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
+                    lines_islands += ['%s,%s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
                 if segment > 500 and segment < 1600:
-                    lines_lakes += ['%s %s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
+                    lines_lakes += ['%s,%s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
                 else:
-                    lines_coast += ['%s %s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
+                    lines_coast += ['%s,%s\n' %(lines[i1].split()[1],lines[i1].split()[0],)]
             else:
     ##            print k, rank, segment
                 continue
@@ -2618,9 +2742,12 @@ def Africa_map_init():
     fd.writelines(lines_rivers)
     fd.close()
 
+    parse_peakware()
+
     ## http://stackoverflow.com/questions/1412004/reading-xml-using-python-minidom-and-iterating-over-each-node
     lines_volcanoes = []
     for country in ['Uganda','Ethiopia','Kenya','Rwanda','Tanzania',]:
+        ## kml files manually downloaded from Wikipedia
         fn_xml = 'volcanoes_%s.kml' %(country)
         xmldoc = minidom.parse(fn_xml)
         placemarks = xmldoc.getElementsByTagName('Placemark')
@@ -2636,22 +2763,24 @@ def Africa_map_init():
                 for node_coordinate in coordinates:
                     coordinate = node_coordinate.childNodes[0].nodeValue
                     l = coordinate.split(',')
-                    latitude = l[0]
-                    longitude = l[1]
-            lines_volcanoes += ['%s %s %s\n' %(latitude,longitude,name,)]
+                    latitude = l[1]
+                    longitude = l[0]
+            lines_volcanoes += ['%s %s %s\n' %(longitude,latitude,name,)]
 
     fd = open('volcanoes.txt','w')
     fd.writelines(lines_volcanoes)
     fd.close()
 
     s = 'plot [%f:%f][%f:%f]' %(x_min,x_max,y_min,y_max,)
-    s += '"coast.txt" w l lc rgb "#000000",'
+    s += '"coast.txt" w l lw 5 lc rgb "#000000",'
     s += '"lakes.txt" w filledcurve lc rgb "#808080",'
     s += '"islands.txt" w filledcurve lc rgb "#ffffff",'
-##    s += '"boundary.txt" w l lc 0,'
     s += '"rivers.txt" w l lc rgb "#202020",'
-    s += '"volcanoes.txt" lc rgb "#202020" pt 66 ps 3,'
-##    s += '"volcanoes.txt" w labels lc rgb "#202020" pt 66 ps 3,'
+##    s += '"volcanoes.txt" lc rgb "#202020" pt 66 ps 3,'
+####    s += '"mountains.txt" lc rgb "#202020" pt 66 ps var,'
+##    s += '"mountains.txt" lc rgb "#202020" pt 66 ps 3,'
+####    s += '"volcanoes.txt" w labels lc rgb "#202020" pt 66 ps 3,'
+    s += '"boundary.txt" w l lc 0 lw 2 lt 1,'
 
     return s
 

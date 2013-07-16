@@ -38,6 +38,11 @@ def main():
     ## summary
     flip_summary(bfile)
     ## 7) QC
+
+    ##
+    write_sample2pop_dic(bfile)
+
+    cmd = ''
     cmd = '/software/bin/python-2.7.3 ~/github/tc9/QC/QC.py --bfile %s_flipped --project uganda_gwas' %(bfile)
     if os.path.isfile('%s_flipped.bed' %(bfile)):
         time.sleep(300)
@@ -47,6 +52,71 @@ def main():
 ##    ## 1000g prep
 ##    ##
 ##    prep1000g(bfile,fp_1000g,)
+
+    return
+
+
+def write_sample2pop_dic(bfile):
+
+    cmd = 'cat 1000G_True.fam %s_flipped.fam' %(bfile)
+    cmd += " | awk '{"
+    cmd += ' if(substr($2,12,3)=="APP") {print substr($2,12,10),$2}'
+    cmd += ' else {print $2,$2}'
+    cmd += "}'"
+    ## sort by sample ID
+    cmd += ' | sort -k1,1'
+    cmd += ' > join1'
+    execmd(cmd)
+
+    cmd = "awk '"
+    cmd += '{print $1,substr(FILENAME,9,length(FILENAME)-16)}'
+    cmd += "' samples/*"
+    ## sort by sample ID
+    cmd += ' | sort -k1,1'
+    cmd += ' > join2'
+    execmd(cmd)
+
+    cmd = 'join -o 1.2,2.2 join1 join2'
+    ## sort by population
+    cmd += ' | sort -k2,2'
+    cmd += ' > join3'
+    execmd(cmd)
+
+    ## non 1000G pops/tribes
+    s = '''Muganda\|Fula\|Wolloff\|Mandinka\|Jola\|Munyarwanda\|Other\|RwandeseUgandan\|Murundi\|Munyankole\|Mukiga\|Unknown\|Mutanzania\|Musoga\|Mutooro\|Mufumbira\|SOMALI\|OROMO\|Nyanjiro\|ZULU\|KALENJIN\|GA-ADANGBE\|Sotho\|Igbo\|KIKUYU\|AMHARA'''
+    cmd = 'grep "%s" join3' %(s)
+    cmd += " | awk '{print $2}'"
+    ## sort by most frequently occuring
+    cmd += " | sort | uniq -c | sort -nrk1 | awk '{print $2}'"
+    l_pops = os.popen(cmd).read().strip().split('\n')
+    l_pops += [
+        ## Africa East
+        'LWK',
+        ## Africa Central/West
+        'YRI',
+        ## Out of Africa
+        'ASW','ACB',
+        ## Europe
+        'IBS','TSI','CEU','GBR','FIN',
+        ## Asia
+        'CDX','CHB','CHS','KHV','JPT',
+        'CHD', ## 1 sample
+        ## North America
+        'GIH',
+        ## South America
+        'PEL','MXL','CLM','PUR',
+        'MKK', ## 31 samples
+        ]
+    fn = '%s_flipped.dic' %(bfile)
+    fd = open(fn,'w')
+    fd.close()
+    for pop in l_pops:
+        cmd = '''cat join3 | awk '{if($2=="%s") print}' >> %s''' %(pop,fn)
+        execmd(cmd)
+
+    os.remove('join1')
+    os.remove('join2')
+    os.remove('join3')
 
     return
 
