@@ -6,10 +6,14 @@
 ## http://www.broadinstitute.org/gatk/about#typical-workflows
 ## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
 
-## built-ins
-import math, os, sys, time, re, pwd
-## New in version 2.7
+import math
+import os
+import sys
+import time
+import re
+import pwd
 import argparse
+import inspect
 
 ##
 ## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
@@ -33,6 +37,8 @@ import argparse
 ## todo20130423: tc9: skip the ProduceBeagleInput (and ApplyRecalibration) step(s) to save disk space and CPU time
 
 ## todo20130424: tc9: run BEAGLE_divide in parallel for each chromosome
+
+## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH
 
 class main():
 
@@ -63,9 +69,10 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
+        ## todo: move BEAGLE unite from IMPUTE2 to here...
         self.IMPUTE2(l_chroms,d_chrom_lens,)
-##        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
-##
+        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
+
 ####        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
 ####        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
@@ -87,110 +94,6 @@ class main():
             fp_out = 'out_IMPUTE2_without_BEAGLE/%s.gen' %(chrom)
             if os.path.isfile(fp_out): continue
             cmd += ' > %s' %(fp_out)
-            self.execmd(cmd)
-
-        return
-
-
-    def IMPUTE2_without_BEAGLE(self,l_chroms,d_chrom_lens,):
-
-        ## tmp function!!!
-
-        if not os.path.isdir('stderr/IMPUTE2_without_BEAGLE'):
-            os.mkdir('stderr/IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('stdout/IMPUTE2_without_BEAGLE'):
-            os.mkdir('stdout/IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('touch/out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('touch/out_IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('out_IMPUTE2_without_BEAGLE')
-            for chrom in l_chroms:
-                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
-
-        if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
-            os.mkdir('in_IMPUTE2_without_BEAGLE')
-
-            cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
-            cmd += ''' | awk 'BEGIN{FS=":"} '''
-            cmd += 'NR>1{print $1,$2}'
-            cmd += "'"
-            cmd += " | awk '"
-            cmd += '{print $1":"$2,$1":"$2,$0}'
-            cmd += "'"
-            cmd += ' | cut -d " " -f 3 --complement'
-            cmd += ''' | awk 'BEGIN{FS=":"} '''
-            cmd += '{print>"in_IMPUTE2_without_BEAGLE/"$1".gen"'
-            cmd += "}'"
-            print cmd
-            self.execmd(cmd)
-
-        if True:
-
-            queue = 'normal'
-            fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
-            fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
-
-            ## write shell script to list/memory
-            lines = self.IMPUTE2_write_shell_script(fp_in,fp_out)
-
-            ## term cmd
-            lines += self.term_cmd('IMPUTE2_without_BEAGLE',[fp_out],)
-
-            ## write shell script to file
-            self.write_shell('shell/IMPUTE2_without_BEAGLE.sh',lines,)
-
-            ##
-            ## execute shell script
-            ##
-            for chrom in l_chroms:
-                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,d_chrom_lens)
-
-        return
-
-
-    def IMPUTE2_unite(self,l_chroms,d_chrom_lens,):
-
-        print 'IMPUTE2_unite'
-
-##        ##
-##        ## 1) check input existence
-##        ##
-##        l_fp_in = []
-##        for chrom in l_chroms:
-##            index_max = int(math.ceil(
-##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-##            for index in xrange(1,index_max+1):
-##                ## use summary instead of genotype file, because of
-##                ## --read 0 SNPs in the analysis interval+buffer region
-##                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
-##                    chrom,chrom,index)]
-##        self.check_in('IMPUTE2',l_fp_in)
-
-        ##
-        ## 2) touch
-        ##
-        bool_return = self.touch('IMPUTE2_unite')
-        if bool_return == True: return
-
-        ##
-        ## 3) file I/O checks
-        ##
-        for chrom in l_chroms:
-            print 'chrom', chrom
-            self.IMPUTE2_fileIO_checks(chrom)
-
-        ##
-        ## 4) IMPUTE output concatenation
-        ##
-        for chrom in l_chroms:
-            index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-            cmd = 'cat'
-            for index in xrange(1,index_max+1):
-                fp_gen = 'out_IMPUTE2/%s/%s.%i.gen' %(chrom,chrom,index)
-                if not os.path.isfile(fp_gen): continue
-                cmd += ' %s' %(fp_gen)
-            cmd += ' > out_IMPUTE2/%s.gen' %(chrom)
             self.execmd(cmd)
 
         return
@@ -292,8 +195,9 @@ class main():
         cmd += " | awk '{"
         cmd += ' max=0;'
         cmd += ' for (i=6; i<=NF; i++) {if($i>max) {max=$i}};'
-        cmd += " if(max>=0.9) {print $1}"
-##        cmd += 'print $1'
+        ## hard threshold applied when -pgs_prob used?
+##        cmd += " if(max>=0.9) {print $1}"
+        cmd += 'print $1'
         cmd += " }'"
         cmd += ' > in%s' %(chrom)
         self.execmd(cmd)
@@ -431,7 +335,8 @@ class main():
             self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
-        sys.exit() ## tmp!!!
+#        print('exiting IMPUTE2 temporarily')
+#        sys.exit() ## tmp!!!
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -472,7 +377,7 @@ class main():
             cmd).read().strip().split('\n')])
         for index,variants in d_index2variants.items():
             ## memory requirement/usage different if not 100 samples?
-            dev = fudgefactor = 120+175
+            dev = fudgefactor = 120+175+8000
             intersect = 255
             slope = 4247.268
             memMB = dev+intersect+int(slope*int(variants)/100000.)
@@ -618,7 +523,9 @@ class main():
         ##
         lines += ['-o %s \\' %(fp_out)]
         ## http://mathgen.stats.ox.ac.uk/impute/output_file_options.html#-pgs
-        lines += ['-pgs \\']
+#        lines += ['-pgs \\']
+        lines += ['-pgs_prob \\']
+        lines += ['-prob_g %s \\' %(s_gen)]
 
         ##
         ## Input file options
@@ -655,6 +562,69 @@ class main():
         return
 
 
+    def ProduceBeagleInput(self,):
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
+
+        ## "After variants are called and possibly filtered,
+        ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
+        ## and will produce a likelihood file in BEAGLE format."
+
+        T = analysis_type = 'ProduceBeagleInput'
+        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2154 MB
+        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2168 MB
+        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2171 MB
+        memMB = 1900
+        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   2483.24 sec.
+        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4521.89 sec.
+        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
+        queue = 'normal'
+
+        ##
+        ## 1) check file in existence
+        ##
+        fp_in = self.d_in['ProduceBeagleInput']
+        l_fp_in = []
+        for mode in ['SNP',]:
+            fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.%s.vcf' %(mode)
+            l_fp_in += [fp_in]
+        bool_exit = self.check_in('ApplyRecalibration',l_fp_in,)
+
+##        l_fp_in = ['out_SelectVariants/SelectVariants.vcf'] ## tmp!!!
+
+        ##
+        ## 2) touch
+        ##
+        bool_return = self.touch(analysis_type)
+        if bool_return == True: return
+
+        fp_out = self.d_out['ProduceBeagleInput']
+
+        ##
+        ## 3) init script
+        ##
+        lines = ['#!/bin/bash']
+
+        lines += self.init_cmd(analysis_type,memMB,)
+
+        ## GATKwalker, required, out
+        lines += ['--out %s \\' %(fp_out,)]
+        ## GATKwalker, required, in
+        lines += ['--variant %s \\' %(l_fp_in[0])]
+
+##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
+        lines += self.term_cmd(analysis_type,[fp_out],)
+
+        self.write_shell('shell/ProduceBeagleInput.sh',lines,)
+
+        ## execute shell script
+        J = 'PBI'
+        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
+        self.execmd(cmd)
+
+        return
+
+
     def parse_marker(self,line_markers,):
 
         l_markers = line_markers.split()
@@ -666,9 +636,6 @@ class main():
 
 
     def BEAGLE_divide(self,chrom,):
-
-        ## To save disk space I should rewrite this function to act directly on ProduceBeagleInput.bgl instead of ProduceBeagleInput.$CHROM.bgl
-        ## I can't remember why I split up the bgl file per chromosome in the first place...
 
         ## todo - instead of using "xxx.renamed.markers", just rename on the fly
         ## out: chrom:pos pos alleleA alleleB\n
@@ -1285,6 +1252,7 @@ class main():
             fd.write(s)
             fd.close()
         else:
+            print('BEAGLE_divide_indexes.txt exists')
             d_indexes = {}
             for chrom in l_chroms:
                 d_indexes[chrom] = {}
@@ -1308,6 +1276,9 @@ class main():
 
 ##            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             for index in d_indexes[chrom].keys():
+                fn_out = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index)
+                if os.path.isfile(fn_out):
+                    continue
                 J = '%s.%s[%s-%s]' %('BEAGLE',chrom,index,index,)
                 std_suffix = '%s/%s.%s.%%I' %('BEAGLE','BEAGLE',chrom)
                 cmd = self.bsub_cmd(
@@ -1526,76 +1497,18 @@ class main():
                 print 'dirname', dirname
 ##                for fp in list(set(l_fp_in)-set(l_fp_out)):
 ##                    os.system('touch touch/%s' %(fp))
+##                    os.system('touch %s' %(fp))
+##                if dirname == 'touch':
+##                    for fp in list(set(l_fp_in)-set(l_fp_out)):
+##                        if os.path.isfile('%s' %(fp)):
+##                            os.system('touch touch/%s' %(fp))
 ##                stop
-    ##            for fp in list(set(l_fp_in)-set(l_fp_out)):
-    ##                if os.path.isfile('%s' %(fp[:-8])):
-    ##                    os.system('touch touch/%s' %(fp))
                 print '%s has not run to completion. Exiting.' %(analysis_type)
                 bool_exit = True
+#                print(inspect.stack()[1])
                 sys.exit()
 
         return bool_exit
-
-
-    def ProduceBeagleInput(self,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
-
-        ## "After variants are called and possibly filtered,
-        ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
-        ## and will produce a likelihood file in BEAGLE format."
-
-        T = analysis_type = 'ProduceBeagleInput'
-        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2154 MB
-        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2168 MB
-        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2171 MB
-        memMB = 1900
-        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   2483.24 sec.
-        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4521.89 sec.
-        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
-        queue = 'normal'
-
-        ##
-        ## 1) check file in existence
-        ##
-        fp_in = self.d_in['ProduceBeagleInput']
-        l_fp_in = []
-        for mode in ['SNP',]:
-            fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.%s.vcf' %(mode)
-            l_fp_in += [fp_in]
-        bool_exit = self.check_in('ApplyRecalibration',l_fp_in,)
-
-        ##
-        ## 2) touch
-        ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
-
-        fp_out = self.d_out['ProduceBeagleInput']
-
-        ##
-        ## 3) init script
-        ##
-        lines = ['#!/bin/bash']
-
-        lines += self.init_cmd(analysis_type,memMB,)
-
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += ['--variant %s \\' %(l_fp_in[0])]
-
-##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
-        lines += self.term_cmd(analysis_type,[fp_out],)
-
-        self.write_shell('shell/ProduceBeagleInput.sh',lines,)
-
-        ## execute shell script
-        J = 'PBI'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-        self.execmd(cmd)
-
-        return
 
 
     def determine_TS_level(self,fp_tranches,):
@@ -1658,12 +1571,15 @@ class main():
         ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13950 MB
         ##pipeline/ethiopia4x/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     15092 MB
         memMB = 15900
+        memMB = 27500 ## tmp!!! union4x
         ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :   9635.38 sec.
         ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  10015.61 sec.
         ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11657.10 sec.
         ##pipeline/zulu1x/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11309.62 sec.
         queue = 'normal'
         queue = 'yesterday'
+
+        if os.path.isfile('VariantRecalibrator.touch'): return
 
         ##
         ## 1) check input existence (vcf)
@@ -1681,12 +1597,14 @@ class main():
             if not os.path.isfile(fp_vcf_idx):
                 continue
             if os.path.getsize(fp_vcf_idx) == 0:
-                print 'zero size:', fp_vcf_idx
+                print('zero size:', fp_vcf_idx)
                 bool_exit = True
         if bool_exit == True: sys.exit(0)
 
+        d_resources = {'SNP':self.fp_resources_SNP,'INDEL':self.fp_resources_INDEL,}
+
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
-        for mode in ['SNP',]:
+        for mode in ['SNP','INDEL',]:
 
             ##
             ## 2) touch
@@ -1698,35 +1616,55 @@ class main():
             fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
 
             ##
-            ## initiate GATK walker
+            ## init GATK walker
             ##
             lines = self.init_cmd(analysis_type,memMB,)
 
             ## GATKwalker, required, in
             lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--use_annotation
+            if mode == 'SNP':
+                lines += [
+                    '--use_annotation QD \\',
+                    '--use_annotation HaplotypeScore \\',
+                    '--use_annotation MQRankSum \\',
+                    '--use_annotation ReadPosRankSum \\',
+                    '--use_annotation MQ \\',
+                    '--use_annotation FS \\',
+                    '--use_annotation DP \\',
+                    ]
+            elif mode == 'INDEL':
+                lines += ['-an DP -an FS -an ReadPosRankSum -an MQRankSum \\',]
+
+            ##
             ## GATKwalker, required, out
+            ##
             lines += ['--recal_file %s \\' %(fp_recal)]
             lines += ['--tranches_file %s \\' %(fp_tranches)]
-            ## GATKwalker, required, in (ask Deepti about this...)
-            lines += [
-                '--use_annotation QD \\',
-                '--use_annotation HaplotypeScore \\',
-                '--use_annotation MQRankSum \\',
-                '--use_annotation ReadPosRankSum \\',
-                '--use_annotation MQ \\',
-                '--use_annotation FS \\',
-                '--use_annotation DP \\',
-                ]
+
+            ##
             ## GATKwalker, optional, in
+            ##
+            
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
             lines += ['--mode %s \\' %(mode)]
-            ## Ugandan QCed to be added..!
-            fd = open('%s' %(self.fp_resources),'r')
+
+            ## http://gatkforums.broadinstitute.org/discussion/1259/what-vqsr-training-sets-arguments-should-i-use-for-my-specific-project
+            if mode == 'INDEL':
+                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--maxGaussians
+                lines += ['--maxGaussians 4 \\'] ## default 10
+                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--percentBadVariants
+                lines += ['--percentBadVariants 0.01 \\'] ## default 0.03
+                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--minNumBadVariants
+                lines += ['--minNumBadVariants 1000 \\'] ## default 2500
+
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--resource
+            fd = open(d_resources[mode],'r')
             lines_resources = fd.readlines()
             fd.close()
-            ## resources
             lines += ['%s \\' %(line.strip()) for line in lines_resources]
 
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--TStranche
             l_TStranches = []
     ##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
             l_TStranches += [99+i/10. for i in range(10,0,-1,)]
@@ -1737,9 +1675,14 @@ class main():
                 s_TStranches += '--TStranche %.1f ' %(TStranche)
             lines += ['%s \\' %(s_TStranches)]
 
+            ##
             ## GATKwalker, optional, out
+            ##
             lines += ['--rscript_file out_%s/%s.%s.plots.R \\' %(T,T,mode,)]
 
+            ##
+            ## term GATK walker
+            ##
             lines += self.term_cmd(
                 '%s.%s' %(analysis_type,mode),[fp_tranches,fp_recal,],)
 
@@ -1779,6 +1722,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3448.45 sec.
         ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3575.38 sec.
         queue = 'normal'
+
+        if os.path.isfile('ApplyRecalibration.touch'): return
 
         ##
         ## parse list of vcf input files
@@ -1846,7 +1791,9 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             lines += self.init_cmd(analysis_type,memMB,)
 
             ## GATKwalker, required, in
-            lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
+##            import glob ## tmp!!! for union1x and union4x!!!
+##            l_vcfs_in = glob.glob('out_CombineVariants/*.vcf') ## tmp!!!
+            lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in if os.path.isfile(vcf)]
             ## GATKwalker, required, out
             lines += ['--out %s \\' %(fp_out_vcf,)]
             ## GATKwalker, required, in
@@ -2056,8 +2003,15 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
         lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
-##        if self.fp_alleles:
-##            lines += [' -alleles %s \\' %(self.fp_alleles)]
+        if self.fp_alleles:
+            if os.path.isdir(self.fp_alleles):
+                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf' %(self.fp_alleles)
+                lines += [' --alleles %s \\' %(s)]
+            elif os.path.isfile(self.fp_alleles):
+                lines += [' --alleles %s \\' %(self.fp_alleles)]
+            else:
+                print self.fp_alleles, 'not found'
+                sys.exit()
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
         s_annotation = ''
@@ -2162,10 +2116,17 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         lines += ['fi\n']
 
         fn = 'out_UnifiedGenotyper/'
-        fn += 'UnifiedGenotyper.${CHROMOSOME}.${LSB_JOBINDEX}.vcf.idx'
-        lines += ['if [ -s %s ]; then' %(fn)]
+        fn += 'UnifiedGenotyper.${CHROMOSOME}.${LSB_JOBINDEX}.vcf'
+
+        ## job finished
+        lines += ['if [ -s %s.idx ]; then' %(fn)]
         lines += ['exit']
         lines += ['fi\n']
+
+##        ## job started
+##        lines += ['if [ -s %s ]; then' %(fn)]
+##        lines += ['exit']
+##        lines += ['fi\n']
 
         return lines
 
@@ -2279,14 +2240,15 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             required = False,
             )
 
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--alleles
-##        parser.add_argument(
-##            '--alleles','-alleles','--fp_alleles',
-##            dest='fp_alleles',
-##            help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',
-##            metavar='FILE',default=None,
-##            required = False,
-##            )
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--alleles
+        parser.add_argument(
+            '--alleles','-alleles','--fp_alleles',
+            dest='fp_alleles',
+            help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',
+            default='',
+            type=str,
+            required = False,
+            )
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         parser.add_argument(
@@ -2302,8 +2264,16 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
 
         parser.add_argument(
-            '--resources','--VariantRecalibrator','--fp_resources',
-            dest='fp_resources',
+            '--resources','--VariantRecalibrator','--fp_resources_SNP','--fp_resources',
+            dest='fp_resources_SNP',
+            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
+            metavar='FILE',default=None,
+            required = False,
+            )
+
+        parser.add_argument(
+            '--resources_INDEL','--VariantRecalibrator_INDEL','--fp_resources_INDEL',
+            dest='fp_resources_INDEL',
             help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
             metavar='FILE',default=None,
             required = False,
@@ -2486,7 +2456,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 continue
             fp = v
             ## argument not specified
-            if fp == None or fp == 'None': continue
+            if fp == None or fp == 'None' or fp == '': continue
             if fp == self.fp_bams:
                 f = os.path.isdir
                 l_fp = [fp]
@@ -2497,7 +2467,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 else:
                     l_fp = [fp]
             for fp in l_fp:
-                if not f(fp):
+##                if not f(fp):
+                if not(any([os.path.isfile(fp),os.path.isdir(fp)])):
                     print 'file path does not exist:', fp
                     bool_not_found = True
         if bool_not_found == True:
@@ -2552,6 +2523,110 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             }
 
         self.verbose = True
+
+        return
+
+
+    def IMPUTE2_without_BEAGLE(self,l_chroms,d_chrom_lens,):
+
+        ## tmp function!!!
+
+        if not os.path.isdir('stderr/IMPUTE2_without_BEAGLE'):
+            os.mkdir('stderr/IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('stdout/IMPUTE2_without_BEAGLE'):
+            os.mkdir('stdout/IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('touch/out_IMPUTE2_without_BEAGLE'):
+            os.mkdir('touch/out_IMPUTE2_without_BEAGLE')
+        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
+            os.mkdir('out_IMPUTE2_without_BEAGLE')
+            for chrom in l_chroms:
+                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
+
+        if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
+            os.mkdir('in_IMPUTE2_without_BEAGLE')
+
+            cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
+            cmd += ''' | awk 'BEGIN{FS=":"} '''
+            cmd += 'NR>1{print $1,$2}'
+            cmd += "'"
+            cmd += " | awk '"
+            cmd += '{print $1":"$2,$1":"$2,$0}'
+            cmd += "'"
+            cmd += ' | cut -d " " -f 3 --complement'
+            cmd += ''' | awk 'BEGIN{FS=":"} '''
+            cmd += '{print>"in_IMPUTE2_without_BEAGLE/"$1".gen"'
+            cmd += "}'"
+            print cmd
+            self.execmd(cmd)
+
+        if True:
+
+            queue = 'normal'
+            fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
+            fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
+
+            ## write shell script to list/memory
+            lines = self.IMPUTE2_write_shell_script(fp_in,fp_out)
+
+            ## term cmd
+            lines += self.term_cmd('IMPUTE2_without_BEAGLE',[fp_out],)
+
+            ## write shell script to file
+            self.write_shell('shell/IMPUTE2_without_BEAGLE.sh',lines,)
+
+            ##
+            ## execute shell script
+            ##
+            for chrom in l_chroms:
+                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,d_chrom_lens)
+
+        return
+
+
+    def IMPUTE2_unite(self,l_chroms,d_chrom_lens,):
+
+        print 'IMPUTE2_unite'
+
+##        ##
+##        ## 1) check input existence
+##        ##
+##        l_fp_in = []
+##        for chrom in l_chroms:
+##            index_max = int(math.ceil(
+##                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+##            for index in xrange(1,index_max+1):
+##                ## use summary instead of genotype file, because of
+##                ## --read 0 SNPs in the analysis interval+buffer region
+##                l_fp_in += ['out_IMPUTE2/%s/%s.%i.gen_summary' %(
+##                    chrom,chrom,index)]
+##        self.check_in('IMPUTE2',l_fp_in)
+
+        ##
+        ## 2) touch
+        ##
+        bool_return = self.touch('IMPUTE2_unite')
+        if bool_return == True: return
+
+        ##
+        ## 3) file I/O checks
+        ##
+        for chrom in l_chroms:
+            print 'chrom', chrom
+            self.IMPUTE2_fileIO_checks(chrom)
+
+        ##
+        ## 4) IMPUTE output concatenation
+        ##
+        for chrom in l_chroms:
+            index_max = int(math.ceil(
+                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
+            cmd = 'cat'
+            for index in xrange(1,index_max+1):
+                fp_gen = 'out_IMPUTE2/%s/%s.%i.gen' %(chrom,chrom,index)
+                if not os.path.isfile(fp_gen): continue
+                cmd += ' %s' %(fp_gen)
+            cmd += ' > out_IMPUTE2/%s.gen' %(chrom)
+            self.execmd(cmd)
 
         return
 
