@@ -50,14 +50,14 @@ class main():
         l_chroms.remove('X')
         self.BEAGLE(l_chroms,)
 
-        ## todo: move BEAGLE unite from IMPUTE2 to here...
-        self.tmp_fill_holes = True
-        self.IMPUTE2(l_chroms,d_chrom_lens,)
-##        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
-
-        self.tmp_fill_holes = False
-        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-##        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
+##        ## todo: move BEAGLE unite from IMPUTE2 to here...
+##        self.tmp_fill_holes = True
+##        self.IMPUTE2(l_chroms,d_chrom_lens,)
+####        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
+##
+##        self.tmp_fill_holes = False
+##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
+####        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
 
         return
 
@@ -653,7 +653,6 @@ class main():
             for chrom in l_chroms:
                 l_files = glob.glob('%s/UnifiedGenotyper.%s.*.vcf' %(path,chrom,))
                 l_files_sorted = self.sort_nicely(l_files)
-                l_files_sorted = l_files_sorted[:10] ## tmp!!!
                 d_indexes[chrom] = self.loop_UG_out(
                     chrom,l_files_sorted,fd_recal,minVQSLOD)
 
@@ -1001,6 +1000,7 @@ class main():
                         mode = 'w'
                     print('%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
                         chrom,position,pos_init1,pos_term1,index,len(lines_out1)))
+                    sys.stdout.flush()
                     if bool_append_to_next == False:
                         ## write/append current lines to file
                         fd_out = open('%s.%i.like' %(fp_out_prefix,index,),mode)
@@ -1109,11 +1109,8 @@ class main():
         ##
         ## close all files after looping over last line
         ##
-        fd_bgl.close()
         fd_markers.close()
         fd_phased.close()
-
-        fd_recal.close()
 
         return d_index2pos
 
@@ -1141,7 +1138,7 @@ class main():
             ## append normalized probabilities
             for prob in l_probs:
                 line_beagle += ' %6.4f' %(prob/sum(l_probs))
-        line_beagle += ' \n'
+        line_beagle += '\n'
 
         return line_beagle
 
@@ -2506,13 +2503,14 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
         ##
         ## append input files
         ##
-        l = os.listdir(self.fp_bams)
-        for s in l:
-            if s[-4:] != '.bam':
-                continue
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-            lines += [' --input_file %s/%s \\' %(
-                self.fp_bams,s,)]
+        l = []
+        for fp_bam in self.fp_bams:
+            for s in os.listdir(fp_bam):
+                if s[-4:] != '.bam':
+                    continue
+                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+                lines += [' --input_file %s/%s \\' %(
+                    fp_bam,s,)]
 
         ##
         ## CommandLineGATK, optional
@@ -2714,6 +2712,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             dest='fp_bams',
             help='Path to directory containing improved BAMs',
             type=str,default=None,
+            nargs='+',
             required = True,
             )
 
@@ -2997,10 +2996,8 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             ## argument not specified
             if fp == None or fp == 'None' or fp == '': continue
             if fp == self.fp_bams:
-                f = os.path.isdir
-                l_fp = [fp]
+                l_fp = self.fp_bams
             else:
-                f = os.path.isfile
                 if '$CHROMOSOME' in fp:
                     l_fp = [fp.replace('$CHROMOSOME',str(chrom)) for chrom in range(1,22+1)]
                 else:
@@ -3033,10 +3030,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
                 self.f_ts_filter_level *= 100.
 
         if self.name == None:
-            self.name = os.path.basename(self.fp_bams)
-
-        print('dirname', os.path.dirname(self.fp_bams))
-        print('basename', os.path.basename(self.fp_bams))
+            self.name = os.path.basename(self.fp_bams[0])
 
         return
 
@@ -3184,14 +3178,6 @@ if __name__ == '__main__':
 ## "Even for single samples ReduceReads cuts the memory requirements, IO burden, and CPU costs of downstream tools significantly (10x or more) and so we recommend you preprocess analysis-ready BAM files with ReducedReads."
 ##
 
-## todo20130320: tc9: make the function BEAGLE_divide run in "parallel"; i.e. run a process for each chromosome
-
-## todo20130423: tc9: skip the ProduceBeagleInput (and ApplyRecalibration) step(s) to save disk space and CPU time
-
-## todo20130424: tc9: run BEAGLE_divide in parallel for each chromosome
-
-## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH
-
 
 ## TODO
 
@@ -3205,6 +3191,14 @@ if __name__ == '__main__':
 ## todo20130207: tc9: get rid of orphant functions
 
 ## todo20130210: tc9: download markers from http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/ instead of asking user for their location by default... Make those arguments non-required... --- alternatively download as specified here http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/READ_ME_beagle_phase1_v3
+
+## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH
+
+
+## CPU
+
+## todo20130320: tc9: make the function BEAGLE_divide run in "parallel"; i.e. run a process for each chromosome
+## todo20130424: tc9: run BEAGLE_divide in parallel for each chromosome
 
 
 ## MEMORY
