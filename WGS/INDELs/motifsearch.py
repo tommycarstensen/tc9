@@ -483,8 +483,6 @@ class motifsearch():
         self.window_line_mod = self.size_window%60
         self.cnt_motifs_per_window = self.size_window-self.length_motif+1
 
-        input_filenames = []
-        output_filenames = ['a.txt','b.txt','c.txt',]
         with contextlib.ExitStack() as stack:
             ## FASTA sequence
             self.file_fa = stack.enter_context(open(path_fa))
@@ -506,19 +504,63 @@ class motifsearch():
             chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
             while True:
                 if chrom_rm != chrom:
-                    print(chrom_rm,chrom)
-                    stop
+                    if l_chromosomes.index(chrom_rm) < l_chromosomes.index(chrom):
+                        try:
+                            chrom_rm, pos1_rm, pos2_rm = next(self.parse_rm(file_rm))
+                        except StopIteration:
+                            pass
+                    else:
+                        pass
                 elif pos > pos2_rm:
-                    chrom_rm, pos1_rm, pos2_rm = next(self.parse_rm(file_rm))
+                    try:
+                        chrom_rm, pos1_rm, pos2_rm = next(self.parse_rm(file_rm))
+                    except StopIteration:
+                        pass
                     continue
                 elif pos > pos1_rm:
-                    chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+                    try:
+                        chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+                    except StopIteration:
+                        break
+                    alleleA = l_vcf[3]
+                    bool_even = bool_odd = False
+                    for alleleB in l_vcf[4].split(','):
+                        if abs(len(alleleA)-len(alleleB))%2 == 0:
+                            bool_even = True
+                        else:
+                            bool_odd = True
+                    if bool_even == True:
+                        fd = open('rm_even','a')
+                        fd.write('%s %s\n' %(chrom,pos))
+                        fd.close()
+                    if bool_odd == True:
+                        fd = open('rm_odd','a')
+                        fd.write('%s %s\n' %(chrom,pos))
+                        fd.close()
                     continue
                 ## parse INDEL line
                 self.parse_line(
                     chrom,pos,l_vcf,d_cnt,d_cnt_all,file_odd,file_even,)
+                alleleA = l_vcf[3]
+                bool_even = bool_odd = False
+                for alleleB in l_vcf[4].split(','):
+                    if abs(len(alleleA)-len(alleleB))%2 == 0:
+                        bool_even = True
+                    else:
+                        bool_odd = True
+                if bool_even == True:
+                    fd = open('notrm_even','a')
+                    fd.write('%s %s\n' %(chrom,pos))
+                    fd.close()
+                if bool_odd == True:
+                    fd = open('notrm_odd','a')
+                    fd.write('%s %s\n' %(chrom,pos))
+                    fd.close()
                 ## find next INDEL line
-                chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+                try:
+                    chrom,pos,l_vcf = next(self.generate_line_vcf_INDEL(file_vcf))
+                except StopIteration:
+                    break
 
         return d_cnt, d_cnt_all
 
