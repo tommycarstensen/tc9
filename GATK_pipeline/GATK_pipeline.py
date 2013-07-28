@@ -48,11 +48,12 @@ class main():
         l_chroms.remove('Y')
         ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
         l_chroms.remove('X')
-        self.BEAGLE(l_chroms,)
+##        l_chroms = ['22'] ## tmp!!!
+        self.BEAGLE(l_chroms)
 
 ##        ## todo: move BEAGLE unite from IMPUTE2 to here...
 ##        self.tmp_fill_holes = True
-##        self.IMPUTE2(l_chroms,d_chrom_lens,)
+        self.IMPUTE2(l_chroms,d_chrom_lens,)
 ####        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 ##
 ##        self.tmp_fill_holes = False
@@ -298,7 +299,7 @@ class main():
         ##
         ## 1) check input existence
         ##
-        l_fp_in = self.IMPUTE2_parse_input_files()
+        l_fp_in = self.IMPUTE2_parse_input_files(l_chroms)
         bool_exit = self.check_in('BEAGLE',l_fp_in,)
 
         ##
@@ -319,8 +320,8 @@ class main():
             self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
-##        print('exiting IMPUTE2 temporarily')
-##        sys.exit() ## tmp!!!
+        print('exiting IMPUTE2 temporarily')
+        sys.exit() ## tmp!!!
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -409,7 +410,7 @@ class main():
         return
 
 
-    def IMPUTE2_parse_input_files(self,):
+    def IMPUTE2_parse_input_files(self,l_chroms,):
 
         ## open file
         fd = open('BEAGLE_divide_indexes.txt','r')
@@ -422,6 +423,7 @@ class main():
         for line in lines:
             l = line.strip().split()
             chrom = l[0]
+            if not chrom in l_chroms: continue
             index = int(l[1])
             fp_in = 'out_BEAGLE/%s/' %(chrom,)
             fp_in += '%s.%i.like.gprobs' %(chrom,index,)
@@ -1023,7 +1025,7 @@ class main():
                     ## append to current lines
                     ## elif bool_append_to_next == True
                     else:
-                        lines_out1 += [line]
+                        lines_out1 += [line_beagle]
                         if bool_append_markphas == True:
                             lines_out_markers1 += [line_markers]
                             lines_out_phased1 += [line_phased]
@@ -1373,7 +1375,7 @@ class main():
 
             ## BOF2
             if bool_BOF2 == True:
-                lines_out2 += [line]
+                lines_out2 += [line_beagle]
                 ## match
                 if bool_append_markphas == True:
                     lines_out_markers2 += [line_markers]
@@ -1383,7 +1385,7 @@ class main():
                     lines_out_markers2 += ['%s:%s %s %s %s\n' %(
                         chrom,position,position,alleleA_like,alleleB_like,)]
             if bool_EOF1 == False:
-                lines_out1 += [line]
+                lines_out1 += [line_beagle]
                 ## match
                 if bool_append_markphas == True:
                     lines_out_markers1 += [line_markers]
@@ -1457,7 +1459,7 @@ class main():
                 ## append to current lines
                 ## elif bool_append_to_next == True
                 else:
-                    lines_out1 += [line]
+                    lines_out1 += [line_beagle]
                     if bool_append_markphas == True:
                         lines_out_markers1 += [line_markers]
                         lines_out_phased1 += [line_phased]
@@ -1798,8 +1800,7 @@ class main():
         else:
             print('BEAGLE_divide_indexes.txt exists')
             d_indexes = {}
-            for chrom in l_chroms:
-                d_indexes[chrom] = {}
+            d_indexes[chrom] = {}
             fd = open('BEAGLE_divide_indexes.txt','r')
             lines = fd.readlines()
             fd.close()
@@ -1984,7 +1985,7 @@ class main():
 
         ## create subdirs
         for dn in l_dn:
-            if not os.path.isdir(dn):
+            if not os.path.isdir(dn) and not os.path.islink(dn):
                 os.mkdir(dn)
             if dn != 'touch' and (dn[:4] == 'out_' or dn[:3] == 'in_'):
                 if not os.path.isdir(os.path.join('touch',dn)):
@@ -2417,6 +2418,7 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
             memMB = 5900
         else:
             memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
+            memMB = 3900
 
         ##
         ## 1) touch
