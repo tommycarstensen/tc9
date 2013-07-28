@@ -20,7 +20,6 @@ import itertools
 ## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
 
 tmp_pgs_prob = True ## tmp!!!
-version=3
 class main():
 
     def main(self):
@@ -41,19 +40,17 @@ class main():
         self.VariantRecalibrator(l_chroms,d_chrom_lens,)
 
         if version == 2:
-            self.ApplyRecalibration(l_chroms,d_chrom_lens,)
             self.ProduceBeagleInput()
 
         ## phased imputation reference panels not available for chrY
         l_chroms.remove('Y')
         ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
         l_chroms.remove('X')
-##        l_chroms = ['22'] ## tmp!!!
-        self.BEAGLE(l_chroms)
+        self.BEAGLE(l_chroms,)
 
 ##        ## todo: move BEAGLE unite from IMPUTE2 to here...
 ##        self.tmp_fill_holes = True
-        self.IMPUTE2(l_chroms,d_chrom_lens,)
+##        self.IMPUTE2(l_chroms,d_chrom_lens,)
 ####        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
 ##
 ##        self.tmp_fill_holes = False
@@ -299,7 +296,7 @@ class main():
         ##
         ## 1) check input existence
         ##
-        l_fp_in = self.IMPUTE2_parse_input_files(l_chroms)
+        l_fp_in = self.IMPUTE2_parse_input_files()
         bool_exit = self.check_in('BEAGLE',l_fp_in,)
 
         ##
@@ -320,8 +317,8 @@ class main():
             self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
-        print('exiting IMPUTE2 temporarily')
-        sys.exit() ## tmp!!!
+##        print('exiting IMPUTE2 temporarily')
+##        sys.exit() ## tmp!!!
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -410,7 +407,7 @@ class main():
         return
 
 
-    def IMPUTE2_parse_input_files(self,l_chroms,):
+    def IMPUTE2_parse_input_files(self,):
 
         ## open file
         fd = open('BEAGLE_divide_indexes.txt','r')
@@ -423,7 +420,6 @@ class main():
         for line in lines:
             l = line.strip().split()
             chrom = l[0]
-            if not chrom in l_chroms: continue
             index = int(l[1])
             fp_in = 'out_BEAGLE/%s/' %(chrom,)
             fp_in += '%s.%i.like.gprobs' %(chrom,index,)
@@ -559,69 +555,6 @@ class main():
         return
 
 
-    def ProduceBeagleInput(self,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_beagle_ProduceBeagleInput.html
-
-        ## "After variants are called and possibly filtered,
-        ## the GATK walker ProduceBeagleInputWalker will take the resulting VCF as input,
-        ## and will produce a likelihood file in BEAGLE format."
-
-        T = analysis_type = 'ProduceBeagleInput'
-        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2154 MB
-        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2168 MB
-        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    Max Memory :      2171 MB
-        memMB = 1900
-        ##fula_20120704/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   2483.24 sec.
-        ##zulu_20121208/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4521.89 sec.
-        ##uganda_20130113/stdout/ProduceBeagleInput/ProduceBeagleInput.out:    CPU time   :   4948.94 sec.
-        queue = 'normal'
-
-        ##
-        ## 1) check file in existence
-        ##
-        fp_in = self.d_in['ProduceBeagleInput']
-        l_fp_in = []
-        for mode in ['SNP',]:
-            fp_in = 'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.%s.vcf' %(mode)
-            l_fp_in += [fp_in]
-        bool_exit = self.check_in('ApplyRecalibration',l_fp_in,)
-
-##        l_fp_in = ['out_SelectVariants/SelectVariants.vcf'] ## tmp!!!
-
-        ##
-        ## 2) touch
-        ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
-
-        fp_out = self.d_out['ProduceBeagleInput']
-
-        ##
-        ## 3) init script
-        ##
-        lines = ['#!/bin/bash']
-
-        lines += self.init_cmd(analysis_type,memMB,)
-
-        ## GATKwalker, required, out
-        lines += ['--out %s \\' %(fp_out,)]
-        ## GATKwalker, required, in
-        lines += ['--variant %s \\' %(l_fp_in[0])]
-
-##        l_fp_out = ['out_%s/%s.%i.bgl' %(T,T,chrom) for chrom in l_chrom]
-        lines += self.term_cmd(analysis_type,[fp_out],)
-
-        self.write_shell('shell/ProduceBeagleInput.sh',lines,)
-
-        ## execute shell script
-        J = 'PBI'
-        cmd = self.bsub_cmd(analysis_type,J,memMB=memMB,)
-        self.execmd(cmd)
-
-        return
-
-
     def parse_marker(self,line_markers,):
 
         l_markers = line_markers.split()
@@ -632,7 +565,7 @@ class main():
         return pos_phased, alleleA_phased, alleleB_phased
 
 
-    def new_BEAGLE_divide(self,l_chroms,):
+    def BEAGLE_divide(self,l_chroms,):
 
         d_indexes = {}
         for chrom in l_chroms:
@@ -1172,391 +1105,6 @@ class main():
         return
 
 
-    def BEAGLE_divide(self,chrom,):
-
-        ## todo - instead of using "xxx.renamed.markers", just rename on the fly
-        ## out: chrom:pos pos alleleA alleleB\n
-
-        ##
-        ## size and edge
-        ##
-        size = self.i_BEAGLE_size*1000000
-        edge = self.i_BEAGLE_edge*1000
-
-        fp_in = 'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
-        ## genotype likelihood file
-        fp_out_prefix = 'in_BEAGLE/%s/%s' %(chrom,chrom,)
-
-        fp_phased = self.fp_BEAGLE_phased.replace('$CHROMOSOME',chrom)
-        fp_markers = self.fp_BEAGLE_markers.replace('$CHROMOSOME',chrom)
-
-        ##
-        ## parse genotype likelihood file header
-        ##
-        ## append header
-        fd = open('out_ProduceBeagleInput/ProduceBeagleInput.bgl','r')
-        header = fd.readline()
-        fd.close()
-
-##        ## parse header
-##        header_phased = fd_phased.readline()
-
-        ##
-        ## open files
-        ##
-        fd_phased = open(fp_phased,'r')
-        fd_markers = open(fp_markers,'r')
-        fd_bgl = open(fp_in,'r') ## with header marker allelelA alleleB
-##        fd_bgl.readline() ## skip header
-
-        ##
-        ## parse phased header and skip phased header
-        ##
-        header_phased = fd_phased.readline()
-
-        ##
-        ## initiate lines out
-        ##
-        lines_out_phased1 = [header_phased]
-##        lines_out_phased2 = [header_phased]
-        lines_out_markers1 = []
-        lines_out_markers2 = []
-
-        if os.path.isfile('%s.phased' %(fp_out_prefix,)):
-            os.remove('%s.phased' %(fp_out_prefix,))
-        fd = open('%s.phased' %(fp_out_prefix,),'w')
-        fd.close()
-
-        ##
-        ## set smallest fragment size
-        ##
-        min_bps = 400000
-
-        lines_out1 = [header]
-        lines_out2 = [header]
-        position = 0
-        pos_init1 = position-position%size
-        pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
-
-        d_index2pos = {}
-        index = 1 ## LSF does not allow 0 for LSB_JOBINDEX! "Bad job name. Job not submitted." ## e.g. bsub -J"test[0-2]" echo A
-##        pos_phased = 0
-        bool_append_markphas = False
-        bool_append_to_prev = False
-        bool_append_to_next = False
-        pos_prev = 0
-        pos_prev_EOF = None
-        bool_BOF2 = False
-        bool_EOF1 = False
-
-        ##
-        ## parse 1st markers line
-        ##
-        line_phased = fd_phased.readline()
-        line_markers = fd_markers.readline()
-        pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
-            line_markers)
-
-        ## loop over BEAGLE genotype likelihood file lines
-        for line in fd_bgl:
-            l = line.strip().split()
-            ## assume markers to be formatted like CHROM:POS
-            l_chrom_pos = l[0].split(':')
-            chrom_like = chrom = l_chrom_pos[0]
-            pos_panel2 = pos_like = pos = position = int(l_chrom_pos[1])
-            alleleA_like = l[1]
-            alleleB_like = l[2]
-            ## ignore INDELs
-##            if (
-##                alleleA_like not in ['A','C','G','T',] or
-##                alleleB_like not in ['A','C','G','T',]
-##                ): continue
-            if len(alleleA_like) > 1 or len(alleleB_like) > 1:
-                continue
-
-            ##
-            ## avoid multiple comparisons of large integers
-            ## by means of booleans instead of nesting
-            ## do this immediately after getting current position
-            ##
-            if bool_BOF2 == False and position > pos_term1-edge:
-                bool_BOF2 = True
-                pos_init2 = pos_term1
-                ## centromere
-                if position > pos_term1+edge:
-                    bool_EOF1 = True
-                    if pos_prev-pos_init1 < min_bps:
-                        bool_append_to_prev = True
-            elif bool_BOF2 == True and bool_EOF1 == False and position > pos_term1+edge:
-                bool_EOF1 = True
-            else:
-                pass
-
-            ##
-            ## loop to determine
-            ## whether markers and phased should be appended or not
-            ##
-            while True:
-                ##
-                ## 1) same position
-                ##
-                if pos_phased == position:
-                    ##
-                    ## 1a) markers identical
-                    ##
-                    if (
-                        alleleA_phased == alleleA_like
-                        and
-                        alleleB_phased == alleleB_like
-                        ):
-                        bool_append_markphas = True
-                        pass
-                    ##
-                    ## 1b) markers different
-                    ##
-                    else:
-                        bool_append_markphas = False
-                        pos_phased_prev = pos_phased
-                        while True:
-                            ## read markers and phased
-                            line_phased = fd_phased.readline()
-                            line_markers = fd_markers.readline()
-                            ## last marker is in the genotype probability file and not the markers file
-                            ## e.g. 7:159128574 in fula4x
-                            if line_markers == '':
-                                bool_append_markphas = False
-                                break
-                            (pos_phased, alleleA_phased, alleleB_phased
-                             ) = self.parse_marker(line_markers)
-                            if pos_phased > pos_phased_prev:
-                                break
-                            else:
-                                continue
-                            continue
-                        pass
-                    break
-                ##
-                ## 2) continue loop over genotype likelihoods ("panel 2")
-                ##
-                elif position < pos_phased:
-                    bool_append_markphas = False
-                    break
-                ##
-                ## 3) continue loop over markers ("panel 0")
-                ##
-                ## elif position > pos_phased:
-                else:
-                    ## INDEL
-                    if pos_phased == pos_prev:
-                        lines_out_markers1 += [line_markers]
-                        lines_out_phased1 += [line_phased]
-                        if bool_BOF2 == True and pos_phased > pos_term1-edge:
-                            lines_out_markers2 += [line_markers]
-##                            lines_out_phased2 += [line_phased]
-                    ## SNP unique to panel 0
-##                    elif pos_prev < pos_phased:
-                    else:
-                        lines_out_markers1 += [line_markers]
-                        lines_out_phased1 += [line_phased]
-                        if bool_BOF2 == True:
-                            lines_out_markers2 += [line_markers]
-##                            lines_out_phased2 += [line_phased]
-                    ## append marker not present in genotype likehoods file
-                    ## read markers and phased
-                    line_phased = fd_phased.readline()
-                    line_markers = fd_markers.readline()
-                    if line_markers == '':
-                        bool_append_markphas = False
-                        break
-                    pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
-                        line_markers)
-                    continue
-                continue
-
-            ## BOF2
-            if bool_BOF2 == True:
-                lines_out2 += [line_beagle]
-                ## match
-                if bool_append_markphas == True:
-                    lines_out_markers2 += [line_markers]
-##                    lines_out_phased2 += [line_phased]
-                ## mismatch
-                else: ## ms23/dg11 2013mar12
-                    lines_out_markers2 += ['%s:%s %s %s %s\n' %(
-                        chrom,position,position,alleleA_like,alleleB_like,)]
-            if bool_EOF1 == False:
-                lines_out1 += [line_beagle]
-                ## match
-                if bool_append_markphas == True:
-                    lines_out_markers1 += [line_markers]
-                    lines_out_phased1 += [line_phased]
-                ## mismatch
-                else: ## ms23/dg11 2013mar12
-                    lines_out_markers1 += ['%s:%s %s %s %s\n' %(
-                        chrom,position,position,alleleA_like,alleleB_like,)]
-            ## EOF1
-            else:
-                ## append to previous file if less than 1000 variants
-                if bool_append_to_prev == False and len(lines_out1) < 1000:
-                    ## 2nd append to prev
-                    if index != 1 and pos_init1-size == d_index2pos[index-1][0]:
-                        bool_append_to_prev = True
-                    ## append to next
-                    else:
-                        bool_append_to_next = True
-                ## append to next file if first fragment
-                if bool_append_to_prev == True and index == 1:
-                    bool_append_to_prev = False
-                    bool_append_to_next = True
-                ## append to next file if gap (500kbp) between
-                ## first position of current lines and
-                ## last position of previous file
-                if bool_append_to_prev == True:
-                    cmd = 'tail -n1 %s.%i.like | cut -d " " -f1' %(
-                        fp_out_prefix,index-1)
-                    pos_prev_EOF = int(os.popen(cmd).read().split(':')[1])
-                    pos_curr_BOF = int(lines_out1[1].split()[0].split(':')[1])
-                    if pos_curr_BOF-pos_prev_EOF > 500000:
-                        bool_append_to_prev = False
-                        bool_append_to_next = True
-                if bool_append_to_prev == True:
-                    print('append prev')
-                    mode = 'a'
-                    (
-                        lines_out1, lines_out_markers1,
-                        ) = self.remove_duplicate_lines(
-                            index, fp_out_prefix,
-                            lines_out1, lines_out_markers1)
-                    ##
-                    index -= 1
-                    if index != 0:
-                        pos_init1 = d_index2pos[index][0]
-                elif bool_append_to_next == True:
-                    print('append next')
-                else:
-                    mode = 'w'
-                print('%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
-                    chrom,position,pos_init1,pos_term1,index,len(lines_out1)))
-                if bool_append_to_next == False:
-                    ## write/append current lines to file
-                    fd_out = open('%s.%i.like' %(fp_out_prefix,index,),mode)
-                    fd_out.writelines(lines_out1)
-                    fd_out.close()
-                    fd = open('%s.%i.markers' %(fp_out_prefix,index,),mode)
-                    fd.writelines(lines_out_markers1)
-                    fd.close()
-##                    fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
-                    fd = open('%s.phased' %(fp_out_prefix,),'a')
-                    fd.writelines(lines_out_phased1)
-                    fd.close()
-                    ## replace current lines with next lines
-                    lines_out1 = lines_out2
-##                    lines_out_phased1 = lines_out_phased2
-                    lines_out_phased1 = []
-                    if bool_append_markphas == True:
-                        lines_out_phased1 += [line_phased]
-                    lines_out_markers1 = lines_out_markers2
-                ## append to current lines
-                ## elif bool_append_to_next == True
-                else:
-                    lines_out1 += [line_beagle]
-                    if bool_append_markphas == True:
-                        lines_out_markers1 += [line_markers]
-                        lines_out_phased1 += [line_phased]
-                    else: ## ms23/dg11 2013mar12
-                        lines_out_markers1 += ['%s:%s %s %s %s\n' %(
-                            chrom,position,position,alleleA_like,alleleB_like,)]
-                ## reset next lines
-                lines_out2 = [header]
-##                lines_out_phased2 = [header_phased]
-                lines_out_markers2 = []
-                if bool_append_to_next == False:
-                    ## append index and positions to dictionary
-                    d_index2pos[index] = [pos_init1,pos_term1,]
-                    index += 1
-                ## set pos init/term
-                if bool_append_to_next == False:
-                    pos_init1 = position-position%size
-                    pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
-                else:
-                    pos_term1 += size
-
-                ## reset booleans
-                bool_BOF2 = False
-                bool_EOF1 = False
-                bool_append_to_prev = False
-                bool_append_to_next = False
-
-                ## end of if bool_EOF == True
-                pass
-
-            pos_prev = position
-
-            ## read markers and phased
-            if bool_append_markphas == True:
-                line_markers = fd_markers.readline()
-                line_phased = fd_phased.readline()
-                pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
-                    line_markers)
-
-            ## continue loop over genotype likelihoods
-            continue
-
-        ## less than minimum number of base pairs
-        ## or minimum number of variants
-        if position-pos_init1 < min_bps or len(lines_out1) < 1000:
-            (
-                lines_out1, lines_out_markers1
-                ) = self.remove_duplicate_lines(
-                    index, fp_out_prefix,
-                    lines_out1, lines_out_markers1)
-            mode = 'a'
-            index -= 1
-            pos_init1 = d_index2pos[index][0]
-        else:
-            mode = 'w'
-        print('%2s, pos_curr %9i, pos_init %9i, pos_term %9i, i %3i, n %5i' %(
-            chrom,position,pos_init1,pos_term1,index,len(lines_out1)))
-
-        ## write remaining few lines to output files
-        ## without checking for duplicate positions
-        lines_out_markers1 += fd_markers.readlines()
-        lines_out_phased1 += fd_phased.readlines()
-
-        ##
-        ## write/append lines
-        ##
-        fd_out = open('%s.%i.like' %(fp_out_prefix,index,),mode)
-        fd_out.writelines(lines_out1)
-        fd_out.close()
-
-        fd = open('%s.%i.markers' %(fp_out_prefix,index,),mode)
-        fd.writelines(lines_out_markers1)
-        fd.close()
-
-##        fd = open('%s.%i.phased' %(fp_out_prefix,index,),mode)
-        fd = open('%s.phased' %(fp_out_prefix,),'a')
-        fd.writelines(lines_out_phased1)
-        fd.close()
-
-        ## append position to dictionary
-        d_index2pos[index] = [pos_init1,pos_term1,]
-
-        ##
-        ## close all files after looping over last line
-        ##
-        fd_bgl.close()
-        fd_markers.close()
-        fd_phased.close()
-
-        ##
-        ## file i/o checks
-        ##
-        self.BEAGLE_divide_fileIO_checks(chrom,fp_phased,)
-
-        return d_index2pos
-
-
     def BEAGLE_divide_fileIO_checks(self,chrom,fp_phased,):
 
         cmd = 'cat %s' %(fp_phased)
@@ -1735,14 +1283,10 @@ class main():
         ##
         ## 1) check input existence
         ##
-        if version == 2:
-            fp_in = self.d_in['BEAGLE']
-            bool_exit = self.check_in('ProduceBeagleInput',[fp_in,],)
-        elif version == 3:
-            mode = 'SNP'
-            fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
-            fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
-            bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
+        mode = 'SNP'
+        fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
+        fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
+        bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
 
         ##
         ## 2) touch
@@ -1756,21 +1300,8 @@ class main():
         self.BEAGLE_write_shell_script(memMB)
 
         ##
-        ## chunk up for imputation due to memory requirements...
+        ## split into fragments prior to imputation
         ##
-        ## split bgl by chromosome
-        ## this should be part of the BEAGLE_divide function
-        ## to avoid looping over the same lines twice (a bit stupid at the moment)
-        if version == 2:
-            cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
-            cmd += ''' | awk 'BEGIN{FS=":"} '''
-##        cmd += " | awk -F : '"
-            cmd += 'NR>1{print>"out_ProduceBeagleInput/ProduceBeagleInput."$1".bgl"'
-            cmd += "}'"
-            print(cmd)
-            if not os.path.isfile('out_ProduceBeagleInput/ProduceBeagleInput.22.bgl'): ## redundant
-                os.system(cmd)
-        ## split further into smaller fragments
         d_indexes = {}
         d_chrom_lens = self.parse_chrom_lens()
 
@@ -1779,17 +1310,7 @@ class main():
             and
             os.path.isdir('in_BEAGLE')
             ):
-            if version == 3:
-                d_indexes = self.new_BEAGLE_divide(l_chroms)
-            elif version == 2:
-                for chrom in l_chroms:
-                    d_index2pos = self.BEAGLE_divide(chrom,)
-                    d_indexes[chrom] = d_index2pos
-                    continue
-                    ## clean up
-                    os.remove(
-                        'out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(
-                            chrom))
+            d_indexes = self.BEAGLE_divide(l_chroms)
             s = ''
             for chrom,d_index2pos in d_indexes.items():
                 for index,[pos1,pos2,] in d_index2pos.items():
@@ -1800,7 +1321,8 @@ class main():
         else:
             print('BEAGLE_divide_indexes.txt exists')
             d_indexes = {}
-            d_indexes[chrom] = {}
+            for chrom in l_chroms:
+                d_indexes[chrom] = {}
             fd = open('BEAGLE_divide_indexes.txt','r')
             lines = fd.readlines()
             fd.close()
@@ -2242,133 +1764,6 @@ class main():
         return
 
 
-    def ApplyRecalibration(self,l_chroms,d_chrom_lens,):
-
-        '''
-Validated human SNP data suggests that the Ti/TV should be ~2.1 genome-wide and ~2.8 in exons (ref ???)
-http://www.broadinstitute.org/gsa/wiki/index.php/QC_Methods#SNP_callset_metrics
-http://www.broadinstitute.org/gsa/wiki/index.php/Variant_quality_score_recalibration#Ti.2FTv-free_recalibration
-http://www.broadinstitute.org/gsa/wiki/images/b/b2/TiTv_free_VQSR.pdf
-"For new approach: just cut at 99% sensitivity"
-http://www.broadinstitute.org/gsa/wiki/images/a/ac/Ngs_tutorial_depristo_1210.pdf
-http://www.broadinstitute.org/gsa/wiki/images/b/bc/Variant_Recalibrator_Sanger_June_2010.pdf
-##
-http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
-'''
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html
-
-        T = analysis_type = 'ApplyRecalibration'
-        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2187 MB
-        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2210 MB
-        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    Max Memory :      2233 MB
-        memMB = 2900
-        ##fula_20120704/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   2316.11 sec.
-        ##zulu_20121208/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3448.45 sec.
-        ##uganda_20130113/stdout/ApplyRecalibration/ApplyRecalibration.out:    CPU time   :   3575.38 sec.
-        queue = 'normal'
-
-        if os.path.isfile('ApplyRecalibration.touch'): return
-
-        ##
-        ## parse list of vcf input files
-        ##
-        l_vcfs_in = self.get_fps_in(l_chroms,d_chrom_lens,self.i_UG_size,)
-
-        for mode in ['SNP',]:
-
-            ##
-            ## 1) check input existence
-            ##
-            fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
-            fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
-    ##        T_prev = self.seqsteps[self.seqsteps.index(analysis_type)-1]
-    ##        l_fp_in = self.d_out[T_prev]
-            bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
-
-            ##
-            ## 2) touch
-            ##
-            bool_return = self.touch('%s.%s' %(analysis_type,mode))
-            if bool_return == True: continue
-
-            ##
-            ## send e-mail to user about choice of ts_filter level
-            ##
-            address = '%s@sanger.ac.uk' %(pwd.getpwuid(os.getuid())[0],)
-            cmd = 'echo "Check your tranches file'
-            cmd += ' (%s/%s)' %(os.getcwd(),fp_in_tranches,)
-            cmd += ' to see if you are satisfied with the chosen TS level of'
-            cmd += ' ${ts_filter_level}" '
-            cmd += '| mail -s "%s" ' %(self.project)
-            cmd += '%s\n' %(address)
-            self.execmd(cmd)
-
-            ##
-            ## set output prefix
-            ##
-            fp_out_prefix = 'out_ApplyRecalibration'
-            fp_out_prefix += '/ApplyRecalibration.recalibrated.filtered.%s' %(mode)
-            fp_out_vcf = '%s.vcf' %(fp_out_prefix)
-            fp_out_idx = '%s.vcf.idx' %(fp_out_prefix)
-            if os.path.isfile(fp_out_vcf):
-                return
-
-            ##
-            ## initialize shell script
-            ##
-            lines = ['#!/bin/bash']
-
-            ##
-            ## --ts-filter-level
-            ##
-            if self.f_ts_filter_level in [None,'None',]:
-                cmd = self.determine_TS_level(fp_in_tranches)
-                lines += [cmd]
-            else:
-                lines += [
-                    'ts_filter_level=%f' %(
-                        float(self.f_ts_filter_level))]
-
-            ##
-            ## initialize GATK java command
-            ##
-            lines += self.init_cmd(analysis_type,memMB,)
-
-            ## GATKwalker, required, in
-##            import glob ## tmp!!! for union1x and union4x!!!
-##            l_vcfs_in = glob.glob('out_CombineVariants/*.vcf') ## tmp!!!
-            lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in if os.path.isfile(vcf)]
-            ## GATKwalker, required, out
-            lines += ['--out %s \\' %(fp_out_vcf,)]
-            ## GATKwalker, required, in
-            lines += ['--recal_file %s \\' %(fp_in_recal)]
-            lines += ['--tranches_file %s \\' %(fp_in_tranches)]
-            ## GATKwalker, optional, in
-            ## ts_filter_level should correspond to targetTruthSensitivity prior to novelTiTv dropping (see tranches plot)
-            ## default is 99.00
-    ##        lines += ['--ts_filter_level 99.0 \\']
-            lines += ['--ts_filter_level $ts_filter_level \\']
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_ApplyRecalibration.html#--mode
-            lines += ['--mode %s \\' %(mode)]
-
-            lines += self.term_cmd(
-                '%s.%s' %(analysis_type,mode),[fp_out_vcf,fp_out_idx,],)
-
-            self.write_shell('shell/ApplyRecalibration.%s.sh' %(mode),lines,)
-
-            ##
-            ## execute shell script
-            ##
-            J = 'AR'
-            cmd = self.bsub_cmd(
-                '%s.%s' %(analysis_type,mode),J,memMB=memMB,
-                std_suffix='%s/%s.%s' %(analysis_type,analysis_type,mode,),)
-            self.execmd(cmd)
-
-        return
-
-
     def init_cmd(self,analysis_type,memMB,):
 
         s = 'cmd="'
@@ -2700,9 +2095,6 @@ http://www.broadinstitute.org/gsa/wiki/images/e/eb/FP_TITV.jpg
 
     def parse_arguments(self,):
 
-        ## http://docs.python.org/2/library/argparse.html#module-argparse
-        ## New in version 2.7
-        ## optparse deprecated since version 2.7
         parser = argparse.ArgumentParser()
 
         ##
