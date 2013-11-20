@@ -39,9 +39,6 @@ class main():
 
         self.VariantRecalibrator(l_chroms,d_chrom_lens,)
 
-        if version == 2:
-            self.ProduceBeagleInput()
-
         ## phased imputation reference panels not available for chrY
         l_chroms.remove('Y')
         ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
@@ -50,32 +47,9 @@ class main():
 
 ##        ## todo: move BEAGLE unite from IMPUTE2 to here...
 ##        self.tmp_fill_holes = True
-##        self.IMPUTE2(l_chroms,d_chrom_lens,)
+##        l_chroms = ['22'] ## tmp!!!
+        self.IMPUTE2(l_chroms,d_chrom_lens,)
 ####        self.IMPUTE2_unite(l_chroms,d_chrom_lens,)
-##
-##        self.tmp_fill_holes = False
-##        self.IMPUTE2_without_BEAGLE(l_chroms,d_chrom_lens,) ## tmp
-####        self.IMPUTE2_without_BEAGLE_unite(l_chroms,d_chrom_lens,) ## tmp
-
-        return
-
-
-    def IMPUTE2_without_BEAGLE_unite(self,l_chroms,d_chrom_lens,):
-
-        ## tmp function!!!
-
-        for chrom in l_chroms:
-            index_max = int(math.ceil(
-                    d_chrom_lens[chrom]/float(self.i_IMPUTE2_size)))
-            cmd = 'cat'
-            for index in range(1,index_max+1):
-                fp_gen = 'out_IMPUTE2_without_BEAGLE/%s/%s.%i.gen' %(chrom,chrom,index)
-                if not os.path.isfile(fp_gen): continue
-                cmd += ' %s' %(fp_gen)
-            fp_out = 'out_IMPUTE2_without_BEAGLE/%s.gen' %(chrom)
-            if os.path.isfile(fp_out): continue
-            cmd += ' > %s' %(fp_out)
-            self.execmd(cmd)
 
         return
 
@@ -296,7 +270,7 @@ class main():
         ##
         ## 1) check input existence
         ##
-        l_fp_in = self.IMPUTE2_parse_input_files()
+        l_fp_in = self.IMPUTE2_parse_input_files(l_chroms)
         bool_exit = self.check_in('BEAGLE',l_fp_in,)
 
         ##
@@ -317,8 +291,8 @@ class main():
             self.BEAGLE_unite(chrom)
             self.gprobs2gen(fp_in,fp_out)
 
-##        print('exiting IMPUTE2 temporarily')
-##        sys.exit() ## tmp!!!
+        print('exiting IMPUTE2 temporarily')
+        sys.exit() ## tmp!!!
 
         fp_in = 'in_IMPUTE2/$CHROMOSOME.gen'
         fp_out = self.d_out['IMPUTE2']
@@ -407,7 +381,7 @@ class main():
         return
 
 
-    def IMPUTE2_parse_input_files(self,):
+    def IMPUTE2_parse_input_files(self,l_chroms,):
 
         ## open file
         fd = open('BEAGLE_divide_indexes.txt','r')
@@ -420,6 +394,7 @@ class main():
         for line in lines:
             l = line.strip().split()
             chrom = l[0]
+            if not chrom in l_chroms: continue
             index = int(l[1])
             fp_in = 'out_BEAGLE/%s/' %(chrom,)
             fp_in += '%s.%i.like.gprobs' %(chrom,index,)
@@ -642,6 +617,12 @@ class main():
             if bool_indel == True:
                 continue
 
+            ## skip LowQual
+            if l_vcf[6] == 'LowQual': continue
+
+##            ## skip QUAL=.
+##            if l_vcf[5] == '.': continue
+
             ## read equivalent VR line
             while True:
                 line_recal = fd_recal.readline()
@@ -653,21 +634,30 @@ class main():
                 continue
 
             ## skip if VQSLOD value below threshold
-            l_recal = line_recal.split('\t')
-            l_recal_INFO = l_recal[7].split(';')
-            VQSLOD = float(l_recal_INFO[1].split('=')[1])
-            if VQSLOD < minVQSLOD:
-                continue
-
+            VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
             ## tmp!!!
             if l_recal[0] != l_vcf[0] or l_recal[1] != l_vcf[1]:
                 print('VRrecal')
                 print(l_recal)
                 print('UGvcf')
                 print(line_vcf)
+                print(l_recal[1],l_vcf[1])
                 stoptmp
+            if VQSLOD < minVQSLOD:
+                continue
+
 
             yield l_vcf
+
+
+    def parse_VQSLOD(self,line_recal,):
+
+        l_recal = line_recal.split('\t')
+##        l_recal_INFO = l_recal[7].split(';')
+##        VQSLOD = float(l_recal_INFO[1].split('=')[1])
+        VQSLOD = float(re.search(r'VQSLOD=(\-?\d+.\d+)',l_recal[7]).group(1))
+
+        return VQSLOD, l_recal
 
 
     def vcf2beagle_header(self,file):
@@ -688,7 +678,10 @@ class main():
 
     def loop_UG_out(self,chrom,l_files,fd_recal,minVQSLOD):
 
-        header = self.vcf2beagle_header(l_files[0])
+        for file in l_files:
+            if os.path.getsize(file) > 0:
+                break
+        header = self.vcf2beagle_header(file)
         d_index2pos = {}
 
         ##
@@ -753,11 +746,13 @@ class main():
         pos_phased, alleleA_phased, alleleB_phased = self.parse_marker(
             line_markers)
 
+        cnt_variants = 0
         with fileinput.input(files=l_files) as fd_vcf:
             while True:
                 try:
                     l_vcf = next(self.generate_line_vcf_PASS_split(
                         fd_vcf,fd_recal,minVQSLOD,))
+                    cnt_variants += 1
                 except StopIteration:
                     break
 
@@ -1047,6 +1042,10 @@ class main():
         fd_markers.close()
         fd_phased.close()
 
+        with open('summaryVR.txt','a') as file_summary:
+            file_summary.write('%s %i\n' %(chrom,cnt_variants))
+##        print('%s %i\n' %(chrom,cnt_variants),file='summaryVR.txt')
+    
         return d_index2pos
 
 
@@ -1092,11 +1091,15 @@ class main():
 ##            'A,C,G','A,C,T','A,G,T','C,G,T',
 ##            ]:
 ##            return False,False,False
-##        elif l_vcf[4] in ','.join(tup) for tup in itertools.permutations('ACGT',2):
-        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.combinations('ACGT',2)):
+##        ## UG DISCOVERY
+##        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.combinations('ACGT',2)):
+        ## UG GENOTYPE_GIVEN_ALLELES
+        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.permutations('ACGT',2)):
             return False,False
-##        elif l_vcf[4] in ','.join(tup) for tup in itertools.permutations('ACGT',3):
-        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.combinations('ACGT',3)):
+##        ## UG DISCOVERY
+##        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.combinations('ACGT',3)):
+        ## UG GENOTYPE_GIVEN_ALLELES
+        elif l_vcf[4] in iter(','.join(tup) for tup in itertools.permutations('ACGT',3)):
             return False,False
         ## skip insertions
         else:
@@ -1115,13 +1118,17 @@ class main():
         cmd += "| sort -u > panel0out%s" %(chrom)
         self.execmd(cmd)
 
-        cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.%s.bgl' %(chrom)
-        cmd += " | awk '{if("
-        cmd += '($2=="A"||$2=="C"||$2=="G"||$2=="T")'
-        cmd += ' && '
-        cmd += '($3=="A"||$3=="C"||$3=="G"||$3=="T")'
-        cmd += ") print $1}' | sort > panel2in%s" %(chrom)
-        self.execmd(cmd)
+        minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.f_ts_filter_level,)
+        fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.SNP.recal'
+        with open(fp_recal,'r') as fd_recal, open('panel2in%s' %(chrom),'w') as fd_out:
+            for line in fd_recal:
+                if line[0] == '#': continue
+                VQSLOD, l_recal = self.parse_VQSLOD(line)
+                if VQSLOD < minVQSLOD:
+                    continue
+                ## slow conversion to integer just to make sure it is an integer
+                pos = int(l_recal[1])
+                fd_out.write('%s:%i\n' %(chrom,pos))
 
         cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
         cmd += ' | sort -u > panel2out%s' %(chrom)
@@ -1329,6 +1336,7 @@ class main():
             for line in lines:
                 l = line.strip().split()
                 chrom = l[0]
+                if not chrom in l_chroms: continue
                 index = int(l[1])
                 pos1 = int(l[2])
                 pos2 = int(l[3])
@@ -1499,8 +1507,6 @@ class main():
             'shell',
             'out_UnifiedGenotyper',
             'out_VariantRecalibrator',
-            'out_ApplyRecalibration',
-            'out_ProduceBeagleInput',
             'in_BEAGLE','in_IMPUTE2',
             'out_BEAGLE','out_IMPUTE2',
             ]
@@ -1623,6 +1629,9 @@ class main():
                     'UnifiedGenotyper','UnifiedGenotyper',
                     chrom,interval,
                     )
+##                if os.path.isfile(fp_in):
+##                    if os.path.getsize(fp_in) == 0:
+##                        continue
                 l_vcfs_in += [fp_in]
 
         return l_vcfs_in
@@ -1652,7 +1661,7 @@ class main():
         ## 1) check input existence (vcf)
         ##
         l_vcfs_in = self.get_fps_in(
-            l_chroms,d_chrom_lens,self.i_UG_size,)
+            l_chroms,d_chrom_lens,self.i_UG_or_HC_size,)
         bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
 
         ##
@@ -1685,7 +1694,7 @@ class main():
             ##
             ## init GATK walker
             ##
-            lines = self.init_cmd(analysis_type,memMB,)
+            lines = self.init_GATK_cmd(analysis_type,memMB,)
 
             ## GATKwalker, required, in
             lines += ['--input %s \\' %(vcf) for vcf in l_vcfs_in]
@@ -1764,11 +1773,15 @@ class main():
         return
 
 
-    def init_cmd(self,analysis_type,memMB,):
+    def init_GATK_cmd(self,analysis_type,memMB,):
 
         s = 'cmd="'
-        ## run GATK
-        s += 'java '
+        ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
+        ## http://www.broadinstitute.org/gatk/guide/article?id=2846
+        if '2.7' in self.fp_GATK or '2.6' in self.fp_GATK:
+            s += '/software/team149/opt/jre1.7.0_45/bin/java '
+        elif '2.5' in self.fp_GATK:
+            s += 'java '
         ## set maximum heap size
         s += '-Xmx%im ' %(memMB)
         s += '-jar %s \\' %(self.fp_GATK)
@@ -1821,17 +1834,17 @@ class main():
         bool_return = self.touch(analysis_type)
         if bool_return == True: return
 
-        fp_out = self.d_out['UnifiedGenotyper']
+        fp_out = self.d_out[analysis_type]
 
         ## initiate shell script
         lines = ['#!/bin/bash']
 
         ## commands prior to GATK command
-        lines += self.init_UnifiedGenotyper(
-            l_chroms,d_chrom_lens,)
+        lines += self.init_UG_or_HC(
+            l_chroms,d_chrom_lens,analysis_type)
 
         ## initiate GATK command
-        lines += self.init_cmd('UnifiedGenotyper',memMB,)
+        lines += self.init_GATK_cmd('UnifiedGenotyper',memMB,)
 
         ## append GATK command options
         lines += self.body_UnifiedGenotyper(fp_out,)
@@ -1845,7 +1858,65 @@ class main():
         ## execute shell script
         for chrom in l_chroms:
             intervals = int(math.ceil(
-                d_chrom_lens[chrom]/float(self.i_UG_size)))
+                d_chrom_lens[chrom]/float(self.i_UG_or_HC_size)))
+            J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
+            std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
+            cmd = self.bsub_cmd(
+                analysis_type,J,std_suffix=std_suffix,chrom=chrom,
+                memMB=memMB,queue=queue,)
+            self.execmd(cmd)
+
+        return
+
+
+    def HaplotypeCaller(self,l_chroms,d_chrom_lens,):
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
+
+        T = analysis_type = 'HaplotypeCaller'
+        ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
+        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
+##        queue = 'normal'
+        ## ../ethiopia8x/stdout/UnifiedGenotyper/UnifiedGenotyper.1.7.out:    CPU time   :  63554.28 sec.
+        queue = 'long'
+        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
+        if self.fp_intervals:
+            memMB = 5900
+        else:
+            memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
+            memMB = 3900
+
+        ##
+        ## 1) touch
+        ##
+        bool_return = self.touch(analysis_type)
+        if bool_return == True: return
+
+        fp_out = self.d_out[analysis_type]
+
+        ## initiate shell script
+        lines = ['#!/bin/bash']
+
+        ## commands prior to GATK command
+        lines += self.init_UG_or_HC(
+            l_chroms,d_chrom_lens,analysis_type)
+
+        ## initiate GATK command
+        lines += self.init_GATK_cmd(analysis_type,memMB,)
+
+        ## append GATK command options
+        lines += self.body_HaplotypeCaller(fp_out,)
+
+        ## terminate shell script
+        lines += self.term_cmd(analysis_type,[fp_out],)
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(analysis_type),lines,)
+
+        ## execute shell script
+        for chrom in l_chroms:
+            intervals = int(math.ceil(
+                d_chrom_lens[chrom]/float(self.i_UG_or_HC_size)))
             J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
             std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
             cmd = self.bsub_cmd(
@@ -1872,10 +1943,10 @@ class main():
 
         cmd = 'bsub -J"%s%s" -q %s' %(self.name,J,queue,)
         cmd += ' -G %s' %(self.project)
-        cmd += " -M%i000 -R'select[mem>%i] rusage[mem=%i]'" %(
+        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
             memMB,memMB,memMB,)
-        cmd += ' -o stdout/%s.out' %(std_suffix)
-        cmd += ' -e stderr/%s.err' %(std_suffix)
+        cmd += ' -o LSF/%s.out' %(std_suffix)
+        cmd += ' -e LSF/%s.err' %(std_suffix)
         cmd += ' ./shell/%s.sh' %(analysis_type,)
         if chrom != None:
             cmd += ' %s' %(chrom)
@@ -1916,7 +1987,7 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [
             '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
-                self.i_UG_size)]
+                self.i_UG_or_HC_size)]
         if self.fp_intervals:
             lines += ['--intervals %s \\' %(self.fp_intervals)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
@@ -1959,7 +2030,7 @@ class main():
         s_annotation = ''
 
         ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
-        if '2.4' in self.fp_GATK:
+        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK:
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
             s_annotation += ' --annotation Coverage'
         elif (
@@ -1969,6 +2040,104 @@ class main():
             or
             '2.1' in self.fp_GATK
             ):
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
+            s_annotation += ' --annotation DepthOfCoverage'
+        else:
+            print(self.fp_GATK)
+            print('Unknown version of GATK. Please see why the version number must be known here:')
+            print('http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage')
+            sys.exit()
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
+        s_annotation += ' -A FisherStrand'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
+        s_annotation += ' -A HaplotypeScore'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
+        s_annotation += ' -A MappingQualityRankSumTest'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
+        s_annotation += ' -A QualByDepth'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
+        s_annotation += ' -A RMSMappingQuality'
+        s_annotation += ' -A ReadPosRankSumTest'
+        lines += [s_annotation]
+
+        return lines
+
+
+    def body_HaplotypeCaller(self,fp_out,):
+
+        lines = []
+
+        ##
+        ## required
+        ##
+        ## File to which variants should be written
+        lines += [' --out %s \\' %(fp_out)]
+
+        ##
+        ## append input files
+        ##
+        l = []
+        for fp_bam in self.fp_bams:
+            for s in os.listdir(fp_bam):
+                if s[-4:] != '.bam':
+                    continue
+                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+                lines += [' --input_file %s/%s \\' %(
+                    fp_bam,s,)]
+
+        ##
+        ## CommandLineGATK, optional
+        ##
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
+        lines += [
+            '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
+                self.i_UG_or_HC_size)]
+        if self.fp_intervals:
+            lines += ['--intervals %s \\' %(self.fp_intervals)]
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
+            lines += ['--interval_set_rule INTERSECTION \\']
+
+        ##
+        ## HaplotypeCaller, optional
+        ##
+        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
+        ## Selecting an appropriate quality score threshold
+        ## A common question is the confidence score threshold
+        ## to use for variant detection. We recommend:
+        ## Deep (> 10x coverage per sample) data:
+        ## we recommend a minimum confidence score threshold of Q30.
+        ## Shallow (< 10x coverage per sample) data:
+        ## because variants have by necessity lower quality
+        ## with shallower coverage we recommend
+        ## a minimum confidence score of Q4 in projects
+        ## with 100 samples or fewer
+        ## and Q10 otherwise.
+        lines += [' -stand_call_conf 4 \\']
+        lines += [' -stand_emit_conf 4 \\']
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
+        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
+        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
+        if self.fp_alleles:
+            if os.path.isdir(self.fp_alleles):
+                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf' %(self.fp_alleles)
+                lines += [' --alleles %s \\' %(s)]
+            elif os.path.isfile(self.fp_alleles):
+                lines += [' --alleles %s \\' %(self.fp_alleles)]
+            else:
+                print(self.fp_alleles, 'not found')
+                sys.exit()
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
+        s_annotation = ''
+
+        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
+        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK:
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+            s_annotation += ' --annotation Coverage'
+        elif '2.3' in self.fp_GATK:
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
             s_annotation += ' --annotation DepthOfCoverage'
         else:
@@ -2009,9 +2178,9 @@ class main():
         ## do not continue as part of previous command
         ## as this will influence CPU statistics
         ## and risk job of hitting CPU walltime
-        s = "bsub -R 'select[mem>1500] rusage[mem=1500]' -M1500000 \\\n"
-        s += ' -o stdout/rerun.out \\\n'
-        s += ' -e stderr/rerun.err \\\n'
+        s = "bsub -R 'select[mem>1500] rusage[mem=1500]' -M1500 \\\n"
+        s += ' -o LSF/rerun.out \\\n'
+        s += ' -e LSF/rerun.err \\\n'
         s += ' -G %s \\\n' %(self.project)
         s += ' bash ./rerun_python.sh'
         fd = open('rerun.sh','w')
@@ -2039,7 +2208,7 @@ class main():
         return lines
 
 
-    def init_UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
+    def init_UG_or_HC(self,l_chroms,d_chrom_lens,analysis_type):
 
         lines = []
 
@@ -2052,13 +2221,13 @@ class main():
         ## do not allow interval to exceed the length of the chromosome
         ## otherwise it will raise an I/O error (v. 1.4-15)
         ##
-        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_UG_size)]
+        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_UG_or_HC_size)]
         lines += ['if [ $posmax -gt $LENCHROMOSOME ]']
         lines += ['then posmax=$LENCHROMOSOME']
         lines += ['fi\n']
 
-        fn = 'out_UnifiedGenotyper/'
-        fn += 'UnifiedGenotyper.${CHROMOSOME}.${LSB_JOBINDEX}.vcf'
+        fn = 'out_%s/' %(analysis_type)
+        fn += '%s.${CHROMOSOME}.${LSB_JOBINDEX}.vcf' %(analysis_type)
 
         ## job finished
         lines += ['if [ -s %s.idx ]; then' %(fn)]
@@ -2151,12 +2320,12 @@ class main():
             )
 
         ##
-        ## UnifiedGenotyper
+        ## UnifiedGenotyper / HaplotypeCaller
         ##
 
         parser.add_argument(
-            '--i_UG_size',
-            dest='i_UG_size',
+            '--i_UG_or_HC_size',
+            dest='i_UG_or_HC_size',
             help='Size (bp) of divided parts.',
             type=str,default=10*10**6,
             required = False,
@@ -2438,75 +2607,12 @@ class main():
 
         self.d_out = {
             'UnifiedGenotyper':'out_UnifiedGenotyper/UnifiedGenotyper.$CHROMOSOME.${LSB_JOBINDEX}.vcf',
-            'ProduceBeagleInput':'out_ProduceBeagleInput/ProduceBeagleInput.bgl',
+            'HaplotypeCaller':'out_HaplotypeCaller/$CHROMOSOME.${LSB_JOBINDEX}.vcf',
             'BEAGLE':'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.like',
             'IMPUTE2':'out_IMPUTE2/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen',
             }
 
-        self.d_in = {
-            'ProduceBeagleInput':'out_ApplyRecalibration/ApplyRecalibration.recalibrated.filtered.vcf',
-            'BEAGLE':'out_ProduceBeagleInput/ProduceBeagleInput.bgl',
-            'IMPUTE2':'in_IMPUTE2/$CHROMOSOME.gen',
-            }
-
         self.verbose = True
-
-        return
-
-
-    def IMPUTE2_without_BEAGLE(self,l_chroms,d_chrom_lens,):
-
-        ## tmp function!!!
-
-        if not os.path.isdir('stderr/IMPUTE2_without_BEAGLE'):
-            os.mkdir('stderr/IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('stdout/IMPUTE2_without_BEAGLE'):
-            os.mkdir('stdout/IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('touch/out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('touch/out_IMPUTE2_without_BEAGLE')
-        if not os.path.isdir('out_IMPUTE2_without_BEAGLE'):
-            os.mkdir('out_IMPUTE2_without_BEAGLE')
-            for chrom in l_chroms:
-                os.mkdir('out_IMPUTE2_without_BEAGLE/%s' %(chrom))
-
-        if not os.path.isdir('in_IMPUTE2_without_BEAGLE'):
-            os.mkdir('in_IMPUTE2_without_BEAGLE')
-
-            cmd = 'cat out_ProduceBeagleInput/ProduceBeagleInput.bgl '
-            cmd += ''' | awk 'BEGIN{FS=":"} '''
-            cmd += 'NR>1{print $1,$2}'
-            cmd += "'"
-            cmd += " | awk '"
-            cmd += '{print $1":"$2,$1":"$2,$0}'
-            cmd += "'"
-            cmd += ' | cut -d " " -f 3 --complement'
-            cmd += ''' | awk 'BEGIN{FS=":"} '''
-            cmd += '{print>"in_IMPUTE2_without_BEAGLE/"$1".gen"'
-            cmd += "}'"
-            print(cmd)
-            self.execmd(cmd)
-
-        if True:
-
-            queue = 'normal'
-            fp_in = 'in_IMPUTE2_without_BEAGLE/$CHROMOSOME.gen'
-            fp_out = 'out_IMPUTE2_without_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.gen'
-
-            ## write shell script to list/memory
-            lines = self.IMPUTE2_write_shell_script(fp_in,fp_out)
-
-            ## term cmd
-            lines += self.term_cmd('IMPUTE2_without_BEAGLE',[fp_out],)
-
-            ## write shell script to file
-            self.write_shell('shell/IMPUTE2_without_BEAGLE.sh',lines,)
-
-            ##
-            ## execute shell script
-            ##
-            for chrom in l_chroms:
-                print('bsub IMPUTE2 wo BEAGLE', chrom)
-                self.bsub_IMPUTE2('IMPUTE2_without_BEAGLE',chrom,d_chrom_lens)
 
         return
 
