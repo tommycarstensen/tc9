@@ -1,7 +1,6 @@
 #!/software/bin/python
 
-## T. Carstensen (tc9), M.S. Sandhu (ms23), D. Gurdasani (dg11)
-## Wellcome Trust Sanger Institute, 2012
+## Tommy Carstensen, Wellcome Trust Sanger Institute, 2012 and November 2013
 
 import os, sys
 
@@ -17,11 +16,29 @@ def main():
 
     d_imiss = parse_imiss()
 
-    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,d_imiss=d_imiss,)
+    l_twins = parse_twins()
+
+    l_exclude = generate_exclusion(
+        d_IID2IIDs,d_count2IIDs,d_imiss=d_imiss,l_twins=l_twins)
 
     write_exclusion_list(l_exclude)
 
     return
+
+
+def parse_twins():
+
+    l_twins = []
+
+    if not '--twins' in sys.argv:
+        return l_twins
+
+    twins = sys.argv[sys.argv.index('--twins')+1]
+    f = open(twins,'r')
+    l_twins = [line.split()[0] for line in f.readlines()]
+    f.close()
+
+    return l_twins
 
 
 def parse_imiss():
@@ -60,7 +77,7 @@ def write_exclusion_list(l_exclude,):
 
 
 def generate_exclusion(
-    d_IID2IIDs,d_count2IIDs,d_imiss=None,verbose=False,
+    d_IID2IIDs,d_count2IIDs,d_imiss=None,verbose=False,l_twins=[],
     ):
 
     l_exclude = []
@@ -80,14 +97,18 @@ def generate_exclusion(
             ## sort so first occurence(s) are deleted first
             l_IIDas.sort()
         for IIDa in l_IIDas:
+            bool_exclude = False
             l_IIDbs = list(d_IID2IIDs[IIDa])
             if verbose == True:
-                print count_max, IIDa, l_IIDbs
+                print(count_max, IIDa, l_IIDbs)
                 pass
             for IIDb in l_IIDbs:
                 if verbose == True:
-                    print count_max, IIDa,IIDb
+                    print(count_max, IIDa,IIDb)
                     pass
+                ## only exclude if not twin
+                if not (IIDa in l_twins and IIDb in l_twins):
+                    bool_exclude = True
                 count = len(d_IID2IIDs[IIDb])
                 d_IID2IIDs[IIDa].remove(IIDb)
                 d_IID2IIDs[IIDb].remove(IIDa)
@@ -104,7 +125,9 @@ def generate_exclusion(
                 continue
             d_count2IIDs[count_max].remove(IIDa)
             del d_IID2IIDs[IIDa]
-            l_exclude += [IIDa]
+            ## only exclude if not twin
+            if bool_exclude:
+                l_exclude += [IIDa]
             break
         if d_count2IIDs[count_max] == []:
             del d_count2IIDs[count_max]
@@ -112,6 +135,7 @@ def generate_exclusion(
         continue
 
     l_exclude.sort()
+    print('%i samples to be removed' %(len(l_exclude)))
 
     return l_exclude
 
@@ -184,7 +208,7 @@ def unit_test():
         }
     d_count2IIDs = count_relations(d_IID2IIDs)
     l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
-    print l_exclude == ['a', 'b', 'c', 'd', 'e', 'k', 'm', 'n']
+    print(l_exclude == ['a', 'b', 'c', 'd', 'e', 'k', 'm', 'n'])
 
     d_IID2IIDs = {
         'a':['b',],
@@ -192,7 +216,7 @@ def unit_test():
         }
     d_count2IIDs = count_relations(d_IID2IIDs)
     l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
-    print l_exclude == ['a',]
+    print(l_exclude == ['a',])
 
     d_IID2IIDs = {
         'a':['b','c',],
@@ -201,7 +225,7 @@ def unit_test():
         }
     d_count2IIDs = count_relations(d_IID2IIDs)
     l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
-    print l_exclude == ['a','b',]
+    print(l_exclude == ['a','b',])
 
     return
 
