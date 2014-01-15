@@ -6,6 +6,7 @@ import os
 import argparse
 import contextlib
 import fileinput
+import sys
 
 
 def main():
@@ -63,7 +64,7 @@ def vcf2bed(d_vars):
             l = line.rstrip().split('\t')[9:]
         s = ''
         for sampleID in l:
-            s += '%s %s 0 0 -9 -9\n'
+            s += '%s %s 0 0 -9 -9\n' %(sampleID,sampleID)
         fd_fam.write(s)
     n = len(l)
 
@@ -96,8 +97,9 @@ def vcf2bed(d_vars):
                 except StopIteration:
                     bool_break = True
                     break
-                if int(pos)%100 == 0:
+                if int(pos)%1000 == 0:
                     print(chrom,pos)
+                    sys.stdout.flush()
                 n_miss = l_dosages.count('.')
 ##                ## monomorphic or all heterozygous
 ##                if len(set(l_dosages) - set(['.'])) == 1:
@@ -162,9 +164,10 @@ def vcf2bed(d_vars):
             fd_bim.write(s_bim)
             fd_bed.write(bytes(barray))
 
+            ## break after append
             if bool_break:
                 break
-                
+
             ## reset
             l_prune = [l_prune[i]-5 for i in range(len(l_prune))]
             l_l_dosages = l_l_dosages[step:]
