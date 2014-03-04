@@ -13,6 +13,7 @@ import inspect
 import glob
 import fileinput
 import itertools
+import gzip
 
 ## README
 
@@ -205,7 +206,7 @@ class main():
         ## 1) check input existence
         ##
         l_fp_in = self.BEAGLE_parse_output_files(l_chroms)
-        bool_exit = self.check_in('BEAGLE',l_fp_in,)
+        bool_exit = self.check_in('BEAGLE',l_fp_in,'BEAGLE.touch')
 
         for chrom in l_chroms:
             print(chrom)
@@ -285,10 +286,11 @@ class main():
                 path = 'out_UnifiedGenotyper'
 
             for chrom in l_chroms:
-                l_files = glob.glob('%s/%s.*.vcf' %(path,chrom,))
+                s = '%s/%s.*.vcf.gz' %(path,chrom,)
+                l_files = glob.glob(s)
                 if len(l_files) == 0:
                     print('no files found')
-                    print('%s/%s.*.vcf' %(path,chrom,))
+                    print(s)
                     sys.exit()
                 l_files_sorted = self.sort_nicely(l_files)
                 d_indexes[chrom] = self.loop_UG_out(
@@ -390,7 +392,7 @@ class main():
 
     def vcf2beagle_header(self,file):
 
-        with open(file) as fd_vcf:
+        with gzip.open(file) as fd_vcf:
             for line_vcf in fd_vcf:
                 ## skip header
                 if line_vcf[0] != '#':
@@ -1044,7 +1046,9 @@ class main():
         mode = 'SNP'
         fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
         fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
-        bool_exit = self.check_in('VariantRecalibrator',[fp_in_recal,fp_in_tranches,],)
+        bool_exit = self.check_in(
+            'VariantRecalibrator',[fp_in_recal,fp_in_tranches,],
+            'VariantRecalibrator.SNP.touch')
 
         ##
         ## 2) touch
@@ -1280,15 +1284,17 @@ class main():
         return l_dn
 
 
-    def check_in(self,analysis_type,l_fp_in,):
-        
-##        fd = open('%s.touch' %(analysis_type),'r')
-##        s = fd.read()
-##        fd.close()
-##        l_fp_out = s.split('\n')
+    def check_in(self,analysis_type,l_fp_in,fp_touch,):
 
         d_l_fp_out = {}
-        for dirname in ['','touch',]:
+        
+        with open(fp_touch) as fd:
+            s = fd.read()
+        l_fp_out = s.split('\n')
+        d_l_fp_out['touch'] = l_fp_out
+
+##        for dirname in ['','touch',]:
+        for dirname in ['',]:
             d_l_fp_out[dirname] = []
             l = os.listdir(os.path.join(dirname,'out_%s' %(analysis_type)))
             for s in l:
@@ -1360,14 +1366,14 @@ class main():
         return cmd
 
 
-    def get_fps_in(self,l_chroms,d_chrom_lens,bps_per_interval,):
+    def VR_get_fps_in(self,l_chroms,d_chrom_lens,bps_per_interval,):
 
         l_vcfs_in = []
         for chrom in l_chroms:
             intervals = int(math.ceil(
                 d_chrom_lens[chrom]/float(bps_per_interval)))
             for interval in range(1,intervals+1,):
-                fp_in = 'out_%s/%s.%i.vcf' %(
+                fp_in = 'out_%s/%s.%i.vcf.gz' %(
                     'UnifiedGenotyper',chrom,interval,)
 ##                if os.path.isfile(fp_in):
 ##                    if os.path.getsize(fp_in) == 0:
@@ -1388,55 +1394,47 @@ class main():
         ##pipeline/ethiopia4x/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     15092 MB
         memMB = 15900
 ##        memMB = 27500 ## tmp!!! union4x
+        memMB = 20900 ## tmp!!! uganda4x_zulu4x_ethiopia4x_NA12878_NA19240    Max Memory :             19606 MB
         ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :   9635.38 sec.
         ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  10015.61 sec.
         ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11657.10 sec.
         ##pipeline/zulu1x/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11309.62 sec.
         queue = 'normal'
         queue = 'yesterday'
-
-        if os.path.isfile('VariantRecalibrator.touch'): return
+        num_threads = 4
 
         ##
         ## 1) check input existence (vcf)
         ##
-        l_vcfs_in = self.get_fps_in(
+        l_vcfs_in = self.VR_get_fps_in(
             l_chroms,d_chrom_lens,self.i_UG_or_HC_size,)
-        bool_exit = self.check_in('UnifiedGenotyper',l_vcfs_in,)
-
-        ##
-        ## 1b) check input size (vcf.idx)
-        ##
-        bool_exit = False
-        for vcf_in in l_vcfs_in:
-            fp_vcf_idx = '%s.idx' %(vcf_in)
-            if not os.path.isfile(fp_vcf_idx):
-                continue
-            if os.path.getsize(fp_vcf_idx) == 0:
-                print('zero size:', fp_vcf_idx)
-                bool_exit = True
-        if bool_exit == True: sys.exit(0)
+        bool_exit = self.check_in(
+            'UnifiedGenotyper',l_vcfs_in,'UnifiedGenotyper.touch')
+        if bool_exit == True:
+            sys.exit(0)
 
         d_resources = {'SNP':self.fp_resources_SNP,'INDEL':self.fp_resources_INDEL,}
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
         for mode in ['SNP','INDEL',]:
 
-            ##
-            ## 2) touch
-            ##
-            bool_return = self.touch('%s.%s' %(analysis_type,mode))
-            if bool_return == True: continue
+            memMB = {'SNP':20900,'INDEL':8900}[mode]
 
+            ## 2) touch / check output
+            bool_continue = self.touch('%s.%s' %(analysis_type,mode))
+            if bool_continue == True:
+                continue
+
+            ## Define file paths.
             fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
             fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
 
-            ##
-            ## init GATK walker
-            ##
+            ## Initiate GATK walker.
             lines = self.init_GATK_cmd(analysis_type,memMB,)
 
-            ## GATKwalker, required, in
+            lines += [' --num_threads %i \\' %(num_threads)]
+
+            ## required, in
             lines += [' --input %s \\' %(vcf) for vcf in l_vcfs_in]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--use_annotation
             if mode == 'SNP':
@@ -1453,26 +1451,25 @@ class main():
                 lines += [' -an DP -an FS -an ReadPosRankSum -an MQRankSum \\',]
 
             ##
-            ## GATKwalker, required, out
+            ## required, out
             ##
             lines += [' --recal_file %s \\' %(fp_recal)]
             lines += [' --tranches_file %s \\' %(fp_tranches)]
 
             ##
-            ## GATKwalker, optional, in
+            ## Optional Parameters.
             ##
-            
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
             lines += [' --mode %s \\' %(mode)]
+##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--target_titv
+##            lines += [' --target_titv 2.15 \\'] ## default 2.15
 
             ## http://gatkforums.broadinstitute.org/discussion/1259/what-vqsr-training-sets-arguments-should-i-use-for-my-specific-project
             if mode == 'INDEL':
                 ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--maxGaussians
-                lines += [' --maxGaussians 4 \\'] ## default 10
-                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--percentBadVariants
-                lines += [' --percentBadVariants 0.01 \\'] ## default 0.03
+                lines += [' --maxGaussians 4 \\'] ## default 8
                 ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--minNumBadVariants
-                lines += [' --minNumBadVariants 1000 \\'] ## default 2500
+                lines += [' --minNumBadVariants 1000 \\'] ## default 1000
 
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--resource
             fd = open(d_resources[mode],'r')
@@ -1485,7 +1482,7 @@ class main():
     ##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
             l_TStranches += [99+i/10. for i in range(10,0,-1,)]
             l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
-            l_TStranches += [70+i for i in range(19,-1,-1,)]
+##            l_TStranches += [70+i for i in range(19,-1,-1,)]
             s_TStranches = ''
             for TStranche in l_TStranches:
                 s_TStranches += '--TStranche %.1f ' %(TStranche)
@@ -1496,18 +1493,17 @@ class main():
             ##
             lines += [' --rscript_file out_%s/%s.%s.plots.R \\' %(T,T,mode,)]
 
-            ##
-            ## term GATK walker
-            ##
+            ## Terminate command and rerun pipeline.
             lines += self.term_cmd(
                 '%s.%s' %(analysis_type,mode),[fp_tranches,fp_recal,],)
 
             self.write_shell('shell/%s.%s.sh' %(analysis_type,mode,),lines,)
 
-            J = 'VR'
+            J = 'VR.%s' %(mode)
             cmd = self.bsub_cmd(
-                '%s.%s' %(analysis_type,mode),J,memMB=memMB,queue=queue,
-                std_suffix='%s/%s' %(analysis_type,mode,),)
+                '%s.%s' %(analysis_type,mode), J, memMB=memMB, queue=queue,
+                std_suffix='%s/%s' %(analysis_type,mode,),
+                num_threads = num_threads)
             self.execmd(cmd)
 
         return
@@ -1580,7 +1576,7 @@ class main():
             queue = 'normal'
         else:
             memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
-            memMB = 3900
+            memMB = 3900 ## more than 3900 if 322 samples for fragment 16.5
 
         ##
         ## 1) touch
@@ -1605,7 +1601,8 @@ class main():
         lines += self.body_UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
-        lines += self.term_cmd(analysis_type,[fp_out],)
+        lines += self.term_cmd(
+            analysis_type,[fp_out],extra='tabix -p vcf %s' %(fp_out))
 
         ## write shell script
         self.write_shell('shell/UnifiedGenotyper.sh',lines,)
@@ -1675,7 +1672,8 @@ class main():
             analysis_type,memMB,bool_checkpoint=self.bool_checkpoint)
 
         ## append GATK command options
-        lines += self.body_HaplotypeCaller(fp_out,)
+##        lines += self.body_HaplotypeCaller(fp_out,)
+        lines += self.body_UnifiedGenotyper(fp_out,)
 
         ## terminate shell script
         lines += self.term_cmd(analysis_type,[fp_out],)
@@ -1707,6 +1705,7 @@ class main():
         chromlen=None,
         index=None,
         bool_checkpoint=False,
+        num_threads = None,
         ):
 
         if not std_suffix:
@@ -1718,6 +1717,8 @@ class main():
             memMB,memMB,memMB,)
         cmd += ' -o %s/LSF/%s.out' %(os.getcwd(),std_suffix)
         cmd += ' -e %s/LSF/%s.err' %(os.getcwd(),std_suffix)
+        if num_threads:
+            cmd += ' -n%i -R"span[hosts=1]"' %(num_threads)
         if bool_checkpoint:
             cmd += ' -k "%s method=blcr 710"' %(
                 os.path.join(os.getcwd(),'checkpoint'))
@@ -1774,7 +1775,10 @@ class main():
         ## a minimum confidence score of Q4 in projects
         ## with 100 samples or fewer
         ## and Q10 otherwise.
-        if self.project == 'ug2g':
+        if self.coverage > 10:
+            lines += [' -stand_call_conf 30 \\']
+            lines += [' -stand_emit_conf 30 \\']
+        elif len(self.bams) > 100:
             lines += [' -stand_call_conf 10 \\']
             lines += [' -stand_emit_conf 10 \\']
         else:
@@ -1783,7 +1787,7 @@ class main():
             lines += [' -stand_call_conf 4 \\']
             lines += [' -stand_emit_conf 4 \\']
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotype_likelihoods_model
-        lines += [' --genotype_likelihoods_model SNP \\'] ## default value SNP
+        lines += [' --genotype_likelihoods_model BOTH \\'] ## default value SNP
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
         lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
@@ -1800,25 +1804,8 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
         s_annotation = ''
 
-        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
-        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK or '2.8' in self.fp_GATK or 'nc6' in self.fp_GATK:
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
-            s_annotation += ' --annotation Coverage'
-        elif (
-            '2.3' in self.fp_GATK
-            or
-            '2.2' in self.fp_GATK
-            or
-            '2.1' in self.fp_GATK
-            ):
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
-            s_annotation += ' --annotation DepthOfCoverage'
-        else:
-            print(self.fp_GATK)
-            print('Unknown version of GATK. Please see why the version number must be known here:')
-            print('http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage')
-            sys.exit()
-
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+        s_annotation += ' --annotation Coverage'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
         s_annotation += ' -A FisherStrand'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
@@ -1835,114 +1822,106 @@ class main():
         ##
         ## append input files
         ##
-        for fp_bam in self.fp_bams:
-            for s in os.listdir(fp_bam):
-                if s[-4:] != '.bam':
-                    continue
-                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-                path = os.path.join(fp_bam,s,)
-                lines += [' --input_file %s \\' %(path)]
+        for bam in self.bams:
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+            lines += [' --input_file %s \\' %(bam)]
 
         return lines
 
 
-    def body_HaplotypeCaller(self,fp_out,):
-
-        lines = []
-
-        ##
-        ## required
-        ##
-        ## File to which variants should be written
-        lines += [' --out %s \\' %(fp_out)]
-
-        ##
-        ## CommandLineGATK, optional
-        ##
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-        lines += [
-            '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
-                self.i_UG_or_HC_size)]
-        if self.fp_intervals:
-            lines += ['--intervals %s \\' %(self.fp_intervals)]
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
-            lines += ['--interval_set_rule INTERSECTION \\']
-
-        ##
-        ## HaplotypeCaller, optional
-        ##
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
-        ## Selecting an appropriate quality score threshold
-        ## A common question is the confidence score threshold
-        ## to use for variant detection. We recommend:
-        ## Deep (> 10x coverage per sample) data:
-        ## we recommend a minimum confidence score threshold of Q30.
-        ## Shallow (< 10x coverage per sample) data:
-        ## because variants have by necessity lower quality
-        ## with shallower coverage we recommend
-        ## a minimum confidence score of Q4 in projects
-        ## with 100 samples or fewer
-        ## and Q10 otherwise.
-        lines += [' -stand_call_conf 4 \\']
-        lines += [' -stand_emit_conf 4 \\']
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
-        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
-        if self.fp_alleles:
-            if os.path.isdir(self.fp_alleles):
-                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf' %(self.fp_alleles)
-                lines += [' --alleles %s \\' %(s)]
-            elif os.path.isfile(self.fp_alleles):
-                lines += [' --alleles %s \\' %(self.fp_alleles)]
-            else:
-                print(self.fp_alleles, 'not found')
-                sys.exit()
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
-        s_annotation = ''
-
-        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
-        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK or '2.8' in self.fp_GATK:
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
-            s_annotation += ' --annotation Coverage'
-        elif '2.3' in self.fp_GATK:
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
-            s_annotation += ' --annotation DepthOfCoverage'
-        else:
-            print('Unknown version of GATK. Please see why the version number must be known here:')
-            print('http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage')
-            sys.exit()
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
-        s_annotation += ' -A FisherStrand'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
-        s_annotation += ' -A HaplotypeScore'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
-        s_annotation += ' -A MappingQualityRankSumTest'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
-        s_annotation += ' -A QualByDepth'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
-        s_annotation += ' -A RMSMappingQuality'
-        s_annotation += ' -A ReadPosRankSumTest'
-        lines += [s_annotation]
-
-        ##
-        ## append input files
-        ##
-        for fp_bam in self.fp_bams:
-            for s in os.listdir(fp_bam):
-                if s[-4:] != '.bam':
-                    continue
-                ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-                lines += [' --input_file %s/%s \\' %(
-                    fp_bam,s,)]
-
-        return lines
+##    def body_HaplotypeCaller(self,fp_out,):
+##
+##        lines = []
+##
+##        ##
+##        ## required
+##        ##
+##        ## File to which variants should be written
+##        lines += [' --out %s \\' %(fp_out)]
+##
+##        ##
+##        ## CommandLineGATK, optional
+##        ##
+##
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
+##        lines += [
+##            '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
+##                self.i_UG_or_HC_size)]
+##        if self.fp_intervals:
+##            lines += ['--intervals %s \\' %(self.fp_intervals)]
+##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
+##            lines += ['--interval_set_rule INTERSECTION \\']
+##
+##        ##
+##        ## HaplotypeCaller, optional
+##        ##
+##        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
+##        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
+##        ## Selecting an appropriate quality score threshold
+##        ## A common question is the confidence score threshold
+##        ## to use for variant detection. We recommend:
+##        ## Deep (> 10x coverage per sample) data:
+##        ## we recommend a minimum confidence score threshold of Q30.
+##        ## Shallow (< 10x coverage per sample) data:
+##        ## because variants have by necessity lower quality
+##        ## with shallower coverage we recommend
+##        ## a minimum confidence score of Q4 in projects
+##        ## with 100 samples or fewer
+##        ## and Q10 otherwise.
+##        lines += [' -stand_call_conf 4 \\']
+##        lines += [' -stand_emit_conf 4 \\']
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
+##        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
+##        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
+##        if self.fp_alleles:
+##            if os.path.isdir(self.fp_alleles):
+##                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf.gz' %(self.fp_alleles)
+##                lines += [' --alleles %s \\' %(s)]
+##            elif os.path.isfile(self.fp_alleles):
+##                lines += [' --alleles %s \\' %(self.fp_alleles)]
+##            else:
+##                print(self.fp_alleles, 'not found')
+##                sys.exit()
+##
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
+##        s_annotation = ''
+##
+##        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
+##        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK or '2.8' in self.fp_GATK:
+##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+##            s_annotation += ' --annotation Coverage'
+##        elif '2.3' in self.fp_GATK:
+##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
+##            s_annotation += ' --annotation DepthOfCoverage'
+##        else:
+##            print('Unknown version of GATK. Please see why the version number must be known here:')
+##            print('http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage')
+##            sys.exit()
+##
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
+##        s_annotation += ' -A FisherStrand'
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
+##        s_annotation += ' -A HaplotypeScore'
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
+##        s_annotation += ' -A MappingQualityRankSumTest'
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
+##        s_annotation += ' -A QualByDepth'
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
+##        s_annotation += ' -A RMSMappingQuality'
+##        s_annotation += ' -A ReadPosRankSumTest'
+##        lines += [s_annotation]
+##
+##        ##
+##        ## append input files
+##        ##
+##        for bam in self.bams:
+##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+##            lines += [' --input_file %s \\' %(bam)]
+##
+##        return lines
 
 
-    def term_cmd(self,analysis_type,l_fp_out,):
+    def term_cmd(self,analysis_type,l_fp_out,extra=None):
 
         if type(l_fp_out) != list:
             print(l_fp_out)
@@ -1957,6 +1936,9 @@ class main():
 ##            lines += ['touch touch/%s;' %(fp_out,)]
             lines += ['echo %s >> %s.touch' %(fp_out,analysis_type,)]
             lines += ['touch touch/%s' %(fp_out,)]
+
+        if extra:
+            lines += ['%s\n' %(extra)]
 
         ## write continuation shell script
         ## do not continue as part of previous command
@@ -2012,10 +1994,10 @@ class main():
         lines += ['fi\n']
 
         fn = 'out_%s/' %(analysis_type)
-        fn += '${CHROMOSOME}.${LSB_JOBINDEX}.vcf'
+        fn += '${CHROMOSOME}.${LSB_JOBINDEX}.vcf.gz'
 
         ## job finished
-        lines += ['if [ -s %s.idx ]; then exit; fi\n' %(fn)]
+        lines += ['if [ -s %s ]; then exit; fi\n' %(fn)]
 
 ##        ## job started
 ##        lines += ['if [ -s %s ]; then' %(fn)]
@@ -2054,21 +2036,22 @@ class main():
         ##
 
         parser.add_argument(
-            '--bam','--bams','--bamdir','--fp_bams',
+            '--bam','--bams','--bamdir','--fp_bams','--input',
             dest='fp_bams',
-            help='Path to directory containing improved BAMs',
+            help='Path to BAM and/or directory containing BAMs',
             nargs='+',
             required = True,
             )
 
+        parser.add_argument('--coverage', required=True, type=int)
+
         parser.add_argument(
-            '--GATK','--fp_GATK',
+            '--GATK','--fp_GATK','--gatk',
             dest='fp_GATK',
             help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
             required = True,
             )
 
-        ## wget ftp://gsapubftp-anonymous@ftp.broadinstitute.org/bundle/2.3/b37/human_g1k_v37.fasta.gz
         parser.add_argument(
             '--FASTA','--reference','--reference-sequence','--reference_sequence','--fp_FASTA_reference_sequence',
             dest='fp_FASTA_reference_sequence',
@@ -2086,13 +2069,6 @@ class main():
         parser.add_argument(
             '--arguments','--args','--options','--opts','--fp_arguments',
             dest='fp_arguments',
-            required = False,
-            )
-
-        parser.add_argument(
-            '--name','--dataset',
-            dest='name',
-            help='Name of dataset',
             required = False,
             )
 
@@ -2142,20 +2118,19 @@ class main():
         ##
 
         parser.add_argument(
-            '--resources','--VariantRecalibrator','--fp_resources_SNP','--fp_resources',
+            '--resources_SNP','--fp_resources_SNP','--VR_snp',
             dest='fp_resources_SNP',
             help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
             required = False,
             )
 
         parser.add_argument(
-            '--resources_INDEL','--VariantRecalibrator_INDEL','--fp_resources_INDEL',
+            '--resources_INDEL','--fp_resources_INDEL','--VR_indel',
             dest='fp_resources_INDEL',
             help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
             required = False,
             )
 
-        ## wget ftp://gsapubftp-anonymous@ftp.broadinstitute.org/bundle/2.3/b37/hapmap_3.3.b37.vcf.gz
 ##        parser.add_argument(
 ##            '--hapmap',
 ##            dest='fp_resource_hapmap',
@@ -2165,7 +2140,6 @@ class main():
 ##            )
 ##
 
-        ## wget ftp://gsapubftp-anonymous@ftp.broadinstitute.org/bundle/2.3/b37/1000G_omni2.5.b37.vcf.gz
 ##        parser.add_argument(
 ##            '--omni',
 ##            dest='fp_resource_omni',
@@ -2175,11 +2149,8 @@ class main():
 ##            )
 
         ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        ## wget ftp://gsapubftp-anonymous@ftp.broadinstitute.org/bundle/2.3/b37/dbsnp_137.b37.vcf.gz
         s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
         s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
-##        s_help += '\nYou can get the vcf file with this command:'
-##        s_help += '\ncurl -u gsapubftp-anonymous: ftp.broadinstitute.org/bundle/1.5/b37/dbsnp_135.b37.vcf.gz -o dbsnp_135.b37.vcf.gz; gunzip dbsnp_135.b37.vcf.gz'
         parser.add_argument(
             '--fp_vcf_dbsnp','--dbsnp',
             help=s_help, required = True,
@@ -2224,7 +2195,7 @@ class main():
         s_help = 'Phased file to be divided (e.g.'
         s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.bgl'
         parser.add_argument(
-            '--fp_BEAGLE_phased',
+            '--fp_BEAGLE_phased', '--phased',
             dest='fp_BEAGLE_phased',
             help=s_help,
             required = True,
@@ -2233,7 +2204,7 @@ class main():
         s_help = 'Markers file to be divided (e.g.'
         s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.markers'
         parser.add_argument(
-            '--fp_BEAGLE_markers',
+            '--fp_BEAGLE_markers', '--markers',
             dest='fp_BEAGLE_markers',
             help=s_help, required=True,
             )
@@ -2311,8 +2282,14 @@ class main():
             if self.f_ts_filter_level < 1:
                 self.f_ts_filter_level *= 100.
 
-        if self.name == None:
-            self.name = os.path.basename(self.fp_bams[0])
+        self.bams = []
+        for fp in self.fp_bams:
+            if os.path.isdir(fp):
+                self.bams += glob.glob(os.path.join(fp,'*.bam'))
+            elif os.path.isfile(fp):
+                self.bams += [fp]
+            else:
+                stop_take_care_of_symlinks
 
         return
 
@@ -2325,8 +2302,8 @@ class main():
         self.parse_arguments()
 
         self.d_out = {
-            'UnifiedGenotyper':'out_UnifiedGenotyper/$CHROMOSOME.${LSB_JOBINDEX}.vcf',
-            'HaplotypeCaller':'out_HaplotypeCaller/$CHROMOSOME.${LSB_JOBINDEX}.vcf',
+            'UnifiedGenotyper':'out_UnifiedGenotyper/$CHROMOSOME.${LSB_JOBINDEX}.vcf.gz',
+            'HaplotypeCaller':'out_HaplotypeCaller/$CHROMOSOME.${LSB_JOBINDEX}.vcf.gz',
             'BEAGLE':'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.like',
             }
 
@@ -2339,30 +2316,17 @@ if __name__ == '__main__':
     self = main()
     self.main()
 
-##
-## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
-## and for better variant calling? cf. slide 14 of https://www.dropbox.com/sh/e31kvbg5v63s51t/ajQmlTL6YH/ReduceReads.pdf
-## "VQSR Filters are highly empowered by calling all samples together"
-## "Reduced BAMs provides better results for large scale analysis projects ( > 100 samples) because it doesn't require batching."
-## http://www.broadinstitute.org/gatk/guide/topic?name=best-practices
-## "Even for single samples ReduceReads cuts the memory requirements, IO burden, and CPU costs of downstream tools significantly (10x or more) and so we recommend you preprocess analysis-ready BAM files with ReducedReads."
-##
-
-
 ## TODO
-
-##
-## todo20120809: tc9/dg11: add a ReduceReads step before UnifiedGenotyper for speed purposes
-## and for better variant calling? cf. slide 14 of https://www.dropbox.com/sh/e31kvbg5v63s51t/ajQmlTL6YH/ReduceReads.pdf
-## "VQSR Filters are highly empowered by calling all samples together"
-## "Reduced BAMs provides better results for large scale analysis projects ( > 100 samples) because it doesn't require batching."
-##
 
 ## todo20130207: tc9: get rid of orphant functions
 
-## todo20130210: tc9: download markers from http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/ instead of asking user for their location by default... Make those arguments non-required... --- alternatively download as specified here http://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes.phase1_release_v3/READ_ME_beagle_phase1_v3
+## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH - currently only calling SNPs
 
-## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH
+## DISK USAGE
+
+## todo20140216: tc9: write all output (BEAGLE) to gzipped files
+
+## todo20140216: tc9: write all output (GATK UG) to bgzipped files and index these with tabix
 
 
 ## CPU
