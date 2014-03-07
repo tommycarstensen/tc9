@@ -25,7 +25,10 @@ class main():
     def main(self):
 
         ## define list of chromosomes
-        l_chroms = [str(i) for i in range(1,22+1,)]+['X','Y',]
+        if self.chrom:
+            l_chroms = self.chrom
+        else:
+            l_chroms = [str(i) for i in range(1,22+1,)]+['X','Y',]
 
         self.init(l_chroms,)
 
@@ -38,6 +41,7 @@ class main():
         self.UnifiedGenotyper(l_chroms,d_chrom_lens,)
 
 ##        l_chroms = ['22'] ## tmp!!!
+        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
         self.VariantRecalibrator(l_chroms,d_chrom_lens,)
 
 ##        l_chroms = ['22','X','Y',] ## tmp!!!
@@ -273,7 +277,7 @@ class main():
 
         ## parse the input tranches file describing where to cut the data
         fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.SNP.tranches'
-        minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.f_ts_filter_level,)
+        minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.ts_filter_level,)
 
         ## open the recal file
         fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.SNP.recal'
@@ -342,7 +346,7 @@ class main():
                 continue
 
             ## skip INDELs
-            l_vcf = line_vcf.split()
+            l_vcf = line_vcf.rstrip().split('\t')
             bool_indel,bool_diallelic = self.parse_variant_type(l_vcf)
             if bool_indel == True:
                 continue
@@ -365,17 +369,8 @@ class main():
 
             ## skip if VQSLOD value below threshold
             VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
-            ## tmp!!! check. remove after testing.
-            if l_recal[0] != l_vcf[0] or l_recal[1] != l_vcf[1]:
-                print('VRrecal')
-                print(l_recal)
-                print('UGvcf')
-                print(line_vcf)
-                print(l_recal[1],l_vcf[1])
-                stoptmp
             if VQSLOD < minVQSLOD:
                 continue
-
 
             yield l_vcf
 
@@ -392,7 +387,7 @@ class main():
 
     def vcf2beagle_header(self,file):
 
-        with gzip.open(file) as fd_vcf:
+        with gzip.open(file,'rt') as fd_vcf:
             for line_vcf in fd_vcf:
                 ## skip header
                 if line_vcf[0] != '#':
@@ -404,6 +399,17 @@ class main():
         header = 'marker alleleA alleleB '+s+'\n'
 
         return header
+
+
+    def chrom2file(self,file1,chrom):
+
+        with open(file1) as f:
+            for line in f:
+                l = line.rstrip().split()
+                if l[0] == str(chrom):
+                    file2 = l[1]
+
+        return file2
 
 
     def loop_UG_out(self,chrom,l_files,fd_recal,minVQSLOD):
@@ -431,8 +437,9 @@ class main():
 
         ## genotype likelihood file
         fp_out_prefix = 'in_BEAGLE/%s/%s' %(chrom,chrom,)
-        fp_phased = self.fp_BEAGLE_phased.replace('$CHROMOSOME',chrom)
-        fp_markers = self.fp_BEAGLE_markers.replace('$CHROMOSOME',chrom)
+        fp_markers = self.chrom2file(self.BEAGLE_markers, chrom)
+        fp_phased = self.chrom2file(self.BEAGLE_phased)
+
         ##
         ## open files
         ##
@@ -467,8 +474,7 @@ class main():
         pos_init1 = position-position%size
         pos_term1 = self.calc_pos_term(pos_init1,position,size,min_bps)
 
-        index = 1 ## LSF does not allow 0 for LSB_JOBINDEX! "Bad job name. Job not submitted." ## e.g. bsub -J"test[0-2]" echo A
-##        pos_ref = 0
+        index = 1
         bool_append_markphas = False
         bool_append_to_prev = False
         bool_append_to_next = False
@@ -485,7 +491,8 @@ class main():
         line_p = fd_phased.readline()
 
         cnt_variants = 0
-        with fileinput.input(files=l_files) as fd_vcf:
+        with fileinput.input(
+            files=l_files,openhook=self.hook_compressed_text) as fd_vcf:
             while True:
                 try:
                     l_vcf = next(self.generate_line_vcf_PASS_split(
@@ -785,18 +792,32 @@ class main():
         return d_index2pos
 
 
+    def hook_compressed_text(self, filename, mode):
+
+        ##http://stackoverflow.com/questions/21529163/python-gzipped-fileinput-returns-binary-string-instead-of-text-string/21529243
+
+        ext = os.path.splitext(filename)[1]
+        if ext == '.gz':
+            f = gzip.open(filename, mode + 't')
+        else:
+            f = open(filename, mode)
+
+        return f
+
+
     def vcf2beagle(self,l_vcf):
 
         ## append chrom:pos alleleA alleleB
         line_beagle = '%s:%s %s %s' %(l_vcf[0],l_vcf[1],l_vcf[3],l_vcf[4],)
 
+        index = l_vcf[8].split(':').index('PL')
         for s_vcf in l_vcf[9:]:
             ## variant not called
-            if s_vcf == './.':
+            if s_vcf[:3] == './.':
                 line_beagle += ' 0.3333 0.3333 0.3333'
                 continue
             l_probs = []
-            l_log10likelihoods = s_vcf.split(':')[-1].split(',')
+            l_log10likelihoods = s_vcf.split(':')[index].split(',')
             for log10likelihood in l_log10likelihoods:
                 log10likelihood = int(log10likelihood)
                 if log10likelihood == 0:
@@ -815,20 +836,6 @@ class main():
                 print(l_log10likelihoods)
                 print(l_probs)
                 print(line_beagle)
-##grep "100022465\|100043981\|100047620" /lustre/scratch113/projects/agv/users/tc9/HiSeq/pipeline/uganda4x/out_UnifiedGenotyper/UnifiedGenotyper.10.*.vcf
-##UnifiedGenotyper.10.11.vcf:10    100022465       rs78402300      C       A,T     384.41  .       AC=5,4;AF=0.025,0.020;AN=198;BaseQRankSum=-1.132;DB;DP=459;Dels=0.00;FS=0.000;HaplotypeScore=0.2870;InbreedingCoeff=0.2595;MLEAC=4,3;MLEAF=0.020,0.015;MQ=57.71;MQ0=0;MQRankSum=1.004;QD=13.73;ReadPosRankSum=-0.013;SB=-1.944e+02      GT:AD:DP:GQ:PL  0/0:5,0,0:5:9:0,9,120,9,120,120 0/2:2,0,5:7:55:165,171,241,0,70,55      0/0:5,0,0:5:15:0,15,186,15,186,186      0/0:5,0,0:5:15:0,15,191,15,191,191      0/0:4,0,0:4:12:0,12,147,12,147,147      0/0:5,0,0:5:15:0,15,175,15,175,175      0/0:6,0,0:6:18:0,18,238,18,238,238      0/0:3,0,0:3:9:0,9,123,9,123,123 0/0:3,
-##UnifiedGenotyper.10.11.vcf:10    100043981       rs4919198       T       A,G     14156.03        .       AC=40,119;AF=0.202,0.601;AN=198;BaseQRankSum=-3.709;DB;DP=530;Dels=0.00;FS=0.427;HaplotypeScore=0.4226;InbreedingCoeff=0.4117;MLEAC=34,129;MLEAF=0.172,0.652;MQ=58.46;MQ0=0;MQRankSum=0.574;QD=28.37;ReadPosRankSum=0.935;SB=-6.345e+03 GT:AD:DP:GQ:PL  2/2:0,0,4:4:12:158,158,158,12,12,0      0/2:8,0,1:9:14:14,38,335,0,297,294      1/2:0,4,3:7:94:258,106,94,152,0,143    0/2:6,0,2:8:48:48,66,287,0,221,215       0/2:2,0,2:4:58:58,64,133,0,70,64        2/2:0,0,9:9:27:346,346,346,27,27,0      2/2:0,0,3:3:9:90,90,90,9,9,0    2/2:0,0,10:10:30:360,360,360,3
-##UnifiedGenotyper.10.11.vcf:10    100047620       rs74779652      C       A,G     1442.06 .       AC=2,28;AF=0.010,0.141;AN=198;BaseQRankSum=-6.605;DB;DP=555;Dels=0.00;FS=1.046;HaplotypeScore=0.4547;InbreedingCoeff=0.1284;MLEAC=2,25;MLEAF=0.010,0.126;MQ=57.69;MQ0=0;MQRankSum=0.864;QD=9.81;ReadPosRankSum=-0.200;SB=-8.715e+02     GT:AD:DP:GQ:PL  0/0:8,0,0:8:24:0,24,281,24,281,281      0/0:12,0,0:12:36:0,36,497,36,497,497    0/0:10,0,0:10:27:0,27,342,27,342,342    0/0:6,0,0:6:18:0,18,242,18,242,242      0/0:1,0,0:1:3:0,3,42,3,42,42    0/1:4,4,0:8:99:131,0,102,140,114,255    0/0:6,0,0:6:18:0,18,216,18,216,216      0/2:6,0,2:8:42:42,57,236,0,179,173    
-
-##grep "100022465\|100043981\|100047620" /lustre/scratch113/projects/agv/users/tc9/HiSeq/pipeline/uganda4x/out_BEAGLE/10.gprobs | cut -d " " -f-10
-##10:100022465 C A 1 0 0 1 0 0 1
-##10:100043981 T G 0 0.0056 0.9944 0 0.9954 0.0046 0
-##10:100047620 C G 1 0 0 1 0 0 1
-
-##grep "100022465\|100043981\|100047620" /nfs/team149/resources/beagle_1000_Genomes.phase1_release_v3/ALL.chr10.phase1_release_v3.20101123.filt.markers
-##rs78402300      100022465       C       A
-##rs4919198       100043981       T       G
-##rs74779652      100047620       C       G
                 stop_tmp_decide_on_triallelic
         line_beagle += '\n'
 
@@ -876,7 +883,7 @@ class main():
         cmd += "| sort -u > panel0out%s" %(chrom)
         self.execmd(cmd)
 
-        minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.f_ts_filter_level,)
+        minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.ts_filter_level,)
         fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.SNP.recal'
         with open(fp_recal,'r') as fd_recal, open('panel2in%s' %(chrom),'w') as fd_out:
             for line in fd_recal:
@@ -1193,7 +1200,6 @@ class main():
 ## marker identifiers, positions, and alleles described in Section 2.4.
 ## The markers argument is optional if you specify only one Beagle file,
 ## and is required if you specify more than one Beagle file.
-##        s += ' markers=/lustre/scratch107/projects/uganda/users/tc9/in_BEAGLE/ALL.chr%s.phase1_release_v3.20101123.filt.markers ' %(chrom)
         lines += [' markers=%s \\' %(fp_markers)]
 ####missing=<missing code> where <missing code> is the character or sequence of characters used to represent a missing allele (e.g. missing=-1 or missing=?).
 #### The missing argument is required.
@@ -1229,7 +1235,7 @@ class main():
         d_chrom_lens = {}
 
         ## 1000G chromosome ranges
-        fn = '%s.fai' %(self.fp_FASTA_reference_sequence)
+        fn = '%s.fai' %(self.ref)
         fd = open(fn)
         lines = fd.readlines()
         fd.close()
@@ -1388,18 +1394,7 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
         T = analysis_type = 'VariantRecalibrator'
-        ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     12840 MB
-        ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13710 MB
-        ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     13950 MB
-        ##pipeline/ethiopia4x/stdout/VariantRecalibrator/VariantRecalibrator.out:    Max Memory :     15092 MB
-        memMB = 15900
-##        memMB = 27500 ## tmp!!! union4x
-        memMB = 20900 ## tmp!!! uganda4x_zulu4x_ethiopia4x_NA12878_NA19240    Max Memory :             19606 MB
-        ##fula_20120704/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :   9635.38 sec.
-        ##zulu_20121208/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  10015.61 sec.
-        ##uganda_20130113/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11657.10 sec.
-        ##pipeline/zulu1x/stdout/VariantRecalibrator/VariantRecalibrator.out:    CPU time   :  11309.62 sec.
-        queue = 'normal'
+        memMB = 20900 ## uganda4x_zulu4x_ethiopia4x_NA12878_NA19240    Max Memory :             19606 MB
         queue = 'yesterday'
         num_threads = 4
 
@@ -1515,10 +1510,10 @@ class main():
         s = ''
         ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
         ## http://www.broadinstitute.org/gatk/guide/article?id=2846
-        if '2.7' in self.fp_GATK or '2.6' in self.fp_GATK or '2.8' in self.fp_GATK or 'nc6' in self.fp_GATK:
-            java = '/software/team149/opt/jre1.7.0_45/bin/java'
+        if '2.7' in self.fp_GATK or '2.6' in self.fp_GATK or '2.8' in self.fp_GATK or 'nc6' in self.fp_GATK or '3.0' in self.fp_GATK:
+            java = '/software/team149/opt/jre1.7.0_45/bin/java' ## get rid of this explicit path...
         elif '2.5' in self.fp_GATK:
-            java = 'java'
+            java = 'java'  # 1.6
         else:
             print('unknown GATK version for %s' %(analysis_type))
             print(self.fp_GATK)
@@ -1533,7 +1528,7 @@ class main():
         lines += [' --analysis_type %s \\' %(analysis_type)]
         ## CommandLineGATK, optional, in
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
-        lines += [' --reference_sequence %s \\' %(self.fp_FASTA_reference_sequence)]
+        lines += [' --reference_sequence %s \\' %(self.ref)]
 
         return lines
 
@@ -1563,9 +1558,7 @@ class main():
         ## ../ethiopia8x/stdout/UnifiedGenotyper/UnifiedGenotyper.1.7.out:    CPU time   :  63554.28 sec.
         queue = 'long'
         ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
-        if self.fp_intervals:
-            memMB = 5900
-        elif self.project == 'ug2g':
+        if self.project == 'ug2g':
             ## LSF/UnifiedGenotyper/UnifiedGenotyper.22.3.out:    Max Memory :             12075 MB
             ## LSF/UnifiedGenotyper/UnifiedGenotyper.22.6.out:    Max Memory :             8817 MB
             memMB = 12900 ## tmp!!!
@@ -1577,6 +1570,9 @@ class main():
         else:
             memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
             memMB = 3900 ## more than 3900 if 322 samples for fragment 16.5
+
+        if self.fp_intervals:
+            memMB += 2000
 
         ##
         ## 1) touch
@@ -1621,7 +1617,6 @@ class main():
 
         ## execute shell script
         for chrom in l_chroms:
-##            if int(chrom) != 21: continue ## tmp!!!
             for i in range(
                 1,1+math.ceil(d_chrom_lens[chrom]/float(self.i_UG_or_HC_size))):
                 J = '%s%s.%i' %('UG',chrom,i,)
@@ -1957,7 +1952,7 @@ class main():
         s = ' python'
         s += ' %s' %(sys.argv[0])
         for k,v in vars(self.namespace_args).items():
-            s += ' --%s %s' %(k,str(v).replace('$','\\$'))
+            s += ' --%s %s' %(k,str(v))
         fd = open('rerun_python.sh','w')
         fd.write(s)
         fd.close()
@@ -2027,6 +2022,22 @@ class main():
         return lines
 
 
+    def is_file(self, str_):
+        if not os.path.isfile(str_) and not os.path.islink(str_):
+            msg = '%s is neither a readable file nor a symbolic link' % str_
+            raise argparse.ArgumentTypeError(msg)
+        return str_
+
+
+    def is_file_or_dir(self, str_):
+        print(str_)
+        if not any([
+            os.path.isfile(str_),os.path.islink(str_),os.path.isdir(str_)]):
+            msg = '%s is neither a readable file nor a directory' % str_
+            raise argparse.ArgumentTypeError(msg)
+        return str_
+
+
     def parse_arguments(self,):
 
         parser = argparse.ArgumentParser()
@@ -2036,81 +2047,54 @@ class main():
         ##
 
         parser.add_argument(
-            '--bam','--bams','--bamdir','--fp_bams','--input',
-            dest='fp_bams',
+            '--fp_bams','--bam','--bams','--input',
             help='Path to BAM and/or directory containing BAMs',
-            nargs='+',
-            required = True,
-            )
+            nargs='+', required=True, type=self.is_file_or_dir)
 
-        parser.add_argument('--coverage', required=True, type=int)
+        parser.add_argument('--coverage', required=True, type=float)
 
         parser.add_argument(
-            '--GATK','--fp_GATK','--gatk',
-            dest='fp_GATK',
-            help='File path to GATK (e.g. /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar)',
-            required = True,
-            )
+            '--fp_GATK', '--GATK', '--gatk', required = True,
+            help='File path to GATK',)
 
         parser.add_argument(
-            '--FASTA','--reference','--reference-sequence','--reference_sequence','--fp_FASTA_reference_sequence',
-            dest='fp_FASTA_reference_sequence',
-            help='File path to reference sequence in FASTA format (e.g. /lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta)',
-            required = True,
-            )
+            '--ref', '--reference', required = True, type=self.is_file)
+
+        parser.add_argument('--project', required=True)
 
         parser.add_argument(
-            '--project','-P','-G',
-            dest='project',
-            help='Project',
-            required = True,
-            )
-
-        parser.add_argument(
-            '--arguments','--args','--options','--opts','--fp_arguments',
-            dest='fp_arguments',
-            required = False,
-            )
+            '--fp_arguments', '--arguments','--args','--options','--opts')
 
         ##
         ## UnifiedGenotyper / HaplotypeCaller
         ##
 
         parser.add_argument(
-            '--i_UG_or_HC_size',
-            dest='i_UG_or_HC_size',
-            help='Size (bp) of divided parts.',
-            type=int,default=10*10**6,
-            required = False,
-            )
+            '--i_UG_or_HC_size', help='Size (bp) of divided parts.',
+            type=int,default=10*10**6)
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         parser.add_argument(
             '--genotyping_mode','-gt_mode',
             help='Specifies how to determine the alternate alleles to use for genotyping.',
-            default='DISCOVERY', required = False,
-            )
+            default='DISCOVERY')
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--output_mode
         parser.add_argument(
             '--output_mode','-out_mode',
             help='Specifies which type of calls we should output.',
-            default='EMIT_VARIANTS_ONLY', required = False,
-            )
+            default='EMIT_VARIANTS_ONLY')
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--alleles
         parser.add_argument(
             '--fp_alleles','--alleles','-alleles',
             help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',
-            default='',
-            required = False,
-            )
+            default='')
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         parser.add_argument(
             '--fp_intervals','--intervals','-L',
             help='Additionally, one may specify a rod file to traverse over the positions for which there is a record in the file (e.g. -L file.vcf).',
-            required = False,
             )
 
         ##
@@ -2118,39 +2102,26 @@ class main():
         ##
 
         parser.add_argument(
-            '--resources_SNP','--fp_resources_SNP','--VR_snp',
-            dest='fp_resources_SNP',
-            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
-            required = False,
-            )
+            '--fp_resources_SNP', '--resources_SNP', '--VR_snp',
+            help='File path to a file with -resource lines to append to GATK VR',)
 
         parser.add_argument(
-            '--resources_INDEL','--fp_resources_INDEL','--VR_indel',
-            dest='fp_resources_INDEL',
-            help='File path to a file with -resource lines to append to GATK VariantRecalibrator',
-            required = False,
-            )
+            '--fp_resources_INDEL', '--resources_INDEL', '--VR_indel',
+            help='File path to a file with -resource lines to append to GATK VR',)
 
 ##        parser.add_argument(
 ##            '--hapmap',
-##            dest='fp_resource_hapmap',
-##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/hapmap_3.3.b37.sites.vcf)',
-##            type=str,default=None,
-##            required = False,
+##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. hapmap_3.3.b37.sites.vcf)',
 ##            )
 ##
 
 ##        parser.add_argument(
 ##            '--omni',
-##            dest='fp_resource_omni',
-##            help='File path to omni vcf to be used by VariantCalibrator (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/1000G_omni2.5.b37.sites.vcf)',
-##            type=str,default=None,
-##            required = False,
+##            help='File path to omni vcf to be used by VariantCalibrator (e.g. 1000G_omni2.5.b37.sites.vcf)',
 ##            )
 
         ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
         s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
-        s_help += ' (e.g. /lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf)'
         parser.add_argument(
             '--fp_vcf_dbsnp','--dbsnp',
             help=s_help, required = True,
@@ -2161,42 +2132,33 @@ class main():
         ##
 
         parser.add_argument(
-            '--f_ts_filter_level','--ts','--f_ApplyRecalibration_ts_filter_level','--ts_filter_level',
-            dest='f_ts_filter_level',
-            type=float,default=None,required=True,
-            )
+            '--ts_filter_level','--ts', type=float, required=True,)
 
         ##
         ## BEAGLE
         ##
         parser.add_argument(
-            '--beagle','--BEAGLE','--BEAGLEjar','--fp_software_beagle',
-            dest='fp_software_beagle',
-            help='File path to BEAGLE .jar file (e.g. /nfs/team149/Software/usr/share/beagle_3.3.2.jar)',
+            '--fp_software_beagle', '--beagle','--BEAGLE','--BEAGLEjar',
+            help='File path to BEAGLE .jar file (e.g. beagle_3.3.2.jar)',
             required=True,
             )
 
         parser.add_argument(
             '--i_BEAGLE_size',
-            dest='i_BEAGLE_size',
             help='Size (Mbp) of divided parts.',
             type=int,default=2, ## CPU bound (2Mbp=22hrs,3090MB) with lowmem option...
-            required = False,
             )
 
         parser.add_argument(
             '--i_BEAGLE_edge',
-            dest='i_BEAGLE_edge',
             help='Window size (kbp) at either side of the divided part to avoid edge effects.',
             type=int,default=150,
-            required = False,
             )
 
         s_help = 'Phased file to be divided (e.g.'
         s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.bgl'
         parser.add_argument(
-            '--fp_BEAGLE_phased', '--phased',
-            dest='fp_BEAGLE_phased',
+            '--BEAGLE_phased', '--phased',
             help=s_help,
             required = True,
             )
@@ -2204,64 +2166,37 @@ class main():
         s_help = 'Markers file to be divided (e.g.'
         s_help += ' ALL.chr$CHROM.phase1_release_v3.20101123.filt.renamed.markers'
         parser.add_argument(
-            '--fp_BEAGLE_markers', '--markers',
-            dest='fp_BEAGLE_markers',
+            '--BEAGLE_markers', '--markers',
             help=s_help, required=True,
             )
 
-        parser.add_argument(
-            '--i_BEAGLE_nsamples',
-            dest='i_BEAGLE_nsamples',
-            help='',
-            default=20,
-            required = False,
-            )
+        parser.add_argument('--i_BEAGLE_nsamples', default=20)
 
         ##
         ## optional arguments
         ##
         parser.add_argument(
-            '--checkpoint', dest='bool_checkpoint', action='store_true',
-            default=False)
+            '--checkpoint', dest='bool_checkpoint', action='store_true', default=False)
+
+        parser.add_argument('--chrom', type=str, nargs='+')
 
         ##
         ##
         ##
         
-        ## http://docs.python.org/2/library/argparse.html#argparse.ArgumentParser.parse_args
         ## parse arguments to argparse NameSpace
         self.namespace_args = namespace_args = parser.parse_args()
 
-        ## http://docs.python.org/2/library/functions.html#vars
+        ## setatrr
         for k,v in vars(namespace_args).items():
             setattr(self,k,v)
 
         if self.fp_GATK is None and self.fp_options is None:
             parser.error('--GATK or --arguments')
 
-        bool_not_found = False
         s_arguments = ''
         for k,v in vars(namespace_args).items():
             s_arguments += '%s %s\n' %(k,v)
-            if k[:3] != 'fp_':
-                continue
-            fp = v
-            ## argument not specified
-            if fp == None or fp == 'None' or fp == '': continue
-            if fp == self.fp_bams:
-                l_fp = self.fp_bams
-            else:
-                if '$CHROMOSOME' in fp:
-                    l_fp = [fp.replace('$CHROMOSOME',str(chrom)) for chrom in range(1,22+1)]
-                else:
-                    l_fp = [fp]
-            for fp in l_fp:
-##                if not f(fp):
-                if not(any([os.path.isfile(fp),os.path.isdir(fp)])):
-                    print('file path does not exist:', fp)
-                    bool_not_found = True
-        if bool_not_found == True:
-            sys.exit(0)
 
         if self.fp_arguments == None or self.fp_arguments == 'None':
             self.fp_arguments = '%s.arguments' %(self.project)
@@ -2278,9 +2213,9 @@ class main():
                 v = l[1]
                 setattr(self,k,v)
 
-        if self.f_ts_filter_level not in [None,'None',]:
-            if self.f_ts_filter_level < 1:
-                self.f_ts_filter_level *= 100.
+        if self.ts_filter_level not in [None,'None',]:
+            if self.ts_filter_level < 1:
+                self.ts_filter_level *= 100.
 
         self.bams = []
         for fp in self.fp_bams:
