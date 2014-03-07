@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import fileinput
 import sys
+import gzip
 
 
 def main():
@@ -56,7 +57,8 @@ def vcf2bed(d_vars):
     with contextlib.ExitStack() as stack:
         fd_fam = stack.enter_context(
             open('EIGENSOFT/%s.pedind' % (d_vars['affix']), 'w'))
-        fd_vcf = fileinput.FileInput(files=d_vars['vcf'])
+        fd_vcf = fileinput.FileInput(
+            files=d_vars['vcf'], openhook=hook_compressed_text)
 
         for line in fd_vcf:
             if line[0] != '#':
@@ -76,7 +78,8 @@ def vcf2bed(d_vars):
             open('EIGENSOFT/%s.bed' % (d_vars['affix']), 'wb'))
         fd_bim = stack.enter_context(
             open('EIGENSOFT/%s.pedsnp' % (d_vars['affix']), 'w'))
-        fd_vcf = fileinput.FileInput(files=d_vars['vcf'])
+        fd_vcf = fileinput.FileInput(
+            files=d_vars['vcf'], openhook=hook_compressed_text)
 
         magic_number = bytearray([108,27])
         mode = bytearray([1])
@@ -174,6 +177,19 @@ def vcf2bed(d_vars):
             l_ID = l_ID[step:]
 
     return
+
+
+def hook_compressed_text(filename, mode):
+
+    ##http://stackoverflow.com/questions/21529163/python-gzipped-fileinput-returns-binary-string-instead-of-text-string/21529243
+
+    ext = os.path.splitext(filename)[1]
+    if ext == '.gz':
+        f = gzip.open(filename, mode + 't')
+    else:
+        f = open(filename, mode)
+
+    return f
 
 
 def parse_vcf(fd_vcf):
