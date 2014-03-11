@@ -14,6 +14,7 @@ import glob
 import fileinput
 import itertools
 import gzip
+import subprocess
 
 ## README
 
@@ -60,7 +61,8 @@ class main():
     def execmd(self,cmd):
 
         print(cmd)
-        os.system(cmd)
+##        os.system(cmd)
+        subprocess.call(cmd,shell=True)
 
         return
 
@@ -68,54 +70,6 @@ class main():
     def init(self,l_chroms,):
 
         l_dn = self.mkdirs(l_chroms,)
-
-        self.check_stderr(l_chroms,l_dn,)
-
-        return
-
-
-    def check_stderr(self,l_chroms,l_dn,):
-
-        print('checking that stderr is empty')
-        bool_exit = False
-        for dn in l_dn:
-            if dn[:3] != 'out': continue
-            l_fn = os.listdir('LSF/%s' %(dn[4:],))
-            for fn in l_fn:
-                if fn[-4:] != '.err': continue ## use glob instead
-                fp = 'LSF/%s/%s' %(dn[4:],fn)
-                if os.path.getsize(fp) > 0:
-                    print('error:', fp)
-                    bool_exit = True
-        if bool_exit == True: sys.exit(0)
-
-##        ## it takes too long to search all the output files
-##        ## instead do a tail on each and every file and check that
-##        ## os.popen("tail -n19 stdout/*/*.out | head -n1").read().strip()
-##        ## ==
-##        ## "Successfully completed."
-##        print 'checking in stdout that no jobs were terminated prematurely'
-##        s = os.popen('fgrep TERM stdout/*/*.out').read().strip()
-##        if s != '':
-##            print s
-##            bool_exit = True
-##        if bool_exit == True: sys.exit(0)
-##
-##        ##
-##        ## faster to just check for file output... this step is redundant...
-##        ##
-##        print 'checking in stdout that all jobs were successfully completed'
-##        l = os.listdir('stdout')
-##        for s in l:
-##            if os.path.isdir('stdout/%s' %(s)):
-##                for fn in os.listdir('stdout/%s' %(s)):
-##                    fp = os.path.join('stdout',s,fn)
-##                    self.check_out_line(fp)
-##            ## elif os.path.isfile('stdout/%s' %(s)):
-##            else:
-##                continue
-##                fp = os.path.join('stdout',s)
-##                self.check_out_line(fp)
 
         return
 
@@ -438,7 +392,7 @@ class main():
         ## genotype likelihood file
         fp_out_prefix = 'in_BEAGLE/%s/%s' %(chrom,chrom,)
         fp_markers = self.chrom2file(self.BEAGLE_markers, chrom)
-        fp_phased = self.chrom2file(self.BEAGLE_phased)
+        fp_phased = self.chrom2file(self.BEAGLE_phased, chrom)
 
         ##
         ## open files
@@ -1615,6 +1569,9 @@ class main():
 ##                bool_checkpoint=bool_checkpoint)
 ##            self.execmd(cmd)
 
+        if self.bool_checkpoint:
+            self.write_brestart()
+
         ## execute shell script
         for chrom in l_chroms:
             for i in range(
@@ -1625,7 +1582,34 @@ class main():
                     analysis_type,J,std_suffix=std_suffix,chrom=chrom,
                     memMB=memMB,queue=queue,
                     bool_checkpoint=self.bool_checkpoint, index=i)
-                self.execmd(cmd)
+                if self.bool_checkpoint:
+                    s = subprocess.check_output(cmd, shell=True).decode()
+                    print(s)
+                    jobID = int(re.match('.*?<(.*?)>',s).group(1))
+                    cmd = 'bash brestart.sh %i %s %i' %(
+                        jobID,self.project,memMB)
+                    sts = subprocess.call(
+                        'bsub -G %s -q small -w "ended(%i)" %s' %(
+                            self.project,jobID,cmd), shell=True)
+                else:
+                    self.execmd(cmd)
+
+        return
+
+
+    def write_brestart(self,):
+
+        with open('brestart.sh','w') as f:
+            f.write('sleep 30\n')
+            f.write('jobID=$1\n')
+            f.write('project=$2\n')
+            f.write('memMB=$3\n')
+            f.write('i=$(bhist -l $jobID | fgrep TERM_RUNLIMIT | wc -l)\n') ## exit code 140
+            f.write('j=$(bhist -l $jobID | fgrep "Exited with exit code 16" | wc -l)\n')
+            f.write('if [ $i -eq 0 -a $j -eq 0 ]; then exit; fi\n')
+            f.write('s=$(brestart -G $project -M $memMB checkpoint/$jobID)\n')
+            f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
+            f.write('bsub -G $project -q small -w "ended($jobID)" bash brestart.sh $jobID $project $memMB')
 
         return
 
@@ -1922,18 +1906,21 @@ class main():
             print(l_fp_out)
             stop
 
-        ## cont cmd
-##        lines = [';']
         lines = ['\n']
         for fp_out in l_fp_out:
             fp_out = fp_out
 ##            lines += ['echo %s >> %s.touch;' %(fp_out,analysis_type,)]
 ##            lines += ['touch touch/%s;' %(fp_out,)]
+            ## previous command exited cleanly
+            lines += ['if [ $? -eq 0 ]; then']
             lines += ['echo %s >> %s.touch' %(fp_out,analysis_type,)]
             lines += ['touch touch/%s' %(fp_out,)]
 
         if extra:
             lines += ['%s\n' %(extra)]
+
+        lines += ['bash ./rerun.sh']
+        lines += ['fi']
 
         ## write continuation shell script
         ## do not continue as part of previous command
@@ -1957,14 +1944,6 @@ class main():
         fd.write(s)
         fd.close()
         self.execmd('chmod +x rerun_python.sh')
-
-        ## cont cmd
-        lines += ['bash ./rerun.sh']
-##        ## term cmd
-##        lines += ['"']
-##
-##        lines += ['echo $cmd']
-##        lines += ['eval $cmd']
 
         return lines
 
