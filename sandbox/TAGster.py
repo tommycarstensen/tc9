@@ -4,8 +4,6 @@
 
 ## the script currently does not allow multiple chromosomes to be present in a single haps file
 
-## this is the collections.Counter.most_common(1) version...
-
 import argparse
 import collections
 import os
@@ -76,14 +74,23 @@ def main():
                 del d_LD[ID]
 ##                setT = set(f.read().rstrip().split('\n'))
 
-##    import time
-##    T1 = time.time()
-##    d_time = {i:0 for i in range(10)}
+    d_cnt2IDs = {}
+    for ID,count in cnt.items():
+        try:
+            d_cnt2IDs[count].append(ID)
+        except KeyError:
+            d_cnt2IDs[count] = [ID]
+##    del cnt
+
+    import time
+    T1 = time.time()
+    d_time = {i:0 for i in range(10)}
+    most_common_key = max(d_cnt2IDs.keys())
     with open(file_matrix) as f:
         while len(setT) < d_args['max_tagSNP']:
-##            T2 = time.time()
+            T2 = time.time()
             step = 0
-##            t1 = time.time()
+            t1 = time.time()
             ## Find the most common element,
             ## which is the rate limiting step in this loop.
             ##
@@ -94,25 +101,30 @@ def main():
             ## Alternatively algorithm could be made faster by
             ## using count as key in a dict and sets of IDs as value.
             ## The time complexity of set.add() and set.remove() is O(1)
-            most_common = cnt.most_common(1)
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
-            if not most_common:
-                break
-            ID = most_common[0][0]
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            while True:
+                print('a',most_common_key)
+                try:
+                    ID = d_cnt2IDs[most_common_key].pop()
+                    break
+                except IndexError:
+                    del d_cnt2IDs[most_common_key]
+                    most_common_key = max(d_cnt2IDs.keys())
+                    print('b',most_common_key)
             ## 10 times faster but not 100% correct solution:
 ##            if not most_common:
 ##                most_common = list(reversed(cnt.most_common(10)))
 ##                if not most_common:
 ##                    break
 ##            ID = most_common.pop()[0]
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             ## Break loop if cnt is exhausted.
-##            print(len(setT),most_common,round((T2-T1)/(len(setT)+1),3),len(d_tell[ID]))
-            print(len(setT),most_common,len(d_tell[ID]))
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            print(len(setT),ID,most_common_key,round((T2-T1)/(len(setT)+1),3),len(d_tell[ID]))
+            print(len(setT),ID,most_common_key,len(d_tell[ID]))
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             setT |= set([ID])
             del cnt[ID]
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             ## File seek is the second slowest step in this loop.
             for seek in d_tell[ID]:
                 f.seek(seek)
@@ -122,22 +134,26 @@ def main():
                     if ID2 in setT:
                         continue
                     ## tagged
+                    count = cnt[ID2]
+                    d_cnt2IDs[count].remove(ID2)
+                    try:
+                        d_cnt2IDs[count-1].append(ID2)
+                    except KeyError:
+                        d_cnt2IDs[count-1] = [ID2]
                     cnt[ID2] -= 1
                     if cnt[ID2] < 0:
                         print(cnt[ID2])
                         print(ID,ID2)
                         stoptmp
                     setQ.add(ID2) ## tmp!!!
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             del d_tell[ID]
-##            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
-##            if len(setT) > 1000: break ## tmp!!!
+            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            if len(setT) > 1000: break ## tmp!!!
             sys.stdout.flush()
 
     print('d_time',d_time)
 
-    print('len(setT)',len(setT))
-    print('len(seQ)',len(setQ))
     with open(d_args['out']+'.tagSNPs','w') as f:
         for ID in setT:
             f.write('%s\n' %(ID))
@@ -147,6 +163,10 @@ def main():
 
     ## Clean up large temporary files.
     os.remove(file_matrix)
+
+    print('len(setT)',len(setT))
+    print('len(setQ)',len(setQ))
+    print('len(setS)', len(d_tell.keys()), len(cnt.items()))
 
     return
 
