@@ -4,6 +4,8 @@
 
 ## the script currently does not allow multiple chromosomes to be present in a single haps file
 
+## the script favors selection of SNPs in regions with low recombination rates
+
 import argparse
 import collections
 import os
@@ -77,10 +79,12 @@ def main():
     d_cnt2IDs = {}
     for ID,count in cnt.items():
         try:
-            d_cnt2IDs[count].append(ID)
+            d_cnt2IDs[count].add(ID)
         except KeyError:
-            d_cnt2IDs[count] = [ID]
+            d_cnt2IDs[count] = set([ID])
 ##    del cnt
+
+    d_args['max_tagSNP'] = min(d_args['max_tagSNP'],len(d_tell.keys()))
 
     most_common_key = max(d_cnt2IDs.keys())
     with open(file_matrix) as f:
@@ -90,22 +94,20 @@ def main():
                 try:
                     ID = d_cnt2IDs[most_common_key].pop()
                     break
-                except IndexError:
+                except KeyError:
                     del d_cnt2IDs[most_common_key]
-                    most_common_key = max(d_cnt2IDs.keys())
-            ## Break loop if cnt is exhausted.
-            print(len(setT),ID,most_common_key,len(d_tell[ID]))
+                    try:
+                        most_common_key = max(d_cnt2IDs.keys())
+                    except ValueError:
+                        stopshouldnothappen
+                        break
             setT |= set([ID])
+            print(len(setT),cnt[ID],len(d_tell[ID]))
             del cnt[ID]
             ## File seek is the second slowest step in this loop.
             for seek in d_tell[ID]:
                 f.seek(seek)
                 line = f.readline()
-                i1 = len(line.rstrip().split())
-                i2 = len(set(line.rstrip().split()))
-                if i1 != i2:
-                    print(i1,i2,ID)
-                    stop
                 for ID2 in line.rstrip().split():
                     ## tag SNP
                     if ID2 in setT:
@@ -114,17 +116,16 @@ def main():
                     count = cnt[ID2]
                     d_cnt2IDs[count].remove(ID2)
                     try:
-                        d_cnt2IDs[count-1].append(ID2)
+                        d_cnt2IDs[count-1].add(ID2)
                     except KeyError:
-                        d_cnt2IDs[count-1] = [ID2]
+                        d_cnt2IDs[count-1] = set([ID2])
                     cnt[ID2] -= 1
                     if cnt[ID2] < 0:
                         print(cnt[ID2])
                         print(ID,ID2)
-                        stoptmp
+                        stoptmp_could_be_caused_by_matrix_file_overwrite
                     setQ.add(ID2) ## tmp!!!
             del d_tell[ID]
-##            if len(setT) > 1000: break ## tmp!!!
             sys.stdout.flush()
 
     with open(d_args['out']+'.tagSNPs','w') as f:
@@ -137,6 +138,7 @@ def main():
     ## Clean up large temporary files.
     os.remove(file_matrix)
 
+    print('cnt[ID]',cnt[ID])
     print('len(setT)',len(setT))
     print('len(setQ)',len(setQ))
     print('len(setS)', len(d_tell.keys()), len(cnt.items()))
@@ -153,7 +155,6 @@ def argparser():
     parser.add_argument('--min_LD', type=float, default=.8)
     parser.add_argument('--min_MAF', type=float, default=.01)
     parser.add_argument('--window', type=int, default=250000)
-    parser.add_argument('--bool_verbose', '--verbose', action='store_true',)
     parser.add_argument('--preselected')
     parser.add_argument('--max_tagSNP', type=int, default=1000000)
 
