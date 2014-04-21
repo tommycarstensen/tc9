@@ -82,53 +82,30 @@ def main():
             d_cnt2IDs[count] = [ID]
 ##    del cnt
 
-    import time
-    T1 = time.time()
-    d_time = {i:0 for i in range(10)}
     most_common_key = max(d_cnt2IDs.keys())
     with open(file_matrix) as f:
         while len(setT) < d_args['max_tagSNP']:
-            T2 = time.time()
-            step = 0
-            t1 = time.time()
-            ## Find the most common element,
-            ## which is the rate limiting step in this loop.
-            ##
-            ## Algorithm could be ~10 times faster
-            ## by only finding the 10 most common elements every 10th turn,
-            ## which would not be 100% correct
-            ##
-            ## Alternatively algorithm could be made faster by
-            ## using count as key in a dict and sets of IDs as value.
-            ## The time complexity of set.add() and set.remove() is O(1)
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
+            ## Find the most common element.
             while True:
-                print('a',most_common_key)
                 try:
                     ID = d_cnt2IDs[most_common_key].pop()
                     break
                 except IndexError:
                     del d_cnt2IDs[most_common_key]
                     most_common_key = max(d_cnt2IDs.keys())
-                    print('b',most_common_key)
-            ## 10 times faster but not 100% correct solution:
-##            if not most_common:
-##                most_common = list(reversed(cnt.most_common(10)))
-##                if not most_common:
-##                    break
-##            ID = most_common.pop()[0]
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             ## Break loop if cnt is exhausted.
-            print(len(setT),ID,most_common_key,round((T2-T1)/(len(setT)+1),3),len(d_tell[ID]))
             print(len(setT),ID,most_common_key,len(d_tell[ID]))
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             setT |= set([ID])
             del cnt[ID]
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             ## File seek is the second slowest step in this loop.
             for seek in d_tell[ID]:
                 f.seek(seek)
                 line = f.readline()
+                i1 = len(line.rstrip().split())
+                i2 = len(set(line.rstrip().split()))
+                if i1 != i2:
+                    print(i1,i2,ID)
+                    stop
                 for ID2 in line.rstrip().split():
                     ## tag SNP
                     if ID2 in setT:
@@ -146,13 +123,9 @@ def main():
                         print(ID,ID2)
                         stoptmp
                     setQ.add(ID2) ## tmp!!!
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
             del d_tell[ID]
-            t2 = time.time(); d_time[step] += t2-t1; step += 1; t1 = t2
-            if len(setT) > 1000: break ## tmp!!!
+##            if len(setT) > 1000: break ## tmp!!!
             sys.stdout.flush()
-
-    print('d_time',d_time)
 
     with open(d_args['out']+'.tagSNPs','w') as f:
         for ID in setT:
