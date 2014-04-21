@@ -102,7 +102,6 @@ def main():
                         stopshouldnothappen
                         break
             setT |= set([ID])
-            print(len(setT),cnt[ID],len(d_tell[ID]))
             del cnt[ID]
             ## File seek is the second slowest step in this loop.
             for seek in d_tell[ID]:
@@ -120,10 +119,6 @@ def main():
                     except KeyError:
                         d_cnt2IDs[count-1] = set([ID2])
                     cnt[ID2] -= 1
-                    if cnt[ID2] < 0:
-                        print(cnt[ID2])
-                        print(ID,ID2)
-                        stoptmp_could_be_caused_by_matrix_file_overwrite
                     setQ.add(ID2) ## tmp!!!
             del d_tell[ID]
             sys.stdout.flush()
