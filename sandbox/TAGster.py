@@ -10,54 +10,85 @@ import argparse
 import collections
 import os
 import sys
+import gzip
 
 
 def main():
 
+    ## Parse arguments.
     d_args = argparser()
 
-    d_tell = {}
+    ## Declare pseudo matrix file name.
     file_matrix = d_args['out']+'.LDmatrix'
+    ## Declare dictionary to be populated with
+    ## IDs as keys and byte positions as values
+    d_tell = {}
+    ## Open pseudo matrix file.
     with open(file_matrix,'w') as f_matrix:
         cnt = collections.Counter()
+        ## Loop over input files.
         for file in d_args['in']:
             print(file)
             sys.stdout.flush()
+            ## Declare temporary LD dictionary.
             d_LD = {}
-            with open(file) as f:
+            ## Open input file.
+            with gzip.open(file) as f:
+                ## Loop over input file lines.
                 for line in f:
                     l = line.rstrip().split()
-                    ID1 = l[0]
-                    ID2 = l[1]
+                    ## Parse positions.
                     pos1 = int(l[2])
                     pos2 = int(l[3])
+                    ## Skip if positions are distant from each other.
                     if abs(pos2-pos1) > d_args['window']:
                         continue
+                    ## Parse LD.
                     LD = float(l[4])
-                    MAF1 = float(l[5])
-                    MAF2 = float(l[6])
-                    if MAF1 < d_args['min_MAF'] or MAF2 < d_args['min_MAF']:
-                        continue
+                    ## Skip if LD below threshold.
                     if LD < d_args['min_LD']:
                         continue
+                    ## Parse MAF.
+                    MAF1 = float(l[5])
+                    MAF2 = float(l[6])
+                    ## Skip if either SNP below MAF threshold.
+                    if MAF1 < d_args['min_MAF'] or MAF2 < d_args['min_MAF']:
+                        continue
+                    ## Parse SNP IDs.
+                    ID1 = l[0]
+                    ID2 = l[1]
+                    ## Append count across populations. 
                     cnt[ID1] += 1
                     cnt[ID2] += 1
+                    ## Append SNPs in LD to temporary LD dictionary.
                     for IDa,IDb in ((ID1,ID2),(ID2,ID1)):
                         try:
                             d_LD[IDa].append(IDb)
                         except KeyError:
                             d_LD[IDa] = [IDb]
+                    ## Continue loop over input file lines.
+                    continue
+                ## Close input file.
+                pass
+            ## Append IDs in temporary LD dictionary to pseudo matrix file.
             for ID,l_IDs in d_LD.items():
+                ## Get pseudo matrix file byte position.
                 tell = f_matrix.tell()
+                ## Append IDs to pseudo matrix file.
                 f_matrix.write('%s\n' %(' '.join(l_IDs)))
+                ## Append byte position to dictionary.
                 try:
                     d_tell[ID].append(tell)
                 except KeyError:
                     d_tell[ID] = [tell]
-            
-##            break ## tmp!!!
 
+            ## Continue loop over input files.
+            continue
+##            break ## tmp!!!
+        ## Delete temporary LD dictionary from memory.
         del d_LD
+        ## Close pseudo matrix file.
+        pass
 
     print('len(setS)', len(d_tell.keys()), len(cnt.items()))
     setT = set()
