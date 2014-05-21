@@ -1,6 +1,6 @@
 #!python3
 
-## Tommy Carstensen, Wellcome Trust Sanger Institute, April 2014
+## Tommy Carstensen, Wellcome Trust Sanger Institute, April-May 2014
 
 import argparse
 import os
@@ -11,15 +11,91 @@ import gzip
 
 def main():
 
-    ## Parse arguments.
     d_args = argparser()
 
+    set_preselected, set_ignore = parse_input_sets(d_args)
+
+    d_ID2tell, d_ID2cnt = count_and_write_matrix(
+        d_args, set_ignore)
+    del set_ignore
+    len_setS = len(d_ID2tell.keys())  # used for assert in function summarize
+
+    d_cnt2IDs = invert_dictionary(d_ID2cnt)
+
+    d_setQ, setT = prepare_sets(
+        d_args, d_cnt2IDs, d_ID2cnt, d_ID2tell, set_preselected)
+    del set_preselected
+
+    setT = select_tag_SNPs(
+        d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell)
+
+    write_output(d_args, setT, d_setQ)
+
+    summarize(setT, d_setQ, d_ID2tell, d_ID2cnt, len_setS)
+
+    clean_up(d_args)
+
+    return
+
+
+def summarize(setT, d_setQ, d_ID2tell, d_ID2cnt, len_setS):
+
+    print('len(setT)', len(setT))
+    for i_pop, setQ in d_setQ.items():
+        print('pop', i_pop)
+        print('len(setQ)', len(setQ))
+        print('len(setQ - setT)', len(setQ - setT))
+        print('len(setQ + setT)', len(setQ.union(setT)))
+    assert len(d_ID2tell.keys()) == len(d_ID2cnt.keys())
+    assert len(setT) == len_setS-len(d_ID2cnt.keys())
+
+    return
+
+
+def prepare_sets(d_args, d_cnt2IDs, d_ID2cnt, d_ID2tell, set_preselected):
+
+    d_setQ = {
+        i: set() for i, _ in enumerate(d_args['in'])}  # set of tagged SNPs
+    setT = set()  # set of tagging/tag SNPs
+    setT = update_counts_for_preselected_tag_SNPs(
+        set_preselected, d_setQ, setT, d_args,
+        d_cnt2IDs, d_ID2cnt, d_ID2tell)
+
+    return d_setQ, setT
+
+
+def invert_dictionary(d_ID2cnt):
+
+    d_cnt2IDs = {}  # key = count of SNPs in LD, value = {pop:set of SNPs}
+    for ID, count in d_ID2cnt.items():
+        try:
+            d_cnt2IDs[count].add(ID)
+        except KeyError:
+            d_cnt2IDs[count] = set([ID])
+
+    return d_cnt2IDs
+
+
+def write_output(d_args, setT, d_setQ):
+
+    with open('{}.tagSNPs'.format(d_args['out']), 'w') as f:
+        for ID in setT:
+            f.write('{}\n'.format(ID))
+    for i_pop, setQ in d_setQ.items():
+        with open('{}.tagged'.format(d_args['out']), 'w') as f:
+            for ID in setQ:
+                f.write('{}\n'.format(ID))
+
+    return
+
+
+def parse_input_sets(d_args):
+
     if d_args['pretagged']:
-        set_tmp_ignore = set()
         with open(d_args['pretagged']) as f:
-            set_tmp_ignore = set(line.rstrip() for line in f)
+            set_ignore = set(line.rstrip() for line in f)
     else:
-        set_tmp_ignore = set()
+        set_ignore = set()
 
     if d_args['preselected']:
         with open(d_args['preselected']) as f_preselected:
@@ -28,226 +104,295 @@ def main():
         set_preselected = set()
 
     ## tag SNPs should not be ignored.
-    set_tmp_ignore -= set_preselected
+    set_ignore -= set_preselected
 
-    ## Declare pseudo matrix file name.
-    ## Declare dictionary to be populated with
-    ## IDs as keys and byte positions as values
-    d_tell = {}
-    d_cnt = {}
-    ## Open pseudo matrix file.
-    with open(d_args['out']+'.LDmatrix', 'w') as f_matrix:
-        ## Loop over input files.
-        for file in d_args['in']:
-            print(file)
-            sys.stdout.flush()
-            ## Declare temporary LD dictionary.
-            d_LD = {}
-            ## Open input file.
-            with gzip.open(file,'rt') as f:
-                ## Loop over input file lines.
-                ## TODO: MAKE A GENERATOR TO SHORTEN!!! AFTER DEADLINE!!!
-                for line in f:
-                    l = line.rstrip().split()
-                    ## Parse positions.
-                    pos1 = int(l[2])
-                    pos2 = int(l[3])
-                    ## Skip if positions are distant from each other.
-                    if abs(pos2-pos1) > d_args['max_window']:
-                        continue
-                    ## Parse LD.
-                    LD = float(l[4])
-                    ## Skip if LD below threshold.
-                    if LD < d_args['min_LD']:
-                        continue
-                    ## Parse MAF.
-                    MAF1 = float(l[5])
-                    MAF2 = float(l[6])
-                    ## Skip if either SNP below MAF threshold.
-                    if MAF1 < d_args['min_MAF'] or MAF2 < d_args['min_MAF']:
-                        continue
-                    ## Parse SNP IDs.
-                    ID1 = l[0]
-                    ID2 = l[1]
-                    ## Skip if tagged by IMPUTE2.
-                    ## CLEAN UP THIS UGLY CODE AFTER THE DEADLINE!!!
-                    if ID1 in set_tmp_ignore or ID2 in set_tmp_ignore:
-                        if ID1 in set_tmp_ignore and ID2 in set_tmp_ignore:
-                            continue
-                        elif ID1 in set_tmp_ignore:
-                            ID = ID2
-                        else:
-                            ID = ID1
-                        try:
-                            d_cnt[ID][0] += 0
-                            d_cnt[ID][1] += 0
-                        except KeyError:
-                            d_cnt[ID] = [0,0]
-                            d_LD[ID] = []
-                        continue
-                    ## Append count across populations.
-                    for ID in (ID1,ID2):
-                        try:
-                            d_cnt[ID][0] += 1
-                            d_cnt[ID][1] += 1
-                        except KeyError:
-                            d_cnt[ID] = [1,1]
-                    ## Append SNPs in LD to temporary LD dictionary.
-                    for IDa,IDb in ((ID1,ID2),(ID2,ID1)):
-                        try:
-                            d_LD[IDa].append(IDb)
-                        except KeyError:
-                            d_LD[IDa] = [IDb]
-                    ## Continue loop over input file lines.
-                    continue
-                ## Close input file.
-                pass
-            ## Append IDs in temporary LD dictionary to pseudo matrix file.
-            for ID,l_IDs in d_LD.items():
-                ## Get pseudo matrix file byte position.
-                tell = f_matrix.tell()
-                ## Append IDs to pseudo matrix file.
-                f_matrix.write('%s\n' %(' '.join(l_IDs)))
-                ## Append byte position to dictionary.
-                try:
-                    d_tell[ID].append(tell)
-                except KeyError:
-                    d_tell[ID] = [tell]
+    return set_preselected, set_ignore
 
-            ## Continue loop over input files.
-            continue
-##            break ## tmp!!!
-        ## Delete temporary LD dictionary from memory.
-        del d_LD
-        ## Close pseudo matrix file.
-        pass
 
-    ## Declare dictionary to be populated with
-    ## counts as keys and sets of IDs as values
-    d_cnt2IDs = {}
-    for ID,t_count in d_cnt.items():
-        count = t_count[0]
-        try:
-            d_cnt2IDs[count].add(ID)
-        except KeyError:
-            d_cnt2IDs[count] = set([ID])
-##    del cnt
+def update_counts_for_preselected_tag_SNPs(
+        set_preselected, d_setQ, setT, d_args,
+        d_cnt2IDs, d_ID2cnt, d_ID2tell):
 
-    ##
-    ## Update counts based on preselected tag SNPs.
-    ##
-    print('len(setS)', len(d_tell.keys()), len(d_cnt.keys()))
-    setT = set()
-    setQ = set()
-    with open(d_args['out']+'.LDmatrix') as f_matrix:
+    assert len(d_ID2tell.keys()) == len(d_ID2cnt.keys())
+    print(
+        'SNPs in union set across populations',
+        len(d_ID2tell.keys()), len(d_ID2cnt.keys()))
+    with open('{}.LDmatrix'.format(d_args['out'])) as f:
         for ID in set_preselected:
             setT.add(ID)
-            assert ID not in set_tmp_ignore
-##            print(
-##                ID, '20:18463897' in d_cnt.keys(),
-##                ID in set_tmp_ignore, ID in set_preselected,
-##                ID in d_tell.keys(), ID in d_cnt.keys())
-            setQ = update_counts_and_set_of_tagged_SNPs(
-                ID, d_tell, f_matrix, setT, d_cnt, d_cnt2IDs, setQ)
-            d_cnt2IDs[d_cnt[ID][0]].remove(ID)
-            del d_cnt[ID]
+            assert ID not in set_ignore
+            setT = update_counts_and_set_of_tagged_SNPs(
+                ID, d_ID2tell, f, setT, d_ID2cnt, d_cnt2IDs, d_setQ, d_args)
+            d_cnt2IDs[d_ID2cnt[ID]].remove(ID)
 
-    del set_tmp_ignore
+    return setT
 
-    d_args['max_tagSNP'] = min(d_args['max_tagSNP'],len(d_tell.keys()))
 
-    print('selecting tag SNPs')
-    sys.stdout.flush()
-    select_tag_SNPs(d_args, d_cnt2IDs, setT, setQ, d_cnt, d_tell)
-
-    with open(d_args['out']+'.tagSNPs','w') as f:
-        for ID in setT:
-            f.write('%s\n' %(ID))
-    with open(d_args['out']+'.tagged','w') as f:
-        for ID in setQ:
-            f.write('%s\n' %(ID))
+def clean_up(d_args):
 
     ## Clean up large temporary files.
-    os.remove(d_args['out']+'.LDmatrix')
-
-    print('len(setT)',len(setT))
-    print('len(setQ)',len(setQ))
-    print('len(setQ-setT)',len(setQ-setT))
-    print('len(setQ+setT)',len(setQ.union(setT)))
-    print('len(setS)', len(d_tell.keys()), len(d_cnt.keys()))
+    os.remove('{}.LDmatrix'.format(d_args['out']))
 
     return
 
 
-def select_tag_SNPs(d_args, d_cnt2IDs, setT, setQ, d_cnt, d_tell):
+def open_file(file):
 
-    len_setS = len(set(d_cnt.keys()))
-    
-    most_common_key = max(d_cnt2IDs.keys())
-    with open(d_args['out']+'.LDmatrix') as f:
-        while len(setT) < d_args['max_tagSNP']:
-            if len(setQ) >= d_args['max_coverage_global']*len_setS:
-                break
-            ## Find the most common element.
-            ## collections.Counter.most_common(1) is too slow.
-            while True:
-                try:
-                    ID = d_cnt2IDs[most_common_key].pop()
-                    break
-                except KeyError:
-                    del d_cnt2IDs[most_common_key]
-                    try:
-                        most_common_key = max(d_cnt2IDs.keys())
-                    except ValueError:
-                        ## Dictionary exhausted.
-                        if not d_cnt2IDs:
-                            return setT, setQ
-                        stopshouldnothappen
-                        break
-            if (
-                (d_cnt[ID][0]-d_cnt[ID][1])/d_cnt[ID][1]
-                > d_args['max_coverage_regional']):
-                del d_cnt[ID]
-                del d_tell[ID]
+    if os.path.splitext(file)[1] == '.gz':
+        f = gzip.open(file, 'rt')
+    else:
+        f = open(file, 'r')
+
+    return f
+
+
+def filter_lines(f, d_args, set_ignore):
+
+    for line in f:
+
+        l = line.rstrip().split()
+        ## Parse positions.
+        pos1 = int(l[2])
+        pos2 = int(l[3])
+        ## Skip if positions are distant from each other.
+        if abs(pos2 - pos1) > d_args['max_window']:
+            continue
+        ## Parse LD.
+        LD = float(l[4])
+        ## Skip if LD below threshold.
+        if LD < d_args['min_LD']:
+            continue
+        ## Parse MAF.
+        MAF1 = float(l[5])
+        MAF2 = float(l[6])
+        ## Skip if either SNP below MAF threshold.
+        if MAF1 < d_args['min_MAF']:
+            continue
+        if MAF2 < d_args['min_MAF']:
+            continue
+        ## Parse SNP IDs.
+        ID1 = l[0]
+        ID2 = l[1]
+        ## Skip if tagged by IMPUTE2.
+        ## CLEAN UP THIS UGLY CODE AFTER THE DEADLINE!!!
+        if ID1 in set_ignore or ID2 in set_ignore:
+            if ID1 in set_ignore and ID2 in set_ignore:
                 continue
+            elif ID1 in set_ignore:
+                ID = ID2
             else:
-                setT.add(ID)
-                del d_cnt[ID]
-                pass
-            setQ = update_counts_and_set_of_tagged_SNPs(
-                ID, d_tell, f, setT, d_cnt, d_cnt2IDs, setQ)
+                ID = ID1
+            try:
+                d_ID2cnt[ID] += 0
+            except KeyError:
+                d_ID2cnt[ID] = 0
+                d_LD[ID] = []
+            continue
 
-    return setT, setQ
+        yield ID1, ID2
+
+
+def append_IDs(ID1, ID2, d_ID2cnt, d_LD):
+
+    ## Append count across populations.
+    for ID in (ID1, ID2):
+        try:
+            d_ID2cnt[ID] += 1
+        except KeyError:
+            d_ID2cnt[ID] = 1
+    ## Append SNPs in LD to temporary LD dictionary.
+    for IDa, IDb in ((ID1, ID2), (ID2, ID1)):
+        try:
+            d_LD[IDa].add(IDb)
+        except KeyError:
+            d_LD[IDa] = set([IDb])
+
+    return
+
+
+def count_and_write_matrix(d_args, set_ignore):
+
+    d_ID2tell = {}  # key = SNP ID, value = pop: byte position
+    d_ID2cnt = {}  # key = SNP ID, value = count of SNPs in LD
+    ## Open pseudo matrix file.
+    with open('{}.LDmatrix'.format(d_args['out']), 'w') as f_matrix:
+        for i_pop, file_pop in enumerate(d_args['in']):
+            with open(file_pop) as f_pop:
+                files_LD = f_pop.read().rstrip().split('\n')
+            ## Loop over input files.
+            for file_LD in files_LD:
+                print(file_LD)
+                sys.stdout.flush()
+                ## Declare temporary LD dictionary.
+                d_LD = {}
+                with open_file(file_LD) as f_LD:
+                    for ID1, ID2 in filter_lines(f_LD, d_args, set_ignore):
+                        append_IDs(ID1, ID2, d_ID2cnt, d_LD)
+                ## Append IDs in temporary LD dictionary to pseudo matrix file.
+                for ID, set_IDs in d_LD.items():
+                    ## Get pseudo matrix file byte position.
+                    tell = f_matrix.tell()
+                    ## Append IDs to pseudo matrix file.
+                    f_matrix.write('{}\n'.format(' '.join(set_IDs)))
+                    ## Append byte position to dictionary.
+                    ## Does [ID][i_pop] use less memory than [i_pop][ID] ???
+                    try:
+                        d_ID2tell[ID][i_pop].append(tell)
+                    except KeyError:  # i_pop KeyError
+                        try:
+                            d_ID2tell[ID][i_pop] = [tell]
+                        except KeyError:  # ID KeyError
+                            d_ID2tell[ID] = {i_pop: [tell]}
+                ## Continue loop over input files.
+                continue
+            ## Continue loop over populations.
+            continue
+        ## Close pseudo matrix file.
+        pass
+
+    ## Delete temporary LD dictionary from memory.
+    del d_LD
+
+    return d_ID2tell, d_ID2cnt
+
+
+def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
+
+    print('selecting tag SNPs')
+    sys.stdout.flush()
+
+    ## The number of tag SNPs cannnot exceed the number of input SNPs.
+    d_args['max_tagSNP'] = min(d_args['max_tagSNP'], len(d_ID2tell.keys()))
+
+    d_len_setS = {i_pop: 0 for i_pop, _ in enumerate(d_args['in'])}
+    for ID in d_ID2tell.keys():
+        for i_pop in d_ID2tell[ID].keys():
+            d_len_setS[i_pop] += 1
+
+    max_coverage = d_args['max_coverage']
+
+    count_tagging = most_common_key = max(d_cnt2IDs.keys())
+    with open('{}.LDmatrix'.format(d_args['out'])) as f_matrix:
+        while len(setT) < d_args['max_tagSNP']:
+            for i_pop, _ in enumerate(d_args['in']):
+                if len(d_setQ[i_pop]) >= max_coverage*d_len_setS[i_pop]:
+                    print('pop {} reached coverage threshold'.format(i_pop))
+                    break
+            else:
+                ## Find the most common element.
+                ## collections.Counter.most_common(1) is too slow.
+                while True:
+                    try:
+                        ID = d_cnt2IDs[most_common_key].pop()
+                        break
+                    except KeyError:
+                        del d_cnt2IDs[most_common_key]
+                        try:
+                            most_common_key = max(d_cnt2IDs.keys())
+                        except ValueError:
+                            ## Dictionary exhausted.
+                            if not d_cnt2IDs:
+                                return setT
+                            stopshouldnothappen1
+                            break
+                setT = update_counts_and_set_of_tagged_SNPs(
+                    ID, d_ID2tell, f_matrix, setT, d_ID2cnt, d_cnt2IDs,
+                    d_setQ, d_args)
+                ## Continue while loop.
+                continue
+            ## Break while loop.
+            break
+
+    return setT
 
 
 def update_counts_and_set_of_tagged_SNPs(
-    ID, d_tell, f, setT, d_cnt, d_cnt2IDs, setQ):
+        ID_tagging, d_ID2tell, f, setT, d_ID2cnt, d_cnt2IDs, d_setQ, d_args):
 
     ## File seek is the second slowest step in this loop.
-    for seek in d_tell[ID]:
-        f.seek(seek)
-        line = f.readline()
-        for ID2 in line.rstrip().split():
-            ## tag SNP
-            if ID2 in setT:
-                continue
-            ## tagged
-            try:
-                count = d_cnt[ID2][0]
-            ## max_coverage_regional
-            except KeyError:
-                continue
-            d_cnt2IDs[count].remove(ID2)
-            try:
-                d_cnt2IDs[count-1].add(ID2)
-            except KeyError:
-                d_cnt2IDs[count-1] = set([ID2])
-            d_cnt[ID2][0] -= 1
-            if d_cnt[ID2][0] < 0: print(ID,ID2,d_cnt[ID2]); stop ## tmp!!!
-            setQ.add(ID2) ## tmp!!!
-    del d_tell[ID]
 
-    return setQ
+    for i_pop in d_ID2tell[ID_tagging].keys():
+        ## Loop over file position(s) of the tagging SNP.
+        for seek_tagging in d_ID2tell[ID_tagging][i_pop]:
+            f.seek(seek_tagging)
+            ## Loop over tagged SNPs.
+            l_IDs_tagged = f.readline().rstrip().split()
+            for ID_tagged in l_IDs_tagged:
+                ## already a tagged SNP
+                if ID_tagged in d_setQ[i_pop]:
+                    continue
+                ## already a tagging SNP
+                if ID_tagged in setT:
+                    stop_not_expected_should_already_be_in_setQ
+                    continue
+                d_setQ[i_pop].add(ID_tagged)
+                subtract_main(
+                    ID_tagged, i_pop, d_ID2tell, f, ID_tagging, d_ID2cnt,
+                    d_cnt2IDs)
+                ## Continue loop over tagged SNPs.
+                continue
+            ## Continue loop over file position(s) of the tagging SNPs.
+            continue
+        ## Add tagging SNP to set of tagged SNPs.
+        if not ID_tagging in d_setQ[i_pop]:
+            d_setQ[i_pop].add(ID_tagging)
+            subtract_main(
+                ID_tagging, i_pop, d_ID2tell, f, ID_tagging, d_ID2cnt,
+                d_cnt2IDs)
+        ## Continue loop over populations.
+        continue
+
+    del d_ID2tell[ID_tagging]
+    setT.add(ID_tagging)
+    del d_ID2cnt[ID_tagging]
+
+    return setT
+
+
+def subtract_main(
+        ID_tagged, i_pop, d_ID2tell, f, ID_tagging, d_ID2cnt, d_cnt2IDs):
+
+    ## CHECK AFTER DEADLINE WHETHER FASTER TO CREATE LOCAL
+    ## DICTIONARY WITH COUNTS AND THEN SUBTRACT COUNTS FROM MAIN
+    ## DIC AFTER LOOP
+    ## Loop over file position(s) of the tagged SNP.
+    for seek_tagged in d_ID2tell[ID_tagged][i_pop]:
+        f.seek(seek_tagged)
+        ## Loop over the SNPs in LD with the tagged SNP.
+        l_IDs_LD = f.readline().rstrip().split()
+        for ID_LD in l_IDs_LD:
+            f.seek(seek_tagged)
+            ## Skip as ID_tagging is deleted from d_ID2cnt anyway.
+            if ID_LD == ID_tagging:
+                continue
+            if ID_LD == ID_tagged:
+                print(ID_LD, ID_tagged, i_pop)
+                stop_not_expected
+            ## "if s_im not in Q_i"
+            subtract(ID_LD, d_ID2cnt, d_cnt2IDs, 1)
+            ## Continue loop over the SNPs
+            ## in LD with the tagged SNP.
+            continue
+        ## Continue loop over file position(s) of the tagged SNP.
+        continue
+
+    return
+
+
+def subtract(ID, d_ID2cnt, d_cnt2IDs, subtrahend):
+
+    count = d_ID2cnt[ID]
+    d_cnt2IDs[count].remove(ID)
+    try:
+        d_cnt2IDs[count-subtrahend].add(ID)
+    except KeyError:
+        d_cnt2IDs[count-subtrahend] = set([ID])
+    d_ID2cnt[ID] -= subtrahend
+    if d_ID2cnt[ID] < 0:  # tmp!!!
+        print(ID, d_ID2cnt[ID])  # tmp!!!
+        stopshouldnothappen2  # tmp!!!
+
+    return
 
 
 def argparser():
@@ -260,10 +405,9 @@ def argparser():
     parser.add_argument('--min_MAF', type=float, default=.01)
     parser.add_argument('--max_window', type=int, default=250000)
     parser.add_argument('--preselected')
-    parser.add_argument('--pretagged','--ignore')
+    parser.add_argument('--pretagged', '--ignore')
     parser.add_argument('--max_tagSNP', type=int, default=1000000)
-    parser.add_argument('--max_coverage_regional', type=float, default=1)
-    parser.add_argument('--max_coverage_global', type=float, default=1)
+    parser.add_argument('--max_coverage', type=float, default=1.)
 
     d_args = vars(parser.parse_args())
 
