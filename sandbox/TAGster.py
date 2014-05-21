@@ -361,7 +361,6 @@ def subtract_main(
         ## Loop over the SNPs in LD with the tagged SNP.
         l_IDs_LD = f.readline().rstrip().split()
         for ID_LD in l_IDs_LD:
-            f.seek(seek_tagged)
             ## Skip as ID_tagging is deleted from d_ID2cnt anyway.
             if ID_LD == ID_tagging:
                 continue
