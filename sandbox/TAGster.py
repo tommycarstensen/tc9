@@ -66,6 +66,9 @@ def prepare_sets(d_args, d_cnt2IDs, d_ID2cnt, d_ID2tell, set_preselected):
 
 def invert_dictionary(d_ID2cnt):
 
+    print('invert dictionary')
+    sys.stdout.flush()
+
     d_cnt2IDs = {}  # key = count of SNPs in LD, value = {pop:set of SNPs}
     for ID, count in d_ID2cnt.items():
         try:
@@ -81,10 +84,10 @@ def write_output(d_args, setT, d_setQ):
     with open('{}.tagSNPs'.format(d_args['out']), 'w') as f:
         for ID in setT:
             f.write('{}\n'.format(ID))
-    for i_pop, setQ in d_setQ.items():
-        with open('{}.tagged'.format(d_args['out']), 'w') as f:
+    with open('{}.tagged'.format(d_args['out']), 'w') as f:
+        for i_pop, setQ in d_setQ.items():
             for ID in setQ:
-                f.write('{}\n'.format(ID))
+                f.write('{}:{}\n'.format(i_pop,ID))
 
     return
 
@@ -120,10 +123,10 @@ def update_counts_for_preselected_tag_SNPs(
     with open('{}.LDmatrix'.format(d_args['out'])) as f:
         for ID in set_preselected:
             setT.add(ID)
-            assert ID not in set_ignore
+##            assert ID not in set_ignore
+            d_cnt2IDs[d_ID2cnt[ID]].remove(ID)
             setT = update_counts_and_set_of_tagged_SNPs(
                 ID, d_ID2tell, f, setT, d_ID2cnt, d_cnt2IDs, d_setQ, d_args)
-            d_cnt2IDs[d_ID2cnt[ID]].remove(ID)
 
     return setT
 
@@ -146,11 +149,34 @@ def open_file(file):
     return f
 
 
-def filter_lines(f, d_args, set_ignore):
+def filter_lines(f, d_args, set_ignore, set_candidate):
 
     for line in f:
 
         l = line.rstrip().split()
+        ## Parse SNP IDs.
+        ID1 = l[0]
+        ID2 = l[1]
+        ## Parse MAF.
+        MAF1 = float(l[5])
+        MAF2 = float(l[6])
+        ## Determine if SNPs are to be skipped;
+        ## if below MAF threshold or set to be ignored.
+        bool_ID1_skip = ID1 in set_ignore or MAF1 < d_args['min_MAF']
+        bool_ID2_skip = ID2 in set_ignore or MAF2 < d_args['min_MAF']
+        if bool_ID1_skip and bool_ID2_skip:
+            continue
+        elif bool_ID1_skip:
+            set_candidate.add(ID2)
+            continue
+        elif bool_ID2_skip:
+            set_candidate.add(ID1)
+            continue
+        else:
+            set_candidate.add(ID1)
+            set_candidate.add(ID2)
+            pass
+
         ## Parse positions.
         pos1 = int(l[2])
         pos2 = int(l[3])
@@ -162,44 +188,25 @@ def filter_lines(f, d_args, set_ignore):
         ## Skip if LD below threshold.
         if LD < d_args['min_LD']:
             continue
-        ## Parse MAF.
-        MAF1 = float(l[5])
-        MAF2 = float(l[6])
-        ## Skip if either SNP below MAF threshold.
-        if MAF1 < d_args['min_MAF']:
-            continue
-        if MAF2 < d_args['min_MAF']:
-            continue
-        ## Parse SNP IDs.
-        ID1 = l[0]
-        ID2 = l[1]
-        ## Skip if tagged by IMPUTE2.
-        ## CLEAN UP THIS UGLY CODE AFTER THE DEADLINE!!!
-        if ID1 in set_ignore or ID2 in set_ignore:
-            if ID1 in set_ignore and ID2 in set_ignore:
-                continue
-            elif ID1 in set_ignore:
-                ID = ID2
-            else:
-                ID = ID1
-            try:
-                d_ID2cnt[ID] += 0
-            except KeyError:
-                d_ID2cnt[ID] = 0
-                d_LD[ID] = []
-            continue
 
         yield ID1, ID2
+
+
+def append_count(ID, d_ID2cnt, addend=1):
+
+    try:
+        d_ID2cnt[ID] += addend
+    except KeyError:
+        d_ID2cnt[ID] = addend
+
+    return
 
 
 def append_IDs(ID1, ID2, d_ID2cnt, d_LD):
 
     ## Append count across populations.
     for ID in (ID1, ID2):
-        try:
-            d_ID2cnt[ID] += 1
-        except KeyError:
-            d_ID2cnt[ID] = 1
+        append_count(ID, d_ID2cnt)
     ## Append SNPs in LD to temporary LD dictionary.
     for IDa, IDb in ((ID1, ID2), (ID2, ID1)):
         try:
@@ -225,9 +232,17 @@ def count_and_write_matrix(d_args, set_ignore):
                 sys.stdout.flush()
                 ## Declare temporary LD dictionary.
                 d_LD = {}
+                set_candidate = set()
                 with open_file(file_LD) as f_LD:
-                    for ID1, ID2 in filter_lines(f_LD, d_args, set_ignore):
+                    for ID1, ID2 in filter_lines(
+                        f_LD, d_args, set_ignore, set_candidate):
                         append_IDs(ID1, ID2, d_ID2cnt, d_LD)
+                ## Add SNPs only in LD with 1) SNPs below MAF threshold or
+                ## 2) ignored SNPs.
+                for ID in set_candidate-set(d_ID2cnt.keys()):
+                    print(ID)
+                    append_count(ID, d_ID2cnt, addend=0)
+                    d_LD[ID] = set()
                 ## Append IDs in temporary LD dictionary to pseudo matrix file.
                 for ID, set_IDs in d_LD.items():
                     ## Get pseudo matrix file byte position.
@@ -277,6 +292,7 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
             for i_pop, _ in enumerate(d_args['in']):
                 if len(d_setQ[i_pop]) >= max_coverage*d_len_setS[i_pop]:
                     print('pop {} reached coverage threshold'.format(i_pop))
+                    print(len(d_setQ[i_pop]), max_coverage*d_len_setS[i_pop])
                     break
             else:
                 ## Find the most common element.
@@ -285,13 +301,15 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
                     try:
                         ID = d_cnt2IDs[most_common_key].pop()
                         break
+                    ## Dictionary d_cnt2IDs exhausted.
                     except KeyError:
                         del d_cnt2IDs[most_common_key]
                         try:
                             most_common_key = max(d_cnt2IDs.keys())
                         except ValueError:
-                            ## Dictionary exhausted.
+                            ## Dictionary d_cnt2IDs exhausted.
                             if not d_cnt2IDs:
+                                stop_no_longer_expected
                                 return setT
                             stopshouldnothappen1
                             break
@@ -368,7 +386,7 @@ def subtract_main(
                 print(ID_LD, ID_tagged, i_pop)
                 stop_not_expected
             ## "if s_im not in Q_i"
-            subtract(ID_LD, d_ID2cnt, d_cnt2IDs, 1)
+            subtract(ID_LD, d_ID2cnt, d_cnt2IDs, 1, d_ID2tell)
             ## Continue loop over the SNPs
             ## in LD with the tagged SNP.
             continue
@@ -378,18 +396,21 @@ def subtract_main(
     return
 
 
-def subtract(ID, d_ID2cnt, d_cnt2IDs, subtrahend):
+def subtract(ID, d_ID2cnt, d_cnt2IDs, subtrahend, d_ID2tell):
 
     count = d_ID2cnt[ID]
-    d_cnt2IDs[count].remove(ID)
-    try:
-        d_cnt2IDs[count-subtrahend].add(ID)
-    except KeyError:
-        d_cnt2IDs[count-subtrahend] = set([ID])
-    d_ID2cnt[ID] -= subtrahend
-    if d_ID2cnt[ID] < 0:  # tmp!!!
+
+    if count-subtrahend < 0:  # tmp!!!
         print(ID, d_ID2cnt[ID])  # tmp!!!
-        stopshouldnothappen2  # tmp!!!
+        stopshouldnothappen  # tmp!!!
+
+    d_cnt2IDs[count].remove(ID)
+    if count-subtrahend > 0:
+        try:
+            d_cnt2IDs[count-subtrahend].add(ID)
+        except KeyError:
+            d_cnt2IDs[count-subtrahend] = set([ID])
+        d_ID2cnt[ID] -= subtrahend
 
     return
 
