@@ -19,6 +19,7 @@ def main():
         d_args, set_ignore)
     del set_ignore
     len_setS = len(d_ID2tell.keys())  # used for assert in function summarize
+    assert len_setS > 0
 
     d_cnt2IDs = invert_dictionary(d_ID2cnt)
 
@@ -122,11 +123,23 @@ def update_counts_for_preselected_tag_SNPs(
         len(d_ID2tell.keys()), len(d_ID2cnt.keys()))
     with open('{}.LDmatrix'.format(d_args['out'])) as f:
         for ID in set_preselected:
-            setT.add(ID)
-##            assert ID not in set_ignore
-            d_cnt2IDs[d_ID2cnt[ID]].remove(ID)
+            print(ID,len(d_ID2tell.keys()))
+            ## ID was already tagged
+#            if not ID in d_ID2cnt.keys():  # added 2014jun15
+            if d_ID2cnt[ID] == 0:  # added 2014jun15
+                setT.add(ID)
+                del d_ID2cnt[ID]
+                del d_ID2tell[ID]
+                continue
+            try:
+                d_cnt2IDs[d_ID2cnt[ID]].remove(ID)
+            except:
+                print(d_ID2cnt[ID])
+                stop
             setT = update_counts_and_set_of_tagged_SNPs(
                 ID, d_ID2tell, f, setT, d_ID2cnt, d_cnt2IDs, d_setQ, d_args)
+
+    assert len(set_preselected) == len(setT)
 
     return setT
 
@@ -205,7 +218,7 @@ def append_count(ID, d_ID2cnt, addend=1):
 def append_IDs(ID1, ID2, d_ID2cnt, d_LD):
 
     ## Append count across populations.
-    for ID in (ID1, ID2):
+    for ID in set([ID1, ID2]):
         append_count(ID, d_ID2cnt)
     ## Append SNPs in LD to temporary LD dictionary.
     for IDa, IDb in ((ID1, ID2), (ID2, ID1)):
@@ -221,9 +234,11 @@ def count_and_write_matrix(d_args, set_ignore):
 
     d_ID2tell = {}  # key = SNP ID, value = pop: byte position
     d_ID2cnt = {}  # key = SNP ID, value = count of SNPs in LD
+    x=0
     ## Open pseudo matrix file.
     with open('{}.LDmatrix'.format(d_args['out']), 'w') as f_matrix:
         for i_pop, file_pop in enumerate(d_args['in']):
+            ## Read list of files to loop over into memory.
             with open(file_pop) as f_pop:
                 files_LD = f_pop.read().rstrip().split('\n')
             ## Loop over input files.
@@ -240,7 +255,6 @@ def count_and_write_matrix(d_args, set_ignore):
                 ## Add SNPs only in LD with 1) SNPs below MAF threshold or
                 ## 2) ignored SNPs.
                 for ID in set_candidate-set(d_ID2cnt.keys()):
-                    print(ID)
                     append_count(ID, d_ID2cnt, addend=0)
                     d_LD[ID] = set()
                 ## Append IDs in temporary LD dictionary to pseudo matrix file.
@@ -277,7 +291,9 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
     sys.stdout.flush()
 
     ## The number of tag SNPs cannnot exceed the number of input SNPs.
-    d_args['max_tagSNP'] = min(d_args['max_tagSNP'], len(d_ID2tell.keys()))
+    d_args['max_tagSNP'] = min(
+        d_args['max_tagSNP'],
+        len(d_ID2tell.keys())+len(setT))
 
     d_len_setS = {i_pop: 0 for i_pop, _ in enumerate(d_args['in'])}
     for ID in d_ID2tell.keys():
@@ -286,10 +302,13 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
 
     max_coverage = d_args['max_coverage']
 
+    setS0 = set([x for x in d_ID2cnt.keys()])
+
     count_tagging = most_common_key = max(d_cnt2IDs.keys())
     with open('{}.LDmatrix'.format(d_args['out'])) as f_matrix:
         while len(setT) < d_args['max_tagSNP']:
             for i_pop, _ in enumerate(d_args['in']):
+                continue ## tmp!!! dont complete if one pop complete!!!
                 if len(d_setQ[i_pop]) >= max_coverage*d_len_setS[i_pop]:
                     print('pop {} reached coverage threshold'.format(i_pop))
                     print(len(d_setQ[i_pop]), max_coverage*d_len_setS[i_pop])
@@ -299,20 +318,23 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
                 ## collections.Counter.most_common(1) is too slow.
                 while True:
                     try:
+                        print('aaa',most_common_key)
                         ID = d_cnt2IDs[most_common_key].pop()
                         break
                     ## Dictionary d_cnt2IDs exhausted.
                     except KeyError:
+                        print('bbb',most_common_key)
                         del d_cnt2IDs[most_common_key]
                         try:
                             most_common_key = max(d_cnt2IDs.keys())
+                            print('max tag', most_common_key, flush=True)
                         except ValueError:
                             ## Dictionary d_cnt2IDs exhausted.
                             if not d_cnt2IDs:
-                                stop_no_longer_expected
                                 return setT
                             stopshouldnothappen1
                             break
+                        print('ccc',most_common_key)
                 setT = update_counts_and_set_of_tagged_SNPs(
                     ID, d_ID2tell, f_matrix, setT, d_ID2cnt, d_cnt2IDs,
                     d_setQ, d_args)
@@ -341,6 +363,7 @@ def update_counts_and_set_of_tagged_SNPs(
                     continue
                 ## already a tagging SNP
                 if ID_tagged in setT:
+                    print(ID_tagged, ID_tagging,l_IDs_tagged)
                     stop_not_expected_should_already_be_in_setQ
                     continue
                 d_setQ[i_pop].add(ID_tagged)
@@ -382,9 +405,9 @@ def subtract_main(
             ## Skip as ID_tagging is deleted from d_ID2cnt anyway.
             if ID_LD == ID_tagging:
                 continue
-            if ID_LD == ID_tagged:
-                print(ID_LD, ID_tagged, i_pop)
-                stop_not_expected
+##            if ID_LD == ID_tagged:
+##                print(ID_LD, ID_tagged, i_pop)
+##                stop_not_expected
             ## "if s_im not in Q_i"
             subtract(ID_LD, d_ID2cnt, d_cnt2IDs, 1, d_ID2tell)
             ## Continue loop over the SNPs
@@ -411,6 +434,8 @@ def subtract(ID, d_ID2cnt, d_cnt2IDs, subtrahend, d_ID2tell):
         except KeyError:
             d_cnt2IDs[count-subtrahend] = set([ID])
         d_ID2cnt[ID] -= subtrahend
+    else:
+        d_ID2cnt[ID] = 0  # added 2014jun15
 
     return
 
