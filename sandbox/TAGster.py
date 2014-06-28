@@ -307,41 +307,29 @@ def select_tag_SNPs(d_args, d_cnt2IDs, setT, d_setQ, d_ID2cnt, d_ID2tell):
     count_tagging = most_common_key = max(d_cnt2IDs.keys())
     with open('{}.LDmatrix'.format(d_args['out'])) as f_matrix:
         while len(setT) < d_args['max_tagSNP']:
-            for i_pop, _ in enumerate(d_args['in']):
-                continue ## tmp!!! dont complete if one pop complete!!!
-                if len(d_setQ[i_pop]) >= max_coverage*d_len_setS[i_pop]:
-                    print('pop {} reached coverage threshold'.format(i_pop))
-                    print(len(d_setQ[i_pop]), max_coverage*d_len_setS[i_pop])
+            ## Find the most common element.
+            ## collections.Counter.most_common(1) is too slow.
+            while True:
+                try:
+                    ID = d_cnt2IDs[most_common_key].pop()
                     break
-            else:
-                ## Find the most common element.
-                ## collections.Counter.most_common(1) is too slow.
-                while True:
+                ## Dictionary d_cnt2IDs exhausted.
+                except KeyError:
+                    del d_cnt2IDs[most_common_key]
                     try:
-                        print('aaa',most_common_key)
-                        ID = d_cnt2IDs[most_common_key].pop()
+                        most_common_key = max(d_cnt2IDs.keys())
+                        print('max tag', most_common_key, flush=True)
+                    except ValueError:
+                        ## Dictionary d_cnt2IDs exhausted.
+                        if not d_cnt2IDs:
+                            return setT
+                        stopshouldnothappen1
                         break
-                    ## Dictionary d_cnt2IDs exhausted.
-                    except KeyError:
-                        print('bbb',most_common_key)
-                        del d_cnt2IDs[most_common_key]
-                        try:
-                            most_common_key = max(d_cnt2IDs.keys())
-                            print('max tag', most_common_key, flush=True)
-                        except ValueError:
-                            ## Dictionary d_cnt2IDs exhausted.
-                            if not d_cnt2IDs:
-                                return setT
-                            stopshouldnothappen1
-                            break
-                        print('ccc',most_common_key)
-                setT = update_counts_and_set_of_tagged_SNPs(
-                    ID, d_ID2tell, f_matrix, setT, d_ID2cnt, d_cnt2IDs,
-                    d_setQ, d_args)
-                ## Continue while loop.
-                continue
-            ## Break while loop.
-            break
+            setT = update_counts_and_set_of_tagged_SNPs(
+                ID, d_ID2tell, f_matrix, setT, d_ID2cnt, d_cnt2IDs,
+                d_setQ, d_args)
+            ## Continue while loop.
+            continue
 
     return setT
 
