@@ -56,8 +56,6 @@ class main():
 #        queue = 'basement'
 
         ## Create folders.
-        self.mkdir('LSF/%s' %(T))
-        self.mkdir('out_HaplotypeCaller/')
         self.mkdir('tmp/')
 
         ## touch/lock
@@ -68,18 +66,18 @@ class main():
         self.shell_HC(analysis_type, memMB)
 
         ## execute shell script
-        for bam in self.bams:
-            basename = os.path.splitext(os.path.basename(bam))[0]
+        for chrom in self.chroms:
 
-            for chrom in self.chroms:
+            for bam in self.bams:
+                basename = os.path.splitext(os.path.basename(bam))[0]
 
                 ## Skip bam and chromosome if output was generated.
                 if os.path.isfile(
-                    'out_%s/%s.%s.vcf.gz.tbi' %(T, basename, chrom)):
+                    'out_%s/%s/%s.vcf.gz.tbi' %(T, chrom, basename)):
                     continue
 
                 ## Skip bam and chromosome if output is being generated.
-                pathLSF = 'LSF/%s/%s' %(T, basename)
+                pathLSF = 'LSF/%s/%s/%s' %(T, chrom, basename)
                 if os.path.isfile('%s.err' %(pathLSF)):
                     ## file changed within the past 5 minutes?
                     if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
@@ -87,6 +85,9 @@ class main():
                 os.remove('%s.err' %(pathLSF))
                 if os.path.isfile('%s.out' %(pathLSF)):
                     os.remove('%s.out' %(pathLSF))
+
+                self.mkdir('LSF/%s/%s/' %(T, chrom))
+                self.mkdir('out_%s/%s/' %(T, chrom))
 
                 J = '%s %s' %('HC', basename)
                 LSF_affix = '%s/%s' %(T, basename)
@@ -114,8 +115,8 @@ class main():
 
             ## 1) check input existence / check that previous jobs finished
             l_vcfs_in = [
-                'out_HaplotypeCaller/%s.%s.vcf.gz' %(
-                    os.path.splitext(os.path.basename(bam))[0], chrom)
+                'out_HaplotypeCaller/%s/%s.vcf.gz' %(
+                    chrom, os.path.splitext(os.path.basename(bam))[0])
                 for bam in sorted(self.bams)]
             if self.check_in(
                 'HaplotypeCaller', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
@@ -1560,11 +1561,11 @@ class main():
         ## 1) check input existence (vcf)
         ##
         l_vcfs_in = [
-            'out_HaplotypeCaller/%s.vcf.gz' %(
+            'out_GenotypeGVCFs/%s.vcf.gz' %(
                 os.path.splitext(os.path.basename(bam))[0])
             for bam in self.bams]
         if self.check_in(
-            'HaplotypeCaller',l_vcfs_in, 'touch/HaplotypeCaller.touch'):
+            'GenotypeGVCFs',l_vcfs_in, 'touch/GenotypeGVCFs.touch'):
             sys.exit(0)
         stop1
 
@@ -1726,7 +1727,7 @@ class main():
         lines += ['CHROM=$1']
         lines += ['BAM=$2']
         lines += ['BAMBASENAME=$(basename $BAM | rev | cut -d "." -f2- | rev)']
-        lines += ['out=out_HaplotypeCaller/$BAMBASENAME.$CHROM.vcf.gz']
+        lines += ['out=out_HaplotypeCaller/$CHROM/$BAMBASENAME.vcf.gz']
 ##        ## exit if job started
 ##        lines += ['if [ -s $out ]; then exit; fi\n']
         ## exit if job finished
@@ -1754,7 +1755,7 @@ class main():
 
     def body_HaplotypeCaller(self,):
 
-        '''Write GATK HaplotypeCaller specific command line arguments.'''
+        '''Write walker specific command line arguments.'''
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html
 
