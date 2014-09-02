@@ -1,6 +1,6 @@
 #!/bin/python3
 
-## Tommy Carstensen, Wellcome Trust Sanger Institute, 2012-2013
+## Tommy Carstensen, Wellcome Trust Sanger Institute, 2012-2014
 
 import math
 import os
@@ -15,6 +15,8 @@ import fileinput
 import itertools
 import gzip
 import subprocess
+import contextlib
+
 
 ## README
 
@@ -25,35 +27,23 @@ class main():
 
     def main(self):
 
-        ## define list of chromosomes
-        if self.chrom:
-            l_chroms = self.chrom
-        else:
-            l_chroms = [str(i) for i in range(1,22+1,)]+['X','Y',]
-
-        self.init(l_chroms,)
-
         ## parse chromsome lengths from reference sequence
         d_chrom_lens = self.parse_chrom_lens()
 
-        ##
-        ## write shell scripts
-        ##
-        self.UnifiedGenotyper(l_chroms,d_chrom_lens,)
+        self.HaplotypeCaller(d_chrom_lens,)
+        self.CombineGVCFs()
+        self.GenotypeGVCFs()
 
-##        l_chroms = ['22'] ## tmp!!!
         ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
-        self.VariantRecalibrator(l_chroms,d_chrom_lens,)
+        self.VariantRecalibrator(d_chrom_lens,)
 
-##        l_chroms = ['22','X','Y',] ## tmp!!!
         ## phased imputation reference panels not available for chrY
-        l_chroms.remove('Y')
+        self.chroms.remove('Y')
         ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
-        l_chroms.remove('X')
-##        l_chroms = ['22'] ## tmp!!!
-        self.BEAGLE(l_chroms,d_chrom_lens)
+        self.chroms.remove('X')
+        self.BEAGLE(d_chrom_lens)
 
-        self.unite_BEAGLE(l_chroms,d_chrom_lens,)
+        self.unite_BEAGLE(d_chrom_lens,)
 
         return
 
@@ -61,15 +51,7 @@ class main():
     def execmd(self,cmd):
 
         print(cmd)
-##        os.system(cmd)
         subprocess.call(cmd,shell=True)
-
-        return
-
-
-    def init(self,l_chroms,):
-
-        l_dn = self.mkdirs(l_chroms,)
 
         return
 
@@ -102,10 +84,16 @@ class main():
         cmd += ' | sort -u > markers%s' %(chrom)
         self.execmd(cmd)
 
-##        cmd = "awk '{print $1}' out_BEAGLE/%s/%s.*.like.r2" %(chrom,chrom)
-        cmd = "awk 'FNR>1{print $1}' out_BEAGLE/%s/%s.*.like.gprobs" %(chrom,chrom)
-        cmd += ' | sort -u > gprobs%s' %(chrom)
-        self.execmd(cmd)
+        if os.path.isfile('gprobs%s' %(chrom)):
+            os.remove('gprobs%s' %(chrom))
+        for file in glob.glob(
+            'out_BEAGLE/%s/%s.*.like.gprobs.gz' %(chrom,chrom)):
+            cmd = "zcat %s" %(file)
+            cmd += " | awk 'FNR>1{print $1}'"
+            cmd += ' >> gprobs%s' %(chrom)
+            self.execmd(cmd)
+
+        self.execmd('sort -u gprobs%s -o gprobs%s' %(chrom,chrom))
 
         cmd = 'comm -3 gprobs%s markers%s' %(chrom,chrom)
         i = int(os.popen('%s | wc -l' %(cmd)).read())
@@ -131,17 +119,21 @@ class main():
         d_index2pos = {}
         for line in lines:
             l = line.strip().split()
-            if l[0] != chrom: continue
+            if l[0] != chrom:
+                continue
             index = int(l[1])
             pos1 = int(l[2])
             pos2 = int(l[3])
             d_index2pos[index] = [pos1,pos2,]
-        fp_out = 'out_BEAGLE/%s.gprobs' %(chrom,)
+        fp_out = 'out_BEAGLE/%s.gprobs.gz' %(chrom,)
         for index in range(1,max(d_index2pos.keys())+1,):
-            fp_in = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index,)
-            if not os.path.isfile(fp_out):
-                cmd = 'head -n1 %s > %s' %(fp_in,fp_out,)
-                self.execmd(cmd)
+            fp_in = 'out_BEAGLE/%s/%s.%i.like.gprobs.gz' %(chrom,chrom,index,)
+            if index == 1:
+                if not os.path.isfile(fp_out):
+                    cmd = 'zcat %s | head -n1 | gzip > %s' %(fp_in,fp_out,)
+                    self.execmd(cmd)
+                else:
+                    break
             if index % 10 == 0:
                 print('BEAGLE_unite', chrom, index)
             if not os.path.isfile(fp_in):
@@ -149,34 +141,36 @@ class main():
                 stop
             pos1 = d_index2pos[index][0]
             pos2 = d_index2pos[index][1]
-            cmd = "awk 'NR>1{pos=int(substr($1,%i));" %(len(chrom)+2)
-            cmd += "if(pos>%i&&pos<=%i) print $0}'" %(
-                pos1,pos2,)
-            cmd += ' %s >> %s' %(fp_in,fp_out,)
+            cmd = 'zcat %s' %(fp_in)
+            cmd += " | awk 'NR>1{pos=int(substr($1,%i));" %(len(chrom)+2)
+            cmd += " if(pos>%i&&pos<=%i) print $0}'" %(pos1,pos2)
+            cmd += ' | gzip >> %s' %(fp_out,)
             self.execmd(cmd)
 
         return
 
 
-    def unite_BEAGLE(self,l_chroms,d_chrom_lens,):
+    def unite_BEAGLE(self, d_chrom_lens,):
 
         ##
         ## 1) check input existence
         ##
-        l_fp_in = self.BEAGLE_parse_output_files(l_chroms)
-        bool_exit = self.check_in('BEAGLE',l_fp_in,'BEAGLE.touch')
+        l_fp_in = self.BEAGLE_parse_output_files()
+        if self.check_in('BEAGLE', l_fp_in, 'touch/BEAGLE.touch'):
+            sys.exit()
 
-        for chrom in l_chroms:
+        for chrom in self.chroms:
             print(chrom)
-            fp = 'out_BEAGLE/%s.gprobs' %(chrom)
-            if os.path.isfile(fp): continue
+            fp = 'out_BEAGLE/%s.gprobs.gz' %(chrom)
+            if os.path.isfile(fp):
+                continue
             self.BEAGLE_fileIO_checks(chrom)
             self.BEAGLE_unite(chrom)
 
         return
 
 
-    def BEAGLE_parse_output_files(self,l_chroms,):
+    def BEAGLE_parse_output_files(self,):
 
         ## open file
         fd = open('BEAGLE_divide_indexes.txt','r')
@@ -189,16 +183,18 @@ class main():
         for line in lines:
             l = line.strip().split()
             chrom = l[0]
-            if not chrom in l_chroms: continue
+            if not chrom in self.chroms: continue
             index = int(l[1])
             fp_in = 'out_BEAGLE/%s/' %(chrom,)
-            fp_in += '%s.%i.like.gprobs' %(chrom,index,)
+            fp_in += '%s.%i.like.gprobs.gz' %(chrom,index,)
             l_fp_in += [fp_in]
 
         return l_fp_in
 
 
     def write_shell(self,fp,lines,):
+
+        self.mkdir(fp)
 
         if type(lines) != list:
             print(type(lines))
@@ -223,10 +219,10 @@ class main():
         return pos_ref, A_ref, B_ref
 
 
-    def BEAGLE_divide(self,l_chroms,):
+    def BEAGLE_divide(self,):
 
         d_indexes = {}
-        for chrom in l_chroms:
+        for chrom in self.chroms:
             d_indexes[chrom] = {}
 
         ## parse the input tranches file describing where to cut the data
@@ -235,6 +231,10 @@ class main():
 
         ## open the recal file
         fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.SNP.recal'
+
+        for vcf in glob.glob('out_UnifiedGenotyper/*.vcf.gz'):
+            assert os.path.getmtime(vcf) < os.path.getmtime(fp_recal)
+
         with open(fp_recal,'r') as fd_recal:
 
             ## loop over the raw input variants to be recalibrated
@@ -243,7 +243,9 @@ class main():
             else:
                 path = 'out_UnifiedGenotyper'
 
-            for chrom in l_chroms:
+            for chrom in self.chroms:
+                if int(chrom) != 16: continue ## tmp!!!
+                print('chrom %s' %(chrom), flush=True)
                 s = '%s/%s.*.vcf.gz' %(path,chrom,)
                 l_files = glob.glob(s)
                 if len(l_files) == 0:
@@ -306,23 +308,56 @@ class main():
                 continue
 
             ## skip LowQual
-            if l_vcf[6] == 'LowQual': continue
+            if l_vcf[6] == 'LowQual':
+                continue
 
 ##            ## skip QUAL=.
 ##            if l_vcf[5] == '.': continue
 
-            ## read equivalent VR line
-            while True:
-                line_recal = fd_recal.readline()
-                if line_recal[0] != '#':
-                    break
+            if not 'line_recal' in locals(): ## tmp!!!
+                ## read equivalent VR line
+                while True:
+                    line_recal = fd_recal.readline()
+                    if line_recal[0] != '#':
+                        break
 
             ## skip non-diallelic SNPs
             if bool_diallelic == False:
                 continue
 
-            ## skip if VQSLOD value below threshold
+            ## Parse VQSLOD value from recal file.
             VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
+
+            ## tmp!!! temporary!!! TEMPORARY!!! temp!!!!!!!!!
+            try:
+                x = int(l_recal[0])
+            except:
+                return
+            if int(l_vcf[0]) < int(l_recal[0]):
+                print('a', l_recal[:2],l_vcf[:2])
+                continue
+            while int(l_recal[0]) < int(l_vcf[0]):
+                line_recal = fd_recal.readline()
+                VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
+            if int(l_vcf[1]) < int(l_recal[1]):
+                print('c', l_recal[:2],l_vcf[:2])
+                continue
+            while int(l_recal[1]) < int(l_vcf[1]):
+                print('d', l_recal[:2],l_vcf[:2])
+                line_recal = fd_recal.readline()
+                VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
+##            if int(l_vcf[1]) < int(l_recal[1]): ## 16.5 tmp!!!
+##                print('e', l_recal[:2],l_vcf[:2])
+##                continue
+
+            ## Assert that position in recal and vcf file are identical.
+            try:
+                assert int(l_recal[1]) == int(l_vcf[1])
+            except:
+                print(line_recal)
+                print(line_vcf)
+                stop
+            ## Skip if VQSLOD value below threshold.
             if VQSLOD < minVQSLOD:
                 continue
 
@@ -688,7 +723,10 @@ class main():
                 if bool_append_markphas == True:
                     line_m = fd_markers.readline()
                     line_p = fd_phased.readline()
-                    pos_ref, A_ref, B_ref = self.parse_marker(line_m)
+                    if line_m:
+                        pos_ref, A_ref, B_ref = self.parse_marker(line_m)
+                    else:
+                        bool_append_markphas = False
 
                 ## continue loop over genotype likelihoods
                 continue
@@ -742,13 +780,16 @@ class main():
         with open('summaryVR.txt','a') as file_summary:
             file_summary.write('%s %i\n' %(chrom,cnt_variants))
 ##        print('%s %i\n' %(chrom,cnt_variants),file='summaryVR.txt')
+
+        ##
+        ## file i/o checks
+        ##
+##        self.BEAGLE_divide_fileIO_checks(chrom,fp_phased,)
     
         return d_index2pos
 
 
     def hook_compressed_text(self, filename, mode):
-
-        ##http://stackoverflow.com/questions/21529163/python-gzipped-fileinput-returns-binary-string-instead-of-text-string/21529243
 
         ext = os.path.splitext(filename)[1]
         if ext == '.gz':
@@ -760,6 +801,8 @@ class main():
 
 
     def vcf2beagle(self,l_vcf):
+
+        ## this function is very slow; especially split, sum and pow
 
         ## append chrom:pos alleleA alleleB
         line_beagle = '%s:%s %s %s' %(l_vcf[0],l_vcf[1],l_vcf[3],l_vcf[4],)
@@ -829,6 +872,8 @@ class main():
 
     def BEAGLE_divide_fileIO_checks(self,chrom,fp_phased,):
 
+        '''Compare VR out and BEAGLE in'''
+
         cmd = 'cat %s' %(fp_phased)
         cmd += "| awk 'NR>1{print $2}' | sort -u > panel0in%s" %(chrom)
         self.execmd(cmd)
@@ -837,8 +882,23 @@ class main():
         cmd += "| sort -u > panel0out%s" %(chrom)
         self.execmd(cmd)
 
+        fp_tranches = 'out_VariantRecalibrator/VariantRecalibrator.SNP.tranches'
         minVQSLOD = self.parse_minVQSLOD(fp_tranches,self.ts_filter_level,)
         fp_recal = 'out_VariantRecalibrator/VariantRecalibrator.SNP.recal'
+
+##        with contextlib.ExitStack() as stack:
+##            fd_recal = stack.enter_context(open(fp_recal))
+##            fd_out = stack.enter_context(open('panel2in%s' %(chrom),'w'))
+##            fd_UG = stack.enter_context(fileinput.fileinput(files_sorted))
+##            l_files = self.sort_nicely(
+##                glob.glob('out_UnifiedGenotyper/%s.*.vcf.gz' %(chrom)))
+##            assert len(l_files) > 0
+##                l_files_sorted = self.sort_nicely(l_files)
+##            fd_vcf = fileinput.input(
+##                files=l_files,openhook=self.hook_compressed_text)
+##            for l_vcf in self.generate_line_vcf_PASS_split(
+##                fd_vcf,fd_recal,minVQSLOD,))
+
         with open(fp_recal,'r') as fd_recal, open('panel2in%s' %(chrom),'w') as fd_out:
             for line in fd_recal:
                 if line[0] == '#': continue
@@ -848,6 +908,7 @@ class main():
                 ## slow conversion to integer just to make sure it is an integer
                 pos = int(l_recal[1])
                 fd_out.write('%s:%i\n' %(chrom,pos))
+        self.execmd('sort panel2in%s -o panel2in%s' %(chrom,chrom))
 
         cmd = "awk 'FNR>1{print $1}' in_BEAGLE/%s/%s.*.like" %(chrom,chrom)
         cmd += ' | sort -u > panel2out%s' %(chrom)
@@ -982,7 +1043,7 @@ class main():
         return pos_term1
 
 
-    def BEAGLE(self,l_chroms,d_chrom_lens,):
+    def BEAGLE(self,d_chrom_lens,):
 
         ## http://faculty.washington.edu/browning/beagle/beagle_3.3.2_31Oct11.pdf
 
@@ -996,7 +1057,8 @@ class main():
         ## with default BEAGLE options,
         ## memory usage increases with the number of markers."
         ## but not bloody linear...
-        memMB = 3900
+        memMB = 3900 ## 100 samples
+        memMB = 4900 ## 320 samples
         ## fgrep CPU */stdout/BEAGLE/*.out | sort -k5nr,5 | head -n1
         ## zulu_20121208/stdout/BEAGLE/BEAGLE.19.1.out:    CPU time   :  80270.55 sec.
         queue = 'long'
@@ -1007,9 +1069,11 @@ class main():
         mode = 'SNP'
         fp_in_recal = 'out_VariantRecalibrator/VariantRecalibrator.%s.recal' %(mode)
         fp_in_tranches = 'out_VariantRecalibrator/VariantRecalibrator.%s.tranches' %(mode)
-        bool_exit = self.check_in(
+        if self.check_in(
             'VariantRecalibrator',[fp_in_recal,fp_in_tranches,],
-            'VariantRecalibrator.SNP.touch')
+            'touch/VariantRecalibrator.SNP.touch'):
+            sys.exit()
+        stoptmp
 
         ##
         ## 2) touch
@@ -1032,7 +1096,7 @@ class main():
             and
             os.path.isdir('in_BEAGLE')
             ):
-            d_indexes = self.BEAGLE_divide(l_chroms)
+            d_indexes = self.BEAGLE_divide()
             s = ''
             for chrom,d_index2pos in d_indexes.items():
                 for index,[pos1,pos2,] in d_index2pos.items():
@@ -1043,7 +1107,7 @@ class main():
         else:
             print('BEAGLE_divide_indexes.txt exists')
             d_indexes = {}
-            for chrom in l_chroms:
+            for chrom in self.chroms:
                 d_indexes[chrom] = {}
             fd = open('BEAGLE_divide_indexes.txt','r')
             lines = fd.readlines()
@@ -1051,29 +1115,46 @@ class main():
             for line in lines:
                 l = line.strip().split()
                 chrom = l[0]
-                if not chrom in l_chroms: continue
+                if not chrom in self.chroms:
+                    continue
                 index = int(l[1])
                 pos1 = int(l[2])
                 pos2 = int(l[3])
                 d_indexes[chrom][index] = [pos1,pos2,]
+                continue
+            pass
 
         ##
         ## execute shell script
         ##
-        for chrom in l_chroms:
+        for chrom in self.chroms:
 
             print('bsub BEAGLE %s' %(chrom))
 
 ##            J = '%s%s[%i-%i]' %('BEAGLE',chrom,1,max(d_indexes[chrom].keys()),)
             for index in d_indexes[chrom].keys():
-                fn_out = 'out_BEAGLE/%s/%s.%i.like.gprobs' %(chrom,chrom,index)
+
+                ## finished?
+                fn_out = 'out_BEAGLE/%s/%s.%i.like.gprobs.gz' %(
+                    chrom,chrom,index)
                 if os.path.isfile(fn_out):
                     continue
+
+                ## started?
+                fn = 'LSF/BEAGLE/%s.%i.out' %(chrom,index)
+                if os.path.isfile(fn):
+                    if os.path.getsize(fn):
+                        with open(fn) as f:
+                            if 'iteration' in f.readlines()[-1]:
+                                continue
+
+                print(chrom,index)
+
                 J = '%s.%s[%s-%s]' %('BEAGLE',chrom,index,index,)
-                std_suffix = '%s/%s.%%I' %('BEAGLE',chrom)
+                LSF_affix = '%s/%s.%%I' %('BEAGLE',chrom)
                 cmd = self.bsub_cmd(
-                    'BEAGLE',J,memMB=memMB,std_suffix=std_suffix,chrom=chrom,
-                    queue=queue,)
+                    'BEAGLE', J, memMB=memMB, LSF_affix=LSF_affix,
+                    chrom=chrom, queue=queue,)
                 os.system(cmd)
 
         return
@@ -1086,14 +1167,14 @@ class main():
         s += ' -Xmx%im' %(memMB)
         if bool_checkpoint:
             s += ' -XX:-UsePerfData -Xrs '
-        s += ' -jar %s' %(jar)
+        s += ' \\\n -jar %s' %(jar)
 
         return s
 
 
     def BEAGLE_write_shell_script(self,memMB,):
 
-        fp_out = self.d_out['BEAGLE']
+        fp_out = 'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.like'
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -1101,7 +1182,7 @@ class main():
         ## parse chromosome from command line
         lines += ['CHROMOSOME=$1\n']
 
-        lines += ['if [ -s %s.gprobs ]; then\nexit\nfi\n' %(fp_out)] ## redundant
+        lines += ['if [ -s %s.gprobs.gz ]; then exit; fi\n' %(fp_out)] ## redundant
 
 ##        ## init cmd
 ##        lines += ['cmd="']
@@ -1115,7 +1196,7 @@ class main():
         lines += self.body_BEAGLE(fp_out,)
 
         ## term cmd
-        lines += self.term_cmd('BEAGLE',['%s.gprobs' %(fp_out)],)
+        lines += self.term_cmd('BEAGLE',['%s.gprobs.gz' %(fp_out)],)
 
         ## write shell script
         self.write_shell('shell/BEAGLE.sh',lines,)
@@ -1189,7 +1270,7 @@ class main():
         d_chrom_lens = {}
 
         ## 1000G chromosome ranges
-        fn = '%s.fai' %(self.ref)
+        fn = '%s.fai' %(self.reference_sequence)
         fd = open(fn)
         lines = fd.readlines()
         fd.close()
@@ -1207,44 +1288,7 @@ class main():
         return d_chrom_lens
 
 
-    def mkdirs(self,l_chroms,):
-
-        l_dn = [
-            'touch',
-            'LSF',
-            'shell',
-            'out_UnifiedGenotyper',
-            'out_VariantRecalibrator',
-            'in_BEAGLE','out_BEAGLE',
-            ]
-
-        ## create subdirs
-        for dn in l_dn:
-            if not os.path.isdir(dn) and not os.path.islink(dn):
-                os.mkdir(dn)
-            if dn != 'touch' and (dn[:4] == 'out_' or dn[:3] == 'in_'):
-                if not os.path.isdir(os.path.join('touch',dn)):
-                    os.mkdir(os.path.join('touch',dn))
-        for dn in l_dn:
-            if dn[:3] != 'out': continue
-            if not os.path.isdir('LSF/%s' %(dn[4:],)):
-                os.mkdir('LSF/%s' %(dn[4:],))
-
-        for chrom in l_chroms:
-            for dn in ['in_BEAGLE','out_BEAGLE',]:
-                if not os.path.isdir('%s/%s' %(dn,chrom)):
-                    os.mkdir('%s/%s' %(dn,chrom))
-                if not os.path.isdir('touch/%s/%s' %(dn,chrom)):
-                    os.mkdir('touch/%s/%s' %(dn,chrom))
-
-        ## java (i.e. BEAGLE) tmp dir
-        if not os.path.isdir('tmp'):
-            os.mkdir('tmp')
-
-        return l_dn
-
-
-    def check_in(self,analysis_type,l_fp_in,fp_touch,):
+    def check_in(self, analysis_type, l_fp_in, fp_touch,):
 
         d_l_fp_out = {}
         
@@ -1253,21 +1297,26 @@ class main():
         l_fp_out = s.split('\n')
         d_l_fp_out['touch'] = l_fp_out
 
-##        for dirname in ['','touch',]:
+        ## todo: use os.walk here instead...
         for dirname in ['',]:
             d_l_fp_out[dirname] = []
             l = os.listdir(os.path.join(dirname,'out_%s' %(analysis_type)))
             for s in l:
                 path1 = os.path.join('out_%s' %(analysis_type),s)
                 path2 = os.path.join(dirname,path1)
-                ## append files in chromosomal subdirectories (e.g. BEAGLE)
+                ## append files in chromosomal subdirectories
                 if os.path.isdir(path2):
                     l = os.listdir(path2)
                     for fn in l:
                         d_l_fp_out[dirname] += [os.path.join(path1,fn)]
-                ## append files in main dir (e.g. UnifiedGenotyper)
+                ## append files in main dir
                 elif os.path.isfile(path2):
                     d_l_fp_out[dirname] += [path1]
+                else:
+                    print(path2)
+                    print(os.path.realpath(path2))
+                    print(os.path.isfile(os.path.realpath(path2)))
+                    stop_not_expected
 
         bool_exit = False
         for dirname,l_fp_out in d_l_fp_out.items():
@@ -1276,91 +1325,195 @@ class main():
                     list(set(l_fp_in)-set(l_fp_out))[0],
                     len(set(l_fp_in)-set(l_fp_out))-1,))
                 print('dirname', dirname)
-##                for fp in list(set(l_fp_in)-set(l_fp_out)):
-##                    os.system('touch touch/%s' %(fp))
-##                    os.system('touch %s' %(fp))
-##                if dirname == 'touch':
-##                    for fp in list(set(l_fp_in)-set(l_fp_out)):
-##                        if os.path.isfile('%s' %(fp)):
-##                            os.system('touch touch/%s' %(fp))
-##                stop
                 print('%s has not run to completion. Exiting.' %(analysis_type))
                 bool_exit = True
 #                print(inspect.stack()[1])
-                sys.exit()
+##                sys.exit()
 
         return bool_exit
 
 
-    def determine_TS_level(self,fp_tranches,):
+    def CombineGVCFs(self):
 
-        cmd = 'ts_filter_level=$('
-        ## loop over lines
-        cmd += 'cat %s' %(fp_tranches)
-        ## init awk
-        cmd += " | awk '"
-        ## BEGIN
-        cmd += ' BEGIN{FS=","}'
-        ## skip header and loop over rows
-        cmd += ' NR>3{'
-        ## if below novelTiTv ratio
-        cmd += ' if($5<2.1) {'
-        ## if first line
-        cmd += ' if(NR==4) {print $1; exit}'
-        ## else if not first line
-        cmd += ' else {'
-        cmd += ' novelTiTv2=$5; targetTruthSensitivity2=$1;'
-        cmd += ' dy=(novelTiTv2-novelTiTv1);'
-        cmd += ' dx=(targetTruthSensitivity2-targetTruthSensitivity1);'
-        cmd += ' slope=dy/dx;'
-        cmd += ' intercept=novelTiTv1-slope*targetTruthSensitivity1;'
-        cmd += ' print (2.1-intercept)/slope; exit}'
-        ## else if above novelTiTv ratio
-        cmd += ' } else {targetTruthSensitivity1=$1;novelTiTv1=$5}'
-        ## continue loop over rows
-        cmd += ' }'
-        ## term awk
-        cmd += " '"
-        cmd += ')'
+        '''Merge gVCFs prior to GenotypeGVCFs'''
 
-        return cmd
+        analysis_type = T = 'CombineGVCFs'
+        memMB = 15900
+        queue = 'long'
+
+        ## 1) check input existence / check that previous jobs finished
+        l_vcfs_in = [
+            'out_HaplotypeCaller/%s.vcf.gz' %(
+                os.path.splitext(os.path.basename(bam))[0])
+            for bam in sorted(self.bams)]
+        if self.check_in(
+            'HaplotypeCaller', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
+            'touch/HaplotypeCaller.touch'):
+            sys.exit()
+
+        ## write shell script
+        self.shell_CombineGVCFs(T, memMB)
+
+        for chrom in self.chroms:
+
+            ## 2) check output existence / check that job did not start
+            if self.touch('%s.%s' %(analysis_type, chrom)):
+                return
+
+            self.mkdir('lists')
+            l_combined = []
+            for fn_list in glob.glob('lists/CombineGVCFs.%s.*.list' %(chrom)):
+                with open(fn_list) as f:
+                    l_combined += f.read().rstrip().split('\n')
+
+            l_vcfs_in = list(sorted(list(set(l_vcfs_in)-set(l_combined))))
+
+            for i, vcf in enumerate(
+                l_vcfs_in,
+                self.gVCF_limit*len(glob.glob(
+                    'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                if i%self.gVCF_limit == 0:
+                    fn_out = 'lists/CombineGVCFs.{chrom}.{i}.list'.format(
+                        chrom=chrom, i=i//self.gVCF_limit)
+                    assert not os.path.isfile(fn_out)
+                    fd_out = open(fn_out, 'w')
+                fd_out.write('{}\n'.format(vcf))
+            fd_out.close()
+
+            self.mkdir('LSF/%s' %(T))
+            for i in range(len(glob.glob(
+                'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                ## skip if job initiated
+                if os.path.isfile('out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)):
+                    continue
+                cmd = self.bsub_cmd(
+                    T, 'CgVCFs.{}.{}'.format(chrom, i),
+                    memMB=memMB, queue=queue,
+                    LSF_affix = '%s/%s.%s' %(T, chrom, i)
+                    )
+                cmd += ' {} {}'.format(chrom, i)
+                self.execmd(cmd)
+
+        return
 
 
-    def VR_get_fps_in(self,l_chroms,d_chrom_lens,bps_per_interval,):
+    def shell_CombineGVCFs(self, T, memMB):
 
-        l_vcfs_in = []
-        for chrom in l_chroms:
-            intervals = int(math.ceil(
-                d_chrom_lens[chrom]/float(bps_per_interval)))
-            for interval in range(1,intervals+1,):
-                fp_in = 'out_%s/%s.%i.vcf.gz' %(
-                    'UnifiedGenotyper',chrom,interval,)
-##                if os.path.isfile(fp_in):
-##                    if os.path.getsize(fp_in) == 0:
-##                        continue
-                l_vcfs_in += [fp_in]
+        lines = ['#!/bin/bash\n']
+        lines += ['chrom=$1']
+        lines += ['i=$2']
+        lines += ['out=out_CombineGVCFs/$chrom.$i.vcf.gz']
+        lines += ['## exit if job started']
+        lines += ['if [ -s $out ]; then exit; fi\n']
+        ## make output directory
+        lines += ['mkdir -p $(dirname $out)\n']
 
-        return l_vcfs_in
+        lines += self.init_GATK_cmd(T, memMB,)
+        lines += [' -L $chrom \\']
+        lines += [' -V lists/CombineGVCFs.$i.list \\']
+        lines += [' -o $out \\']
+
+        ## terminate shell script
+        lines += self.term_cmd(T, ['$out.tbi'],)
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(T), lines,)
+
+        return
 
 
-    def VariantRecalibrator(self,l_chroms,d_chrom_lens):
+    def GenotypeGVCFs(self):
+
+        '''Convert gVCFs to VCFs'''
+
+        analysis_type = T = 'GenotypeGVCFs'
+        memMB = 7900
+        queue = 'basement'
+
+        ## write shell script
+        self.shell_GenotypeGVCFs(T, memMB)
+        self.mkdir('LSF/%s' %(T))
+
+        for chrom in self.chroms:
+
+            ## 1) check input existence / check that previous jobs finished
+            l_vcfs_in = [
+                'out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)
+                for i in range(len(self.bams)//split+1)]
+            if self.check_in(
+                'CombineGVCFs', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
+                'touch/CombineGVCFs.touch'):
+                ## continue loop over chromosomes
+                continue
+
+            ## 2) check output existence / check that job did not start
+            if self.touch('%s.%s' %(analysis_type, chrom)):
+                continue
+        
+            self.mkdir('lists')
+            with open(
+                'lists/GenotypeGVCFs.{chrom}.list'.format(
+                    chrom=chrom), 'w') as f:
+                for vcf in l_vcfs_in:
+                    f.write('{}\n'.format(vcf))
+
+                cmd = self.bsub_cmd(
+                    T, 'GgVCFs.{}'.format(chrom),
+                    memMB=memMB, queue=queue,
+                    LSF_affix = '%s/%s' %(T, chrom)
+                    )
+                cmd += ' {}'.format(chrom)
+                self.execmd(cmd)
+
+        return
+
+
+    def shell_GenotypeGVCFs(self, T, memMB):
+
+        lines = ['#!/bin/bash\n']
+        lines += ['chrom=$1']
+        lines += ['out=out_GenotypeGVCFs/$chrom.vcf.gz']
+        lines += ['## exit if job started']
+        lines += ['if [ -s $out ]; then exit; fi\n']
+        lines += ['## exit if job finished']
+        lines += ['if [ -s $out.tbi ]; then exit; fi\n']
+        ## make output directory
+        lines += ['mkdir -p $(dirname $out)\n']
+
+        lines += self.init_GATK_cmd(T, memMB,)
+        lines += [' -L $chrom \\']
+        lines += [' -V lists/{}.$chrom.list \\'.format(T)]
+        lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
+
+        ## terminate shell script
+        lines += self.term_cmd(T, ['$out.tbi'])
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(T), lines,)
+
+        return
+
+
+    def VariantRecalibrator(self,d_chrom_lens):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
         T = analysis_type = 'VariantRecalibrator'
-        memMB = 20900 ## uganda4x_zulu4x_ethiopia4x_NA12878_NA19240    Max Memory :             19606 MB
+        memMB = 20900
         queue = 'yesterday'
         num_threads = 4
 
         ##
         ## 1) check input existence (vcf)
         ##
-        l_vcfs_in = self.VR_get_fps_in(
-            l_chroms,d_chrom_lens,self.i_UG_or_HC_size,)
-        bool_exit = self.check_in(
-            'UnifiedGenotyper',l_vcfs_in,'UnifiedGenotyper.touch')
-        if bool_exit == True:
+        l_vcfs_in = [
+            'out_HaplotypeCaller/%s.vcf.gz' %(
+                os.path.splitext(os.path.basename(bam))[0])
+            for bam in self.bams]
+        if self.check_in(
+            'HaplotypeCaller',l_vcfs_in, 'touch/HaplotypeCaller.touch'):
             sys.exit(0)
+        stop1
 
         d_resources = {'SNP':self.fp_resources_SNP,'INDEL':self.fp_resources_INDEL,}
 
@@ -1410,8 +1563,6 @@ class main():
             ##
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
             lines += [' --mode %s \\' %(mode)]
-##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--target_titv
-##            lines += [' --target_titv 2.15 \\'] ## default 2.15
 
             ## http://gatkforums.broadinstitute.org/discussion/1259/what-vqsr-training-sets-arguments-should-i-use-for-my-specific-project
             if mode == 'INDEL':
@@ -1451,309 +1602,212 @@ class main():
             J = 'VR.%s' %(mode)
             cmd = self.bsub_cmd(
                 '%s.%s' %(analysis_type,mode), J, memMB=memMB, queue=queue,
-                std_suffix='%s/%s' %(analysis_type,mode,),
+                LSF_affix='%s/%s' %(analysis_type,mode,),
                 num_threads = num_threads)
             self.execmd(cmd)
 
         return
 
 
-    def init_GATK_cmd(self,analysis_type,memMB,bool_checkpoint=False):
-
-##        s = 'cmd="'
-        s = ''
-        ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
-        ## http://www.broadinstitute.org/gatk/guide/article?id=2846
-        if '2.7' in self.fp_GATK or '2.6' in self.fp_GATK or '2.8' in self.fp_GATK or 'nc6' in self.fp_GATK or '3.0' in self.fp_GATK:
-            java = '/software/team149/opt/jre1.7.0_45/bin/java' ## get rid of this explicit path...
-        elif '2.5' in self.fp_GATK:
-            java = 'java'  # 1.6
-        else:
-            print('unknown GATK version for %s' %(analysis_type))
-            print(self.fp_GATK)
-            sys.exit()
-        s_java = self.init_java(
-            self.fp_GATK, memMB, java=java, bool_checkpoint=bool_checkpoint)
-        s += ' %s \\' %(s_java)
-        lines = [s]
-
-        ## CommandLineGATK, required, in
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--analysis_type
-        lines += [' --analysis_type %s \\' %(analysis_type)]
-        ## CommandLineGATK, optional, in
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
-        lines += [' --reference_sequence %s \\' %(self.ref)]
-
-        return lines
-
-
     def touch(self,analysis_type):
 
         bool_return = False
-        fn_touch = '%s.touch' %(analysis_type)
+        fn_touch = 'touch/%s.touch' %(analysis_type)
         if os.path.isfile(fn_touch):
-                if self.verbose == True:
-                    print('in progress or completed:', analysis_type)
-                bool_return = True
+            if self.verbose == True:
+                print('in progress or completed:', analysis_type)
+            bool_return = True
         else:
             self.execmd('touch %s' %(fn_touch))
 
         return bool_return
 
 
-    def UnifiedGenotyper(self,l_chroms,d_chrom_lens,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
-
-        T = analysis_type = 'UnifiedGenotyper'
-        ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
-        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
-##        queue = 'normal'
-        ## ../ethiopia8x/stdout/UnifiedGenotyper/UnifiedGenotyper.1.7.out:    CPU time   :  63554.28 sec.
-        queue = 'long'
-        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
-        if self.project == 'ug2g':
-            ## LSF/UnifiedGenotyper/UnifiedGenotyper.22.3.out:    Max Memory :             12075 MB
-            ## LSF/UnifiedGenotyper/UnifiedGenotyper.22.6.out:    Max Memory :             8817 MB
-            memMB = 12900 ## tmp!!!
-            queue = 'yesterday'
-            queue = 'long'
-            queue = 'basement'
-            queue = 'small'
-            queue = 'normal'
-        else:
-            memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
-            memMB = 3900 ## more than 3900 if 322 samples for fragment 16.5
-
-        if self.fp_intervals:
-            memMB += 2000
-
-        ##
-        ## 1) touch
-        ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
-
-        fp_out = self.d_out[analysis_type]
-
-        ## initiate shell script
-        lines = ['#!/bin/bash']
-
-        ## commands prior to GATK command
-        lines += self.init_UG_or_HC(
-            l_chroms,d_chrom_lens,analysis_type)
-
-        ## initiate GATK command
-        lines += self.init_GATK_cmd(
-            'UnifiedGenotyper',memMB,bool_checkpoint=self.bool_checkpoint,)
-
-        ## append GATK command options
-        lines += self.body_UnifiedGenotyper(fp_out,)
-
-        ## terminate shell script
-        lines += self.term_cmd(
-            analysis_type,[fp_out],extra='tabix -p vcf %s' %(fp_out))
-
-        ## write shell script
-        self.write_shell('shell/UnifiedGenotyper.sh',lines,)
-
-##        ## execute shell script
-##        for chrom in l_chroms:
-##            intervals = int(math.ceil(
-##                d_chrom_lens[chrom]/float(self.i_UG_or_HC_size)))
-##            J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
-##            std_suffix = '%s/%s.%s.%%I' %(T,T,chrom)
-##            cmd = self.bsub_cmd(
-##                analysis_type,J,std_suffix=std_suffix,chrom=chrom,
-##                memMB=memMB,queue=queue,
-##                bool_checkpoint=bool_checkpoint)
-##            self.execmd(cmd)
-
-        if self.bool_checkpoint:
-            self.write_brestart()
-
-        ## execute shell script
-        for chrom in l_chroms:
-            for i in range(
-                1,1+math.ceil(d_chrom_lens[chrom]/float(self.i_UG_or_HC_size))):
-                J = '%s%s.%i' %('UG',chrom,i,)
-                std_suffix = '%s/%s.%i' %(T,chrom,i)
-                cmd = self.bsub_cmd(
-                    analysis_type,J,std_suffix=std_suffix,chrom=chrom,
-                    memMB=memMB,queue=queue,
-                    bool_checkpoint=self.bool_checkpoint, index=i)
-                if self.bool_checkpoint:
-                    s = subprocess.check_output(cmd, shell=True).decode()
-                    print(s)
-                    jobID = int(re.match('.*?<(.*?)>',s).group(1))
-                    cmd = 'bash brestart.sh %i %s %i' %(
-                        jobID,self.project,memMB)
-                    sts = subprocess.call(
-                        'bsub -G %s -q small -w "ended(%i)" %s' %(
-                            self.project,jobID,cmd), shell=True)
-                else:
-                    self.execmd(cmd)
-
-        return
-
-
     def write_brestart(self,):
 
         with open('brestart.sh','w') as f:
             f.write('sleep 30\n')
+            f.write("IFS=$'\\n'\n")
             f.write('jobID=$1\n')
             f.write('project=$2\n')
-            f.write('memMB=$3\n')
-            f.write('i=$(bhist -l $jobID | fgrep TERM_RUNLIMIT | wc -l)\n') ## exit code 140
-            f.write('j=$(bhist -l $jobID | fgrep "Exited with exit code 16" | wc -l)\n')
-            f.write('if [ $i -eq 0 -a $j -eq 0 ]; then exit; fi\n')
-            f.write('s=$(brestart -G $project -M $memMB checkpoint/$jobID)\n')
+            f.write('memMB=$3\necho memMB $memMB\n')
+            f.write('pwd=$(pwd)\n')
+            f.write('bhist=$(bhist -l $jobID)\n')
+            f.write('i=$(echo $bhist | fgrep TERM_RUNLIMIT | wc -l)\n') ## exit code 140, run limit
+            f.write('j=$(echo $bhist | fgrep "Exited with exit code 16" | wc -l)\n') ## exit code 16, pid taken
+            f.write('k=$(echo $bhist | fgrep "Checkpoint failed" | wc -l)\n')
+            f.write('l=$(echo $bhist | fgrep "Done successfully" | wc -l)\n')
+            f.write('if [ $l -eq 0 ]; then\n')
+            f.write('if [ $i -eq 0 -a $j -eq 0 -a $k -eq 0 ]; then echo $bhist >> bhist_unexpectederror_or_success.tmp; exit; fi\n')
+            f.write('fi\n')
+            f.write('s=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
+            f.write('echo s $s\n')
+            f.write('if [ $k -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
-            f.write('bsub -G $project -q small -w "ended($jobID)" bash brestart.sh $jobID $project $memMB')
+            f.write('echo jobID $jobID\n')
+            f.write('echo memMB $memMB\n')
+#            f.write("bsub -R 'select[mem>900] rusage[mem=900]' -M900 \\\n")
+            f.write("bsub -R 'select[mem>'$memMB'] rusage[mem='$memMB']' -M$memMB \\\n")
+            f.write(' -o tmp_brestart2.out -e tmp_brestart2.err \\\n')
+            f.write(' -G $project -q normal -w "ended($jobID)" \\\n')
+            f.write(' bash brestart.sh $jobID $project $memMB\n')
 
         return
 
 
-    def HaplotypeCaller(self,l_chroms,d_chrom_lens,):
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html
+    def HaplotypeCaller(self,d_chrom_lens,):
 
         T = analysis_type = 'HaplotypeCaller'
-        ## fula_20120704/stdout/UnifiedGenotyper.16.9.out:    CPU time   :   9420.62 sec.
-        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.10.12.out:    CPU time   :  12106.00 sec.
-##        queue = 'normal'
-        ## ../ethiopia8x/stdout/UnifiedGenotyper/UnifiedGenotyper.1.7.out:    CPU time   :  63554.28 sec.
         queue = 'long'
-        ## zulu_20121208/stdout/UnifiedGenotyper/UnifiedGenotyper.16.5.out:    Max Memory :      2030 MB
-        if self.fp_intervals:
-            memMB = 5900
-        else:
-            memMB = 2900 ## 2600 if 250 samples at 4x (helic), 2100 if 120 samples at 4x or 8x (ethiopia) ## 1900=2000-default
-            memMB = 3900
+        memMB = 3900
+#        queue = 'basement'
 
-        ##
-        ## 1) touch
-        ##
-        bool_return = self.touch(analysis_type)
-        if bool_return == True: return
+        ## 1) touch/lock
+        if self.touch(analysis_type):
+            return
 
-        fp_out = self.d_out[analysis_type]
+        ## 2) write shell script
+        self.shell_HC(analysis_type, memMB)
 
-        ## initiate shell script
-        lines = ['#!/bin/bash']
+        ## Create folders.
+        self.mkdir('LSF/%s' %(T))
+        self.mkdir('out_HaplotypeCaller/')
+        self.mkdir('touch/HaplotypeCaller/')
+        self.mkdir('tmp/')
 
-        ## commands prior to GATK command
-        lines += self.init_UG_or_HC(
-            l_chroms,d_chrom_le1ns,analysis_type)
+        ## 3) execute shell script
+        for bam in self.bams:
+            basename = os.path.splitext(os.path.basename(bam))[0]
 
-        ## initiate GATK command
-        lines += self.init_GATK_cmd(
-            analysis_type,memMB,bool_checkpoint=self.bool_checkpoint)
+            ## finished?
+            if os.path.isfile('out_HaplotypeCaller/%s.vcf.gz.tbi' %(basename)):
+                continue
 
-        ## append GATK command options
-##        lines += self.body_HaplotypeCaller(fp_out,)
-        lines += self.body_UnifiedGenotyper(fp_out,)
+            ## in progress?
+            pathLSF = 'LSF/HaplotypeCaller/%s' %(basename)
+            ## job finished
+            if os.path.isfile('out_%s/%s.vcf.gz.tbi' %(T, basename)):
+                continue
+            if os.path.isfile('%s.err' %(pathLSF)):
+                ## file changed within the past 5 minutes?
+                if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
+                    continue
+                os.remove('%s.err' %(pathLSF))
+            if os.path.isfile('%s.out' %(pathLSF)):
+                os.remove('%s.out' %(pathLSF))
 
-        ## terminate shell script
-        lines += self.term_cmd(analysis_type,[fp_out],)
-
-        ## write shell script
-        self.write_shell('shell/%s.sh' %(analysis_type),lines,)
-
-        ## execute shell script
-        for chrom in l_chroms:
-            intervals = int(math.ceil(
-                d_chrom_lens[chrom]/float(self.i_UG_or_HC_size)))
-            J = '%s%s[%i-%i]' %('UG',chrom,1,intervals,)
-            std_suffix = '%s/%s.%%I' %(T,chrom)
+            J = '%s %s' %('HC', basename)
+            LSF_affix = '%s/%s' %(T, basename)
             cmd = self.bsub_cmd(
-                analysis_type,J,std_suffix=std_suffix,chrom=chrom,
-                memMB=memMB,queue=queue,)
+                analysis_type, J, LSF_affix=LSF_affix,
+                memMB=memMB, queue=queue, num_threads=self.nct,
+                bam=bam)
             self.execmd(cmd)
 
         return
 
 
-    def bsub_cmd(
-        self,
-        analysis_type,
-        J,
-        queue='normal',memMB=4000,
-        std_suffix=None,
-        chrom=None,
-        chromlen=None,
-        index=None,
-        bool_checkpoint=False,
-        num_threads = None,
-        ):
+    def mkdir(self, path):
 
-        if not std_suffix:
-            std_suffix = '%s/%s' %(analysis_type,analysis_type,)
+        if not os.path.splitext(path)[1]:
+            dirname = path
+        else:
+            dirname = os.path.dirname(path)
+        if not os.path.isdir(dirname):
+            os.makedirs(dirname)
 
-        cmd = 'bsub -J"%s" -q %s' %(J,queue,)
-        cmd += ' -G %s' %(self.project)
-        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
-            memMB,memMB,memMB,)
-        cmd += ' -o %s/LSF/%s.out' %(os.getcwd(),std_suffix)
-        cmd += ' -e %s/LSF/%s.err' %(os.getcwd(),std_suffix)
-        if num_threads:
-            cmd += ' -n%i -R"span[hosts=1]"' %(num_threads)
-        if bool_checkpoint:
-            cmd += ' -k "%s method=blcr 710"' %(
-                os.path.join(os.getcwd(),'checkpoint'))
-            cmd += ' -r'
-        if bool_checkpoint:
-            cmd += ' cr_run'
-        cmd += ' bash %s/shell/%s.sh' %(os.getcwd(),analysis_type,)
-        if chrom != None:
-            cmd += ' %s' %(chrom)
-        if chromlen != None:
-            cmd += ' %s' %(chromlen)
-        if index != None:
-            cmd += ' %s' %(index)
-
-        return cmd
+        return
 
 
-    def body_UnifiedGenotyper(self,fp_out,):
+    def shell_HC(self, analysis_type, memMB):
+
+        lines = ['#!/bin/bash\n']
+        lines += ['BAM=$1']
+        lines += ['BAMBASENAME=$(basename $BAM | rev | cut -d "." -f2- | rev)']
+        lines += ['out=out_HaplotypeCaller/$BAMBASENAME.vcf.gz']
+##        ## exit if job started
+##        lines += ['if [ -s $out ]; then exit; fi\n']
+        ## exit if job finished
+        lines += ['if [ -s $out.tbi ]; then exit; fi\n']
+        ## make output directory
+        lines += ['mkdir -p $(dirname $out)\n']
+
+        ## initiate GATK command
+        lines += self.init_GATK_cmd(
+            analysis_type, memMB, bool_checkpoint=self.bool_checkpoint)
+
+        ## append GATK command options
+        lines += self.body_HaplotypeCaller()
+
+        ## terminate shell script
+##        lines += self.term_cmd(
+##            analysis_type, ['$out.tbi'], extra='tabix -p vcf $out')
+        lines += self.term_cmd(analysis_type, ['$out.tbi'])
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(analysis_type),lines,)
+
+        return
+
+
+    def body_HaplotypeCaller(self,):
+
+        '''Write GATK HaplotypeCaller specific command line arguments.'''
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html
 
         lines = []
 
         ##
-        ## required
+        ## Inherited arguments
         ##
-        ## File to which variants should be written
-        lines += [' --out %s \\' %(fp_out)]
 
-        ##
-        ## CommandLineGATK, optional
-        ##
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+        lines += [' --input_file $BAM \\']
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-        lines += [
-            ' --intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
-                self.i_UG_or_HC_size)]
-        if self.fp_intervals:
-            lines += [' --intervals %s \\' %(self.fp_intervals)]
+        if self.intervals:
+            lines += ['--intervals %s \\' %(self.intervals)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
-            lines += [' --interval_set_rule INTERSECTION \\']
+            lines += ['--interval_set_rule INTERSECTION \\']
+            pass
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
+        ## http://gatkforums.broadinstitute.org/discussion/3893/calling-variants-on-cohorts-of-samples-using-the-haplotypecaller-in-gvcf-mode
+        lines += [' --variant_index_parameter 128000 \\']
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_type
+        lines += [' --variant_index_type LINEAR \\']
 
         ##
-        ## UnifiedGenotyper, optional
+        ## Optional Inputs
         ##
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
+        if self.alleles:
+            lines += [' --alleles %s \\' %(self.alleles)]
+
         ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
-        ## Selecting an appropriate quality score threshold
-        ## A common question is the confidence score threshold
-        ## to use for variant detection. We recommend:
-        ## Deep (> 10x coverage per sample) data:
-        ## we recommend a minimum confidence score threshold of Q30.
-        ## Shallow (< 10x coverage per sample) data:
-        ## because variants have by necessity lower quality
-        ## with shallower coverage we recommend
-        ## a minimum confidence score of Q4 in projects
-        ## with 100 samples or fewer
-        ## and Q10 otherwise.
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
+        if self.dbsnp:
+            lines += [' --dbsnp %s \\' %(self.dbsnp)]
+
+        ##
+        ## Optional Outputs
+        ##
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
+        lines += [' --out $out \\']
+
+        ##
+        ## Optional Parameters
+        ##
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
+        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
         if self.coverage > 10:
             lines += [' -stand_call_conf 30 \\']
             lines += [' -stand_emit_conf 30 \\']
@@ -1765,25 +1819,16 @@ class main():
             stop
             lines += [' -stand_call_conf 4 \\']
             lines += [' -stand_emit_conf 4 \\']
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotype_likelihoods_model
-        lines += [' --genotype_likelihoods_model BOTH \\'] ## default value SNP
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
-        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
-        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
-        if self.fp_alleles:
-            if os.path.isdir(self.fp_alleles):
-                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf' %(self.fp_alleles)
-                lines += [' --alleles %s \\' %(s)]
-            elif os.path.isfile(self.fp_alleles):
-                lines += [' --alleles %s \\' %(self.fp_alleles)]
-            else:
-                print(self.fp_alleles, 'not found')
-                sys.exit()
 
+        ##
+        ## Advanced Parameters
+        ##
+        
         ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--annotation
         s_annotation = ''
-
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
         s_annotation += ' --annotation Coverage'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
         s_annotation += ' -A FisherStrand'
@@ -1796,125 +1841,97 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
         s_annotation += ' -A RMSMappingQuality'
         s_annotation += ' -A ReadPosRankSumTest'
-        lines += [s_annotation+' \\']
+        lines += [' %s \\' %(s_annotation)]
 
-        ##
-        ## append input files
-        ##
-        for bam in self.bams:
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-            lines += [' --input_file %s \\' %(bam)]
+        lines += [' --emitRefConfidence GVCF \\']
+
+        lines += ['\n']
 
         return lines
 
 
-##    def body_HaplotypeCaller(self,fp_out,):
-##
-##        lines = []
-##
-##        ##
-##        ## required
-##        ##
-##        ## File to which variants should be written
-##        lines += [' --out %s \\' %(fp_out)]
-##
-##        ##
-##        ## CommandLineGATK, optional
-##        ##
-##
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-##        lines += [
-##            '--intervals $CHROMOSOME:$(((${LSB_JOBINDEX}-1)*%i+1))-$posmax \\' %(
-##                self.i_UG_or_HC_size)]
-##        if self.fp_intervals:
-##            lines += ['--intervals %s \\' %(self.fp_intervals)]
-##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
-##            lines += ['--interval_set_rule INTERSECTION \\']
-##
-##        ##
-##        ## HaplotypeCaller, optional
-##        ##
-##        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-##        lines += [' --dbsnp %s \\' %(self.fp_vcf_dbsnp)]
-##        ## Selecting an appropriate quality score threshold
-##        ## A common question is the confidence score threshold
-##        ## to use for variant detection. We recommend:
-##        ## Deep (> 10x coverage per sample) data:
-##        ## we recommend a minimum confidence score threshold of Q30.
-##        ## Shallow (< 10x coverage per sample) data:
-##        ## because variants have by necessity lower quality
-##        ## with shallower coverage we recommend
-##        ## a minimum confidence score of Q4 in projects
-##        ## with 100 samples or fewer
-##        ## and Q10 otherwise.
-##        lines += [' -stand_call_conf 4 \\']
-##        lines += [' -stand_emit_conf 4 \\']
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-##        lines += [' -gt_mode %s \\' %(self.genotyping_mode)] ## default value DISCOVERY
-##        lines += [' -out_mode %s \\' %(self.output_mode)] ## default value EMIT_VARIANTS_ONLY
-##        if self.fp_alleles:
-##            if os.path.isdir(self.fp_alleles):
-##                s = '%s/$CHROMOSOME.$LSB_JOBINDEX.vcf.gz' %(self.fp_alleles)
-##                lines += [' --alleles %s \\' %(s)]
-##            elif os.path.isfile(self.fp_alleles):
-##                lines += [' --alleles %s \\' %(self.fp_alleles)]
-##            else:
-##                print(self.fp_alleles, 'not found')
-##                sys.exit()
-##
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/#VariantAnnotatorannotations
-##        s_annotation = ''
-##
-##        ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
-##        if '2.4' in self.fp_GATK or '2.5' in self.fp_GATK or '2.7' in self.fp_GATK or '2.8' in self.fp_GATK:
-##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
-##            s_annotation += ' --annotation Coverage'
-##        elif '2.3' in self.fp_GATK:
-##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_DepthOfCoverage.html
-##            s_annotation += ' --annotation DepthOfCoverage'
-##        else:
-##            print('Unknown version of GATK. Please see why the version number must be known here:')
-##            print('http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage')
-##            sys.exit()
-##
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
-##        s_annotation += ' -A FisherStrand'
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
-##        s_annotation += ' -A HaplotypeScore'
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
-##        s_annotation += ' -A MappingQualityRankSumTest'
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
-##        s_annotation += ' -A QualByDepth'
-##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
-##        s_annotation += ' -A RMSMappingQuality'
-##        s_annotation += ' -A ReadPosRankSumTest'
-##        lines += [s_annotation]
-##
-##        ##
-##        ## append input files
-##        ##
-##        for bam in self.bams:
-##            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-##            lines += [' --input_file %s \\' %(bam)]
-##
-##        return lines
+    def init_GATK_cmd(self,analysis_type,memMB,bool_checkpoint=False):
+
+        s = ''
+        ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
+        ## http://www.broadinstitute.org/gatk/guide/article?id=2846
+        s_java = self.init_java(
+            self.fp_GATK, memMB, java=self.java, bool_checkpoint=bool_checkpoint)
+        s += ' %s \\' %(s_java)
+        lines = [s]
+
+        ## CommandLineGATK, required, in
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--analysis_type
+        lines += [' --analysis_type %s \\' %(analysis_type)]
+        ## CommandLineGATK, optional, in
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
+        lines += [' --reference_sequence %s \\' %(self.reference_sequence)]
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#-nct
+        if self.nct != 1:
+            lines += [' --num_cpu_threads_per_data_thread %s \\' %(self.nct)]
 
 
-    def term_cmd(self,analysis_type,l_fp_out,extra=None):
+        return lines
+
+
+    def bsub_cmd(
+        self,
+        analysis_type,
+        J,
+        queue='normal',memMB=4000,
+        LSF_affix=None,
+        chrom=None,
+        chromlen=None,
+        index=None,
+        bool_checkpoint=False,
+        num_threads = None,
+        bam=None,
+        ):
+
+        if not LSF_affix:
+            LSF_affix = '%s/%s' %(analysis_type,analysis_type,)
+
+        cmd = 'bsub -J"%s" -q %s' %(J,queue,)
+        cmd += ' -G %s' %(self.project)
+        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
+            memMB,memMB,memMB,)
+        cmd += ' -o %s/LSF/%s.out' %(os.getcwd(), LSF_affix)
+        cmd += ' -e %s/LSF/%s.err' %(os.getcwd(), LSF_affix)
+        if num_threads:
+            cmd += ' -n%i -R"span[hosts=1]"' %(num_threads)
+        if bool_checkpoint:
+            cmd += ' -k "%s method=blcr 710"' %(
+                os.path.join(os.getcwd(),'checkpoint'))
+            cmd += ' -r'
+        if bool_checkpoint:
+            cmd += ' cr_run'
+        cmd += ' bash %s/shell/%s.sh' %(os.getcwd(),analysis_type,)
+        if chrom:
+            cmd += ' %s' %(chrom)
+        if chromlen:
+            cmd += ' %s' %(chromlen)
+        if index:
+            cmd += ' %s' %(index)
+        if bam:
+            cmd += ' %s' %(bam)
+
+        return cmd
+
+
+    def term_cmd(self, analysis_type, l_fp_out, extra=None):
 
         if type(l_fp_out) != list:
             print(l_fp_out)
             stop
 
+
         lines = ['\n']
+        lines += ['if [ $? -eq 0 ]; then']
         for fp_out in l_fp_out:
             fp_out = fp_out
-##            lines += ['echo %s >> %s.touch;' %(fp_out,analysis_type,)]
-##            lines += ['touch touch/%s;' %(fp_out,)]
             ## previous command exited cleanly
-            lines += ['if [ $? -eq 0 ]; then']
-            lines += ['echo %s >> %s.touch' %(fp_out,analysis_type,)]
-            lines += ['touch touch/%s' %(fp_out,)]
+            lines += ['if [ ! -s %s ]; then exit; fi' %(fp_out)]
+            lines += ['echo %s >> touch/%s.touch' %(fp_out, analysis_type,)]
 
         if extra:
             lines += ['%s\n' %(extra)]
@@ -1948,59 +1965,6 @@ class main():
         return lines
 
 
-    def init_UG_or_HC(self,l_chroms,d_chrom_lens,analysis_type):
-
-        lines = []
-
-        lines += ['\n## parse chromosome from command line']
-        lines += ['CHROMOSOME=$1']
-        lines += ['LSB_JOBINDEX=$2']
-
-        lines += self.bash_chrom2len(l_chroms,d_chrom_lens,)
-
-        ##
-        ## do not allow interval to exceed the length of the chromosome
-        ## otherwise it will raise an I/O error (v. 1.4-15)
-        ##
-        lines += ['posmax=$(((${LSB_JOBINDEX}+0)*%i))' %(self.i_UG_or_HC_size)]
-        lines += ['if [ $posmax -gt $LENCHROMOSOME ]']
-        lines += ['then posmax=$LENCHROMOSOME']
-        lines += ['fi\n']
-
-        fn = 'out_%s/' %(analysis_type)
-        fn += '${CHROMOSOME}.${LSB_JOBINDEX}.vcf.gz'
-
-        ## job finished
-        lines += ['if [ -s %s ]; then exit; fi\n' %(fn)]
-
-##        ## job started
-##        lines += ['if [ -s %s ]; then' %(fn)]
-##        lines += ['exit']
-##        lines += ['fi\n']
-
-        return lines
-
-
-    def bash_chrom2len(self,l_chroms,d_chrom_lens,):
-
-        lines = []
-        lines += ['\n## define arrays']
-        lines += ['CHROMOSOMES=(%s)' %(' '.join(l_chroms))]
-        lines += ['LENCHROMOSOMES=(%s)' %(' '.join(
-            [str(d_chrom_lens[chrom]) for chrom in l_chroms],
-            ),)]
-
-        lines += ['\n## find chromosome index in array of chromosomes']
-        lines += ['for ((index=0; index<${#CHROMOSOMES[@]}; index++))\ndo']
-        lines += ['if [ "${CHROMOSOMES[$index]}" = "$CHROMOSOME" ]\nthen']
-        lines += ['break\nfi\ndone\n']
-
-        lines += ['\n## find length of current chromosome passed via the command line']
-        lines += ['LENCHROMOSOME=${LENCHROMOSOMES[$index]}\n']
-
-        return lines
-
-
     def is_file(self, str_):
         if not os.path.isfile(str_) and not os.path.islink(str_):
             msg = '%s is neither a readable file nor a symbolic link' % str_
@@ -2017,13 +1981,9 @@ class main():
         return str_
 
 
-    def parse_arguments(self,):
+    def add_arguments(self,parser):
 
-        parser = argparse.ArgumentParser()
-
-        ##
-        ## add arguments
-        ##
+        ## required arguments
 
         parser.add_argument(
             '--fp_bams','--bam','--bams','--input',
@@ -2033,24 +1993,50 @@ class main():
         parser.add_argument('--coverage', required=True, type=float)
 
         parser.add_argument(
-            '--fp_GATK', '--GATK', '--gatk', required = True,
+            '--fp_GATK', '--GATK', '--gatk', '--jar', required = True,
             help='File path to GATK',)
-
-        parser.add_argument(
-            '--ref', '--reference', required = True, type=self.is_file)
 
         parser.add_argument('--project', required=True)
 
-        parser.add_argument(
-            '--fp_arguments', '--arguments','--args','--options','--opts')
+        parser.add_argument('--arguments','--args')
+
+        parser.add_argument('--java', required=True)
 
         ##
-        ## UnifiedGenotyper / HaplotypeCaller
+        ## CommandLineGATK arguments
         ##
 
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         parser.add_argument(
-            '--i_UG_or_HC_size', help='Size (bp) of divided parts.',
-            type=int,default=10*10**6)
+            '--intervals','-L',
+            help='Additionally, one may specify a rod file to traverse over the positions for which there is a record in the file (e.g. -L file.vcf).',
+            )
+
+        ## http://www.broadinstitute.org/gatk/guide/article?id=1975
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#-nct
+        parser.add_argument(
+            '--nct', '--num_cpu_threads_per_data_thread',
+            type=int, default=1)
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
+        parser.add_argument(
+            '--reference_sequence', '-R', required=True, type=self.is_file)
+
+        ##
+        ## HaplotypeCaller specific arguments
+        ##
+
+        ## Optional Inputs
+        
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
+        parser.add_argument(
+            '--alleles', default='',
+            help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',)
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
+        parser.add_argument('--dbsnp', '-D')
+
+        ## Optional Parameters
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         parser.add_argument(
@@ -2058,23 +2044,12 @@ class main():
             help='Specifies how to determine the alternate alleles to use for genotyping.',
             default='DISCOVERY')
 
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--output_mode
-        parser.add_argument(
-            '--output_mode','-out_mode',
-            help='Specifies which type of calls we should output.',
-            default='EMIT_VARIANTS_ONLY')
+        ##
+        ## CombineGVCFs/GenotypeGVCFs related arguments
+        ##
 
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--alleles
-        parser.add_argument(
-            '--fp_alleles','--alleles','-alleles',
-            help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',
-            default='')
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-        parser.add_argument(
-            '--fp_intervals','--intervals','-L',
-            help='Additionally, one may specify a rod file to traverse over the positions for which there is a record in the file (e.g. -L file.vcf).',
-            )
+        ## http://gatkforums.broadinstitute.org/discussion/4074/file-number-limit-for-genotypegvcfs
+        parser.add_argument('--gVCF_limit', default=200, type=int)
 
         ##
         ## VariantRecalibrator resources
@@ -2098,13 +2073,6 @@ class main():
 ##            '--omni',
 ##            help='File path to omni vcf to be used by VariantCalibrator (e.g. 1000G_omni2.5.b37.sites.vcf)',
 ##            )
-
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
-        s_help = 'File path to dbsnp vcf to be used by VariantCalibrator'
-        parser.add_argument(
-            '--fp_vcf_dbsnp','--dbsnp',
-            help=s_help, required = True,
-            )
 
         ##
         ## ApplyRecalibration
@@ -2157,12 +2125,19 @@ class main():
         parser.add_argument(
             '--checkpoint', dest='bool_checkpoint', action='store_true', default=False)
 
-        parser.add_argument('--chrom', type=str, nargs='+')
+        parser.add_argument(
+            '--chroms', type=str, nargs='+',
+            default=[str(i+1) for i in range(22)]+['X','Y',])
 
-        ##
-        ##
-        ##
-        
+        return parser
+
+
+    def parse_arguments(self,):
+
+        parser = argparse.ArgumentParser()
+
+        parser = self.add_arguments(parser)
+
         ## parse arguments to argparse NameSpace
         self.namespace_args = namespace_args = parser.parse_args()
 
@@ -2177,13 +2152,13 @@ class main():
         for k,v in vars(namespace_args).items():
             s_arguments += '%s %s\n' %(k,v)
 
-        if self.fp_arguments == None or self.fp_arguments == 'None':
-            self.fp_arguments = '%s.arguments' %(self.project)
-            fd = open(self.fp_arguments,'w')
+        if self.arguments == None or self.arguments == 'None':
+            self.arguments = '%s.arguments' %(self.project)
+            fd = open(self.arguments,'w')
             fd.write(s_arguments)
             fd.close()
         else:
-            fd = open(self.fp_arguments,'r')
+            fd = open(self.arguments,'r')
             lines = fd.readlines()
             fd.close()
             for line in lines:
@@ -2215,12 +2190,6 @@ class main():
         ##
         self.parse_arguments()
 
-        self.d_out = {
-            'UnifiedGenotyper':'out_UnifiedGenotyper/$CHROMOSOME.${LSB_JOBINDEX}.vcf.gz',
-            'HaplotypeCaller':'out_HaplotypeCaller/$CHROMOSOME.${LSB_JOBINDEX}.vcf.gz',
-            'BEAGLE':'out_BEAGLE/$CHROMOSOME/$CHROMOSOME.${LSB_JOBINDEX}.like',
-            }
-
         self.verbose = True
 
         return
@@ -2232,15 +2201,13 @@ if __name__ == '__main__':
 
 ## TODO
 
-## todo20130207: tc9: get rid of orphant functions
-
-## todo20130514: tc9: split up UnifiedGenotyper output in mode SNP and INDEL instead of BOTH - currently only calling SNPs
+## todo20140902: tc9: run HC per chromosome
+## todo20140902: tc9: make CombineGVCFs start each time 200 samples and a chromosome finishes? different/random 200 samples or the same 200 samples for each chromosome..?!
+## todo20140902: tc9: make it possible to add on extra samples (e.g. NA12878) and run GenotypeGVCFs after running HC on the new sample bam.
 
 ## DISK USAGE
 
 ## todo20140216: tc9: write all output (BEAGLE) to gzipped files
-
-## todo20140216: tc9: write all output (GATK UG) to bgzipped files and index these with tabix
 
 
 ## CPU
