@@ -48,6 +48,169 @@ class main():
         return
 
 
+    def HaplotypeCaller(self,d_chrom_lens,):
+
+        T = analysis_type = 'HaplotypeCaller'
+        queue = 'long'
+        memMB = 3900
+#        queue = 'basement'
+
+        ## Create folders.
+        self.mkdir('LSF/%s' %(T))
+        self.mkdir('out_HaplotypeCaller/')
+        self.mkdir('tmp/')
+
+        ## touch/lock
+        if self.touch(analysis_type):
+            continue
+
+        ## write shell script
+        self.shell_HC(analysis_type, memMB)
+
+        ## execute shell script
+        for bam in self.bams:
+            basename = os.path.splitext(os.path.basename(bam))[0]
+
+            for chrom in self.chroms:
+
+                ## Skip bam and chromosome if output was generated.
+                if os.path.isfile(
+                    'out_%s/%s.%s.vcf.gz.tbi' %(T, basename, chrom)):
+                    continue
+
+                ## Skip bam and chromosome if output is being generated.
+                pathLSF = 'LSF/%s/%s' %(T, basename)
+                if os.path.isfile('%s.err' %(pathLSF)):
+                    ## file changed within the past 5 minutes?
+                    if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
+                        continue
+                os.remove('%s.err' %(pathLSF))
+                if os.path.isfile('%s.out' %(pathLSF)):
+                    os.remove('%s.out' %(pathLSF))
+
+                J = '%s %s' %('HC', basename)
+                LSF_affix = '%s/%s' %(T, basename)
+                cmd = self.bsub_cmd(
+                    analysis_type, J, LSF_affix=LSF_affix,
+                    memMB=memMB, queue=queue, num_threads=self.nct,
+                    bam=bam, chrom=chrom)
+                self.execmd(cmd)
+
+        return
+
+
+    def CombineGVCFs(self):
+
+        '''Merge gVCFs prior to GenotypeGVCFs'''
+
+        analysis_type = T = 'CombineGVCFs'
+        memMB = 15900
+        queue = 'long'
+
+        ## write shell script
+        self.shell_CombineGVCFs(T, memMB)
+
+        for chrom in self.chroms:
+
+            ## 1) check input existence / check that previous jobs finished
+            l_vcfs_in = [
+                'out_HaplotypeCaller/%s.%s.vcf.gz' %(
+                    os.path.splitext(os.path.basename(bam))[0], chrom)
+                for bam in sorted(self.bams)]
+            if self.check_in(
+                'HaplotypeCaller', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
+                'touch/HaplotypeCaller.touch'):
+                sys.exit()
+
+            ## 2) check output existence / check that job did not start
+            if self.touch('%s.%s' %(analysis_type, chrom)):
+                return
+
+            self.mkdir('lists')
+            l_combined = []
+            for fn_list in glob.glob('lists/CombineGVCFs.%s.*.list' %(chrom)):
+                with open(fn_list) as f:
+                    l_combined += f.read().rstrip().split('\n')
+
+            l_vcfs_in = list(sorted(list(set(l_vcfs_in)-set(l_combined))))
+
+            for i, vcf in enumerate(
+                l_vcfs_in,
+                self.gVCF_limit*len(glob.glob(
+                    'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                if i%self.gVCF_limit == 0:
+                    fn_out = 'lists/CombineGVCFs.{chrom}.{i}.list'.format(
+                        chrom=chrom, i=i//self.gVCF_limit)
+                    assert not os.path.isfile(fn_out)
+                    fd_out = open(fn_out, 'w')
+                fd_out.write('{}\n'.format(vcf))
+            fd_out.close()
+
+            self.mkdir('LSF/%s' %(T))
+            for i in range(len(glob.glob(
+                'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                ## skip if job initiated
+                if os.path.isfile('out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)):
+                    continue
+                cmd = self.bsub_cmd(
+                    T, 'CgVCFs.{}.{}'.format(chrom, i),
+                    memMB=memMB, queue=queue,
+                    LSF_affix = '%s/%s.%s' %(T, chrom, i)
+                    )
+                cmd += ' {} {}'.format(chrom, i)
+                self.execmd(cmd)
+
+        return
+
+
+    def GenotypeGVCFs(self):
+
+        '''Convert gVCFs to VCFs'''
+
+        analysis_type = T = 'GenotypeGVCFs'
+        memMB = 7900
+        queue = 'basement'
+
+        ## write shell script
+        self.shell_GenotypeGVCFs(T, memMB)
+        self.mkdir('LSF/%s' %(T))
+
+        for chrom in self.chroms:
+
+            ## 1) check input existence / check that previous jobs finished
+            l_vcfs_in = [
+                'out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)
+                for i in range(len(glob.glob(
+                    'lists/CombineGVCFs.%s.*.list' %(chrom))))]
+            if self.check_in(
+                'CombineGVCFs', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
+                'touch/CombineGVCFs.touch'):
+                ## continue loop over chromosomes
+                continue
+
+            ## 2) check output existence / check that job did not start
+            if self.touch('%s.%s' %(analysis_type, chrom)):
+                continue
+        
+            self.mkdir('lists')
+            with open(
+                'lists/GenotypeGVCFs.{chrom}.list'.format(
+                    chrom=chrom), 'w') as f:
+                for vcf in l_vcfs_in:
+                    f.write('{}\n'.format(vcf))
+
+                cmd = self.bsub_cmd(
+                    T, 'GgVCFs.{}'.format(chrom),
+                    memMB=memMB, queue=queue,
+                    LSF_affix = '%s/%s' %(T, chrom)
+                    )
+                cmd += ' {}'.format(chrom)
+                self.execmd(cmd)
+
+        return
+
+
+
     def execmd(self,cmd):
 
         print(cmd)
@@ -1333,70 +1496,6 @@ class main():
         return bool_exit
 
 
-    def CombineGVCFs(self):
-
-        '''Merge gVCFs prior to GenotypeGVCFs'''
-
-        analysis_type = T = 'CombineGVCFs'
-        memMB = 15900
-        queue = 'long'
-
-        ## 1) check input existence / check that previous jobs finished
-        l_vcfs_in = [
-            'out_HaplotypeCaller/%s.vcf.gz' %(
-                os.path.splitext(os.path.basename(bam))[0])
-            for bam in sorted(self.bams)]
-        if self.check_in(
-            'HaplotypeCaller', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
-            'touch/HaplotypeCaller.touch'):
-            sys.exit()
-
-        ## write shell script
-        self.shell_CombineGVCFs(T, memMB)
-
-        for chrom in self.chroms:
-
-            ## 2) check output existence / check that job did not start
-            if self.touch('%s.%s' %(analysis_type, chrom)):
-                return
-
-            self.mkdir('lists')
-            l_combined = []
-            for fn_list in glob.glob('lists/CombineGVCFs.%s.*.list' %(chrom)):
-                with open(fn_list) as f:
-                    l_combined += f.read().rstrip().split('\n')
-
-            l_vcfs_in = list(sorted(list(set(l_vcfs_in)-set(l_combined))))
-
-            for i, vcf in enumerate(
-                l_vcfs_in,
-                self.gVCF_limit*len(glob.glob(
-                    'lists/CombineGVCFs.%s.*.list' %(chrom)))):
-                if i%self.gVCF_limit == 0:
-                    fn_out = 'lists/CombineGVCFs.{chrom}.{i}.list'.format(
-                        chrom=chrom, i=i//self.gVCF_limit)
-                    assert not os.path.isfile(fn_out)
-                    fd_out = open(fn_out, 'w')
-                fd_out.write('{}\n'.format(vcf))
-            fd_out.close()
-
-            self.mkdir('LSF/%s' %(T))
-            for i in range(len(glob.glob(
-                'lists/CombineGVCFs.%s.*.list' %(chrom)))):
-                ## skip if job initiated
-                if os.path.isfile('out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)):
-                    continue
-                cmd = self.bsub_cmd(
-                    T, 'CgVCFs.{}.{}'.format(chrom, i),
-                    memMB=memMB, queue=queue,
-                    LSF_affix = '%s/%s.%s' %(T, chrom, i)
-                    )
-                cmd += ' {} {}'.format(chrom, i)
-                self.execmd(cmd)
-
-        return
-
-
     def shell_CombineGVCFs(self, T, memMB):
 
         lines = ['#!/bin/bash\n']
@@ -1418,53 +1517,6 @@ class main():
 
         ## write shell script
         self.write_shell('shell/%s.sh' %(T), lines,)
-
-        return
-
-
-    def GenotypeGVCFs(self):
-
-        '''Convert gVCFs to VCFs'''
-
-        analysis_type = T = 'GenotypeGVCFs'
-        memMB = 7900
-        queue = 'basement'
-
-        ## write shell script
-        self.shell_GenotypeGVCFs(T, memMB)
-        self.mkdir('LSF/%s' %(T))
-
-        for chrom in self.chroms:
-
-            ## 1) check input existence / check that previous jobs finished
-            l_vcfs_in = [
-                'out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)
-                for i in range(len(glob.glob(
-                    'lists/CombineGVCFs.%s.*.list' %(chrom))))]
-            if self.check_in(
-                'CombineGVCFs', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
-                'touch/CombineGVCFs.touch'):
-                ## continue loop over chromosomes
-                continue
-
-            ## 2) check output existence / check that job did not start
-            if self.touch('%s.%s' %(analysis_type, chrom)):
-                continue
-        
-            self.mkdir('lists')
-            with open(
-                'lists/GenotypeGVCFs.{chrom}.list'.format(
-                    chrom=chrom), 'w') as f:
-                for vcf in l_vcfs_in:
-                    f.write('{}\n'.format(vcf))
-
-                cmd = self.bsub_cmd(
-                    T, 'GgVCFs.{}'.format(chrom),
-                    memMB=memMB, queue=queue,
-                    LSF_affix = '%s/%s' %(T, chrom)
-                    )
-                cmd += ' {}'.format(chrom)
-                self.execmd(cmd)
 
         return
 
@@ -1652,62 +1704,6 @@ class main():
             f.write(' -o tmp_brestart2.out -e tmp_brestart2.err \\\n')
             f.write(' -G $project -q normal -w "ended($jobID)" \\\n')
             f.write(' bash brestart.sh $jobID $project $memMB\n')
-
-        return
-
-
-    def HaplotypeCaller(self,d_chrom_lens,):
-
-        T = analysis_type = 'HaplotypeCaller'
-        queue = 'long'
-        memMB = 3900
-#        queue = 'basement'
-
-        ## 1) touch/lock
-        if self.touch(analysis_type):
-            return
-
-        ## 2) write shell script
-        self.shell_HC(analysis_type, memMB)
-
-        ## Create folders.
-        self.mkdir('LSF/%s' %(T))
-        self.mkdir('out_HaplotypeCaller/')
-        self.mkdir('touch/HaplotypeCaller/')
-        self.mkdir('tmp/')
-
-        ## 3) execute shell script
-        for bam in self.bams:
-            basename = os.path.splitext(os.path.basename(bam))[0]
-
-            for chrom in self.chroms:
-
-                ## finished?
-                if os.path.isfile(
-                    'out_HaplotypeCaller/%s.%s.vcf.gz.tbi' %(basename,chrom)):
-                    continue
-
-                ## in progress?
-                pathLSF = 'LSF/HaplotypeCaller/%s' %(basename)
-                ## job finished
-                if os.path.isfile(
-                    'out_%s/%s.%s.vcf.gz.tbi' %(T, basename, chrom)):
-                    continue
-                if os.path.isfile('%s.err' %(pathLSF)):
-                    ## file changed within the past 5 minutes?
-                    if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
-                        continue
-                    os.remove('%s.err' %(pathLSF))
-                if os.path.isfile('%s.out' %(pathLSF)):
-                    os.remove('%s.out' %(pathLSF))
-
-                J = '%s %s' %('HC', basename)
-                LSF_affix = '%s/%s' %(T, basename)
-                cmd = self.bsub_cmd(
-                    analysis_type, J, LSF_affix=LSF_affix,
-                    memMB=memMB, queue=queue, num_threads=self.nct,
-                    bam=bam, chrom=chrom)
-                self.execmd(cmd)
 
         return
 
