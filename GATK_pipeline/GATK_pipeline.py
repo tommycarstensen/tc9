@@ -1439,7 +1439,8 @@ class main():
             ## 1) check input existence / check that previous jobs finished
             l_vcfs_in = [
                 'out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)
-                for i in range(len(self.bams)//split+1)]
+                for i in range(len(glob.glob(
+                    'lists/CombineGVCFs.%s.*.list' %(chrom))))]
             if self.check_in(
                 'CombineGVCFs', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
                 'touch/CombineGVCFs.touch'):
