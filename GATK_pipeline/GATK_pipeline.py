@@ -1680,30 +1680,34 @@ class main():
         for bam in self.bams:
             basename = os.path.splitext(os.path.basename(bam))[0]
 
-            ## finished?
-            if os.path.isfile('out_HaplotypeCaller/%s.vcf.gz.tbi' %(basename)):
-                continue
+            for chrom in self.chroms:
 
-            ## in progress?
-            pathLSF = 'LSF/HaplotypeCaller/%s' %(basename)
-            ## job finished
-            if os.path.isfile('out_%s/%s.vcf.gz.tbi' %(T, basename)):
-                continue
-            if os.path.isfile('%s.err' %(pathLSF)):
-                ## file changed within the past 5 minutes?
-                if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
+                ## finished?
+                if os.path.isfile(
+                    'out_HaplotypeCaller/%s.%s.vcf.gz.tbi' %(basename,chrom)):
                     continue
-                os.remove('%s.err' %(pathLSF))
-            if os.path.isfile('%s.out' %(pathLSF)):
-                os.remove('%s.out' %(pathLSF))
 
-            J = '%s %s' %('HC', basename)
-            LSF_affix = '%s/%s' %(T, basename)
-            cmd = self.bsub_cmd(
-                analysis_type, J, LSF_affix=LSF_affix,
-                memMB=memMB, queue=queue, num_threads=self.nct,
-                bam=bam)
-            self.execmd(cmd)
+                ## in progress?
+                pathLSF = 'LSF/HaplotypeCaller/%s' %(basename)
+                ## job finished
+                if os.path.isfile(
+                    'out_%s/%s.%s.vcf.gz.tbi' %(T, basename, chrom)):
+                    continue
+                if os.path.isfile('%s.err' %(pathLSF)):
+                    ## file changed within the past 5 minutes?
+                    if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
+                        continue
+                    os.remove('%s.err' %(pathLSF))
+                if os.path.isfile('%s.out' %(pathLSF)):
+                    os.remove('%s.out' %(pathLSF))
+
+                J = '%s %s' %('HC', basename)
+                LSF_affix = '%s/%s' %(T, basename)
+                cmd = self.bsub_cmd(
+                    analysis_type, J, LSF_affix=LSF_affix,
+                    memMB=memMB, queue=queue, num_threads=self.nct,
+                    bam=bam, chrom=chrom)
+                self.execmd(cmd)
 
         return
 
@@ -1723,9 +1727,10 @@ class main():
     def shell_HC(self, analysis_type, memMB):
 
         lines = ['#!/bin/bash\n']
-        lines += ['BAM=$1']
+        lines += ['CHROM=$1']
+        lines += ['BAM=$2']
         lines += ['BAMBASENAME=$(basename $BAM | rev | cut -d "." -f2- | rev)']
-        lines += ['out=out_HaplotypeCaller/$BAMBASENAME.vcf.gz']
+        lines += ['out=out_HaplotypeCaller/$BAMBASENAME.$CHROM.vcf.gz']
 ##        ## exit if job started
 ##        lines += ['if [ -s $out ]; then exit; fi\n']
         ## exit if job finished
@@ -1772,6 +1777,8 @@ class main():
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
             lines += ['--interval_set_rule INTERSECTION \\']
             pass
+        else:
+            lines += ['--intervals $CHROM \\']
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
         ## http://gatkforums.broadinstitute.org/discussion/3893/calling-variants-on-cohorts-of-samples-using-the-haplotypecaller-in-gvcf-mode
@@ -2128,7 +2135,7 @@ class main():
 
         parser.add_argument(
             '--chroms', type=str, nargs='+',
-            default=[str(i+1) for i in range(22)]+['X','Y',])
+            default=[str(i+1) for i in range(22)]+['X','Y','MT',])
 
         return parser
 
