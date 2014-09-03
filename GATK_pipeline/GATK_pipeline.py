@@ -51,16 +51,17 @@ class main():
     def HaplotypeCaller(self,d_chrom_lens,):
 
         T = analysis_type = 'HaplotypeCaller'
-        queue = 'long'
+        queue = 'long'  # 4x split per sample
         memMB = 3900
-#        queue = 'basement'
+#        queue = 'basement'  # >4x split per sample
+        queue = 'normal'  # 4x split per chromosome
 
         ## Create folders.
         self.mkdir('tmp/')
 
         ## touch/lock
         if self.touch(analysis_type):
-            continue
+            return
 
         ## write shell script
         self.shell_HC(analysis_type, memMB)
@@ -70,6 +71,7 @@ class main():
 
             for bam in self.bams:
                 basename = os.path.splitext(os.path.basename(bam))[0]
+                LSF_affix = '%s/%s/%s' %(T, chrom, basename)
 
                 ## Skip bam and chromosome if output was generated.
                 if os.path.isfile(
@@ -77,20 +79,20 @@ class main():
                     continue
 
                 ## Skip bam and chromosome if output is being generated.
-                pathLSF = 'LSF/%s/%s/%s' %(T, chrom, basename)
-                if os.path.isfile('%s.err' %(pathLSF)):
+                if os.path.isfile('LSF/%s.err' %(LSF_affix)):
                     ## file changed within the past 5 minutes?
-                    if time.time()-os.path.getmtime('%s.err' %(pathLSF)) < 300:
+                    if time.time()-os.path.getmtime(
+                        'LSF/%s.err' %(LSF_affix)) < 300:
                         continue
-                os.remove('%s.err' %(pathLSF))
-                if os.path.isfile('%s.out' %(pathLSF)):
-                    os.remove('%s.out' %(pathLSF))
+                    else:
+                        os.remove('LSF/%s.err' %(LSF_affix))
+                if os.path.isfile('LSF/%s.out' %(LSF_affix)):
+                    os.remove('LSF/%s.out' %(LSF_affix))
 
-                self.mkdir('LSF/%s/%s/' %(T, chrom))
+                self.mkdir('LSF/%s' %(LSF_affix))
                 self.mkdir('out_%s/%s/' %(T, chrom))
 
                 J = '%s %s' %('HC', basename)
-                LSF_affix = '%s/%s' %(T, basename)
                 cmd = self.bsub_cmd(
                     analysis_type, J, LSF_affix=LSF_affix,
                     memMB=memMB, queue=queue, num_threads=self.nct,
@@ -111,6 +113,7 @@ class main():
         ## write shell script
         self.shell_CombineGVCFs(T, memMB)
 
+        bool_exit = False
         for chrom in self.chroms:
 
             ## 1) check input existence / check that previous jobs finished
@@ -121,11 +124,12 @@ class main():
             if self.check_in(
                 'HaplotypeCaller', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
                 'touch/HaplotypeCaller.touch'):
-                sys.exit()
+                bool_exit = True
+                continue
 
             ## 2) check output existence / check that job did not start
             if self.touch('%s.%s' %(analysis_type, chrom)):
-                return
+                continue
 
             self.mkdir('lists')
             l_combined = []
@@ -161,6 +165,9 @@ class main():
                 cmd += ' {} {}'.format(chrom, i)
                 self.execmd(cmd)
 
+        if bool_exit == True:
+            sys.exit()
+
         return
 
 
@@ -176,6 +183,7 @@ class main():
         self.shell_GenotypeGVCFs(T, memMB)
         self.mkdir('LSF/%s' %(T))
 
+        bool_exit = False
         for chrom in self.chroms:
 
             ## 1) check input existence / check that previous jobs finished
@@ -187,6 +195,7 @@ class main():
                 'CombineGVCFs', ['%s.tbi' %(vcf) for vcf in l_vcfs_in],
                 'touch/CombineGVCFs.touch'):
                 ## continue loop over chromosomes
+                bool_exit = True
                 continue
 
             ## 2) check output existence / check that job did not start
@@ -207,6 +216,9 @@ class main():
                     )
                 cmd += ' {}'.format(chrom)
                 self.execmd(cmd)
+
+        if bool_exit:
+            sys.exit()
 
         return
 
@@ -1502,7 +1514,7 @@ class main():
         lines = ['#!/bin/bash\n']
         lines += ['chrom=$1']
         lines += ['i=$2']
-        lines += ['out=out_CombineGVCFs/$chrom.$i.vcf.gz']
+        lines += ['out=out_{}/$chrom.$i.vcf.gz'.format(T)]
         lines += ['## exit if job started']
         lines += ['if [ -s $out ]; then exit; fi\n']
         ## make output directory
@@ -1510,7 +1522,7 @@ class main():
 
         lines += self.init_GATK_cmd(T, memMB,)
         lines += [' -L $chrom \\']
-        lines += [' -V lists/CombineGVCFs.$i.list \\']
+        lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
         lines += [' -o $out \\']
 
         ## terminate shell script
@@ -1526,7 +1538,7 @@ class main():
 
         lines = ['#!/bin/bash\n']
         lines += ['chrom=$1']
-        lines += ['out=out_GenotypeGVCFs/$chrom.vcf.gz']
+        lines += ['out=out_{}/$chrom.vcf.gz'.format(T)]
         lines += ['## exit if job started']
         lines += ['if [ -s $out ]; then exit; fi\n']
         lines += ['## exit if job finished']
