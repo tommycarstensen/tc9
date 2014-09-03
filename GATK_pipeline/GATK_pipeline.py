@@ -133,7 +133,7 @@ class main():
 
             self.mkdir('lists')
             l_combined = []
-            for fn_list in glob.glob('lists/CombineGVCFs.%s.*.list' %(chrom)):
+            for fn_list in glob.glob('lists/%s.%s.*.list' %(T, chrom)):
                 with open(fn_list) as f:
                     l_combined += f.read().rstrip().split('\n')
 
@@ -142,10 +142,10 @@ class main():
             for i, vcf in enumerate(
                 l_vcfs_in,
                 self.gVCF_limit*len(glob.glob(
-                    'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                    'lists/{}.{}.*.list'.format(T, chrom)))):
                 if i%self.gVCF_limit == 0:
-                    fn_out = 'lists/CombineGVCFs.{chrom}.{i}.list'.format(
-                        chrom=chrom, i=i//self.gVCF_limit)
+                    fn_out = 'lists/{T}.{chrom}.{i}.list'.format(
+                        T=T, chrom=chrom, i=i//self.gVCF_limit)
                     assert not os.path.isfile(fn_out)
                     fd_out = open(fn_out, 'w')
                 fd_out.write('{}\n'.format(vcf))
@@ -153,9 +153,10 @@ class main():
 
             self.mkdir('LSF/%s' %(T))
             for i in range(len(glob.glob(
-                'lists/CombineGVCFs.%s.*.list' %(chrom)))):
+                'lists/%s.%s.*.list' %(T, chrom)))):
                 ## skip if job initiated
-                if os.path.isfile('out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)):
+                if os.path.isfile(
+                    'out_%s/%s/%i.vcf.gz' %(T, chrom, i)):
                     continue
                 cmd = self.bsub_cmd(
                     T, 'CgVCFs.{}.{}'.format(chrom, i),
@@ -188,7 +189,7 @@ class main():
 
             ## 1) check input existence / check that previous jobs finished
             l_vcfs_in = [
-                'out_CombineGVCFs/%s.%i.vcf.gz' %(chrom,i)
+                'out_CombineGVCFs/%s/%i.vcf.gz' %(chrom,i)
                 for i in range(len(glob.glob(
                     'lists/CombineGVCFs.%s.*.list' %(chrom))))]
             if self.check_in(
@@ -219,6 +220,57 @@ class main():
 
         if bool_exit:
             sys.exit()
+
+        return
+
+
+    def shell_CombineGVCFs(self, T, memMB):
+
+        lines = ['#!/bin/bash\n']
+        lines += ['chrom=$1']
+        lines += ['i=$2']
+        lines += ['out=out_{}/$chrom/$i.vcf.gz'.format(T)]
+        lines += ['## exit if job started']
+        lines += ['if [ -s $out ]; then exit; fi\n']
+        ## make output directory
+        lines += ['mkdir -p $(dirname $out)\n']
+
+        lines += self.init_GATK_cmd(T, memMB,)
+        lines += [' -L $chrom \\']
+        lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
+        lines += [' -o $out \\']
+
+        ## terminate shell script
+        lines += self.term_cmd(T, ['$out.tbi'],)
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(T), lines,)
+
+        return
+
+
+    def shell_GenotypeGVCFs(self, T, memMB):
+
+        lines = ['#!/bin/bash\n']
+        lines += ['chrom=$1']
+        lines += ['out=out_{}/$chrom.vcf.gz'.format(T)]
+        lines += ['## exit if job started']
+        lines += ['if [ -s $out ]; then exit; fi\n']
+        lines += ['## exit if job finished']
+        lines += ['if [ -s $out.tbi ]; then exit; fi\n']
+        ## make output directory
+        lines += ['mkdir -p $(dirname $out)\n']
+
+        lines += self.init_GATK_cmd(T, memMB,)
+        lines += [' -L $chrom \\']
+        lines += [' -V lists/{}.$chrom.list \\'.format(T)]
+        lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
+
+        ## terminate shell script
+        lines += self.term_cmd(T, ['$out.tbi'])
+
+        ## write shell script
+        self.write_shell('shell/%s.sh' %(T), lines,)
 
         return
 
@@ -1507,57 +1559,6 @@ class main():
 ##                sys.exit()
 
         return bool_exit
-
-
-    def shell_CombineGVCFs(self, T, memMB):
-
-        lines = ['#!/bin/bash\n']
-        lines += ['chrom=$1']
-        lines += ['i=$2']
-        lines += ['out=out_{}/$chrom.$i.vcf.gz'.format(T)]
-        lines += ['## exit if job started']
-        lines += ['if [ -s $out ]; then exit; fi\n']
-        ## make output directory
-        lines += ['mkdir -p $(dirname $out)\n']
-
-        lines += self.init_GATK_cmd(T, memMB,)
-        lines += [' -L $chrom \\']
-        lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
-        lines += [' -o $out \\']
-
-        ## terminate shell script
-        lines += self.term_cmd(T, ['$out.tbi'],)
-
-        ## write shell script
-        self.write_shell('shell/%s.sh' %(T), lines,)
-
-        return
-
-
-    def shell_GenotypeGVCFs(self, T, memMB):
-
-        lines = ['#!/bin/bash\n']
-        lines += ['chrom=$1']
-        lines += ['out=out_{}/$chrom.vcf.gz'.format(T)]
-        lines += ['## exit if job started']
-        lines += ['if [ -s $out ]; then exit; fi\n']
-        lines += ['## exit if job finished']
-        lines += ['if [ -s $out.tbi ]; then exit; fi\n']
-        ## make output directory
-        lines += ['mkdir -p $(dirname $out)\n']
-
-        lines += self.init_GATK_cmd(T, memMB,)
-        lines += [' -L $chrom \\']
-        lines += [' -V lists/{}.$chrom.list \\'.format(T)]
-        lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
-
-        ## terminate shell script
-        lines += self.term_cmd(T, ['$out.tbi'])
-
-        ## write shell script
-        self.write_shell('shell/%s.sh' %(T), lines,)
-
-        return
 
 
     def VariantRecalibrator(self,d_chrom_lens):
