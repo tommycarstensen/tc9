@@ -480,6 +480,8 @@ and requires less than 100MB of memory'''
 
         pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
         fp_out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
+        if os.path.isfile(fp_out):
+            sys.exit()
         with open('out_VariantRecalibrator/SNP.recal') as fd_recal_SNP, \
              open('out_VariantRecalibrator/INDEL.recal') as fd_recal_INDEL, \
              gzip.open(self.args.AR_input, 'rt') as fd_source, \
@@ -494,16 +496,15 @@ and requires less than 100MB of memory'''
                 ## write sample IDs to output
                 print(line_VCF, end='', file=fd_out)
                 break
-            chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
-            assert chrom == chrom_VCF
-            while chrom_SNP != chrom_VCF:
+            while chrom_SNP != chrom:
                 chrom_SNP, pos_SNP, VQSLod_SNP = self.parse_recal(
                     fd_recal_SNP, pattern)
-            while chrom_INDEL != chrom_VCF:
+            while chrom_INDEL != chrom:
                 chrom_INDEL, pos_INDEL, VQSLod_INDEL = self.parse_recal(
                     fd_recal_INDEL, pattern)
             for line_VCF in fd_source:
                 chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
+                assert chrom == chrom_VCF
                 print(chrom, pos_VCF, file=sys.stderr)
                 if pos_VCF == pos_INDEL:
                     assert chrom_VCF == chrom_INDEL
@@ -536,6 +537,7 @@ and requires less than 100MB of memory'''
         with open('touch/ApplyRecalibration.touch', 'a') as f:
             f.write('{}.tbi\n'.format(fp_out))
 
+        ## return and continue with BEAGLE if all AR processes completed
         return
 
 
@@ -792,168 +794,6 @@ and requires less than 100MB of memory'''
         """
         l.sort(key=self.alphanum_key)
         return l
-
-
-    def generate_line_vcf_PASS_split(self,fd_vcf,fd_recal,minVQSLOD):
-
-        for line_vcf in fd_vcf:
-
-            ## skip header
-            if line_vcf[0] == '#':
-                continue
-
-            ## skip INDELs
-            l_vcf = line_vcf.rstrip().split('\t')
-            bool_indel,bool_diallelic = self.parse_variant_type(l_vcf)
-            if bool_indel == True:
-                continue
-
-            ## skip LowQual
-            if l_vcf[6] == 'LowQual':
-                continue
-
-##            ## skip QUAL=.
-##            if l_vcf[5] == '.': continue
-
-            if not 'line_recal' in locals(): ## tmp!!!
-                ## read equivalent VR line
-                while True:
-                    line_recal = fd_recal.readline()
-                    if line_recal[0] != '#':
-                        break
-
-            ## skip non-diallelic SNPs
-            if bool_diallelic == False:
-                continue
-
-            ## Parse VQSLOD value from recal file.
-            VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
-
-            ## tmp!!! temporary!!! TEMPORARY!!! temp!!!!!!!!!
-            try:
-                x = int(l_recal[0])
-            except:
-                return
-            if int(l_vcf[0]) < int(l_recal[0]):
-                print('a', l_recal[:2],l_vcf[:2])
-                continue
-            while int(l_recal[0]) < int(l_vcf[0]):
-                line_recal = fd_recal.readline()
-                VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
-            if int(l_vcf[1]) < int(l_recal[1]):
-                print('c', l_recal[:2],l_vcf[:2])
-                continue
-            while int(l_recal[1]) < int(l_vcf[1]):
-                print('d', l_recal[:2],l_vcf[:2])
-                line_recal = fd_recal.readline()
-                VQSLOD, l_recal = self.parse_VQSLOD(line_recal)
-##            if int(l_vcf[1]) < int(l_recal[1]): ## 16.5 tmp!!!
-##                print('e', l_recal[:2],l_vcf[:2])
-##                continue
-
-            ## Assert that position in recal and vcf file are identical.
-            try:
-                assert int(l_recal[1]) == int(l_vcf[1])
-            except:
-                print(line_recal)
-                print(line_vcf)
-                stop
-            ## Skip if VQSLOD value below threshold.
-            if VQSLOD < minVQSLOD:
-                continue
-
-            yield l_vcf
-
-
-    def parse_VQSLOD(self,line_recal,):
-
-        l_recal = line_recal.split('\t')
-##        l_recal_INFO = l_recal[7].split(';')
-##        VQSLOD = float(l_recal_INFO[1].split('=')[1])
-        VQSLOD = float(re.search(r'VQSLOD=(\-?\d+.\d+)',l_recal[7]).group(1))
-
-        return VQSLOD, l_recal
-
-
-    def chrom2file(self,file1,chrom):
-
-        with open(file1) as f:
-            for line in f:
-                l = line.rstrip().split()
-                if l[0] == str(chrom):
-                    file2 = l[1]
-
-        return file2
-
-
-    def vcf2beagle(self,l_vcf):
-
-        ## this function is very slow; especially split, sum and pow
-
-        ## append chrom:pos alleleA alleleB
-        line_beagle = '{}:{} {} {}'.format(l_vcf[0],l_vcf[1],l_vcf[3],l_vcf[4],)
-
-        index = l_vcf[8].split(':').index('PL')
-        for s_vcf in l_vcf[9:]:
-            ## variant not called
-            if s_vcf[:3] == './.':
-                line_beagle += ' 0.3333 0.3333 0.3333'
-                continue
-            l_probs = []
-            l_log10likelihoods = s_vcf.split(':')[index].split(', ')
-            for log10likelihood in l_log10likelihoods:
-                log10likelihood = int(log10likelihood)
-                if log10likelihood == 0:
-                    prob = 1
-                elif log10likelihood > 50:
-                    prob = 0
-                else:
-                    prob = pow(10,-log10likelihood/10)
-                l_probs += [prob]
-            ## append normalized probabilities
-            for prob in l_probs:
-                line_beagle += ' %6.4f'.format(prob/sum(l_probs))
-            if ', ' in l_vcf[4]:
-                print(line_beagle)
-                print(s_vcf)
-                print(l_log10likelihoods)
-                print(l_probs)
-                print(line_beagle)
-                stop_tmp_decide_on_triallelic
-        line_beagle += '\n'
-
-        return line_beagle
-
-
-    def parse_variant_type(self,l_vcf):
-
-        ## skip deletions
-        if not l_vcf[3] in ['A', 'C', 'G', 'T',]:
-            return True,None
-        ## dialleic SNP
-        if l_vcf[4] in ['A', 'C', 'G', 'T',]:
-            return False,True
-        ## triallelic and other non-diallelic SNPs
-##        elif l_vcf[4] in [
-##            'A,C', 'A,G', 'A,T', 'C,G', 'C,T', 'G,T',
-##            'A,C,G', 'A,C,T', 'A,G,T', 'C,G,T',
-##            ]:
-##            return False,False,False
-##        ## UG DISCOVERY
-##        elif l_vcf[4] in iter(', '.join(tup) for tup in itertools.combinations('ACGT',2)):
-        ## UG GENOTYPE_GIVEN_ALLELES
-        elif l_vcf[4] in iter(', '.join(tup) for tup in itertools.permutations('ACGT',2)):
-            return False,False
-##        ## UG DISCOVERY
-##        elif l_vcf[4] in iter(', '.join(tup) for tup in itertools.combinations('ACGT',3)):
-        ## UG GENOTYPE_GIVEN_ALLELES
-        elif l_vcf[4] in iter(', '.join(tup) for tup in itertools.permutations('ACGT',3)):
-            return False,False
-        ## skip insertions
-        else:
-            return True,None
-
-        return
 
 
     def init_java(self, jar, memMB, java='java'):
