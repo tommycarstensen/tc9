@@ -1,6 +1,6 @@
 #!/bin/python3
 
-## Tommy Carstensen, Wellcome Trust Sanger Institute, February-March 2013
+## Tommy Carstensen, Wellcome Trust Sanger Institute, February-March 2013, October-November 2014
 
 import argparse
 import fileinput
@@ -13,157 +13,132 @@ import itertools
 
 def main():
 
-    d_args = argparser()
+    args = argparser()
 
-    l_path_vcf_predict = sort_nicely(d_args['predict'])
+    l_path_vcf_predict = sort_nicely(args.predict)
 
-    if d_args['tranches']:
-        d_tranches = parse_tranches(d_args['tranches'])
-    else:
-        d_tranches = None
-
-    col_predict = sampleID2col(d_args['sampleID_predict'], l_path_vcf_predict)
-    col_gold = sampleID2col(d_args['sampleID_gold'], d_args['gold'])
+    col_predict = sampleID2col(args.sampleID_predict, l_path_vcf_predict)
+    col_gold = sampleID2col(args.sampleID_gold, args.gold)
 
     with contextlib.ExitStack() as stack:
 
         fd_predict = fileinput.FileInput(
             files=l_path_vcf_predict, openhook=hook_compressed_text)
 
-        fd_vcf_gold = hook_compressed_text(d_args['gold'],'r')
+        fd_vcf_gold = hook_compressed_text(args.gold, 'r')
 
-        if d_args['recal']:
-            fd_recal = open(d_args['recal'])
+        if args.recal:
+            fd_recal = open(args.recal)
         else:
             fd_recal = None
 
-        fd_out = open(d_args['out'],'w')
+        if args.bed:
+            fd_bed = stack.enter_context(gzip.open(args.bed, 'rt'))
+        else:
+            fd_bed = None
+
+        fd_out = open(args.out, 'w')
 
         loop_lines(
-            fd_predict, fd_vcf_gold, fd_out,
-            col_predict, col_gold, d_args['mode'],
-            fd_recal, d_tranches, d_args)
+            fd_predict, fd_vcf_gold, fd_out, fd_bed,
+            col_predict, col_gold,
+            fd_recal, args)
         
     return
-
-
-def parse_tranches(path_tranches):
-
-    d_tranches = {}
-    with open(path_tranches) as fd_tranches:
-        for line in fd_tranches:
-            if line[0] == '#':
-                continue
-            l = line.split(',')
-            if l[0] == 'targetTruthSensitivity':
-                index_targetTruthSensitivity = l.index('targetTruthSensitivity')
-                index_minVQSLod = l.index('minVQSLod')
-                continue
-            targetTruthSensitivity = l[index_targetTruthSensitivity]
-            minVQSLod = float(l[index_minVQSLod])
-            d_tranches[targetTruthSensitivity] = minVQSLod
-
-    return d_tranches
 
 
 def sampleID2col(sampleID, l_path_vcf_predict):
 
     with fileinput.FileInput(
             files=l_path_vcf_predict, openhook=hook_compressed_text) as fd:
-        line = fd.readline()
-        if line[0] != '#':
-            pass
-        else:
-            while line.split('\t')[0] != '#CHROM':
-                line = fd.readline()
-    try:
-        if line[0] != '#':
-            col = line.rstrip().split(' ').index(sampleID)
-        else:
-            col = line.rstrip().split('\t').index(sampleID)
-    except:
-        print(line)
-        print(sampleID)
-        stop
+        for line in fd:
+            if line[:2] == '##':
+                continue
+            break
+    col = line.rstrip().split('\t').index(sampleID)
 
     return col
 
 
-def loop_lines(
-    fd_predict, fd_gold, fd_out, col1, col2, mode, fd_recal, d_tranches, d_args):
+def split_line_bed(fd_bed):
 
-    predict = ['bgl','vcf'][1]  # never got it to work with bgl because no QUAL...
+    for line in fd_bed:
+        chrom, pos1, pos2 = fd_bed.readline().split('\t')
+        pos1 = int(pos1)
+        pos2 = int(pos2)
+        yield chrom, pos1, pos2
+
+    return
+
+
+def loop_lines(
+    fd_predict, fd_gold, fd_out, fd_bed,
+    col1, col2, fd_recal, args):
 
     l_chroms = [str(i) for i in range(1,23)]+['X','Y']
 
-    l_FILTER_pass = ['PASS','PHI','PHI;PHR']
-    l_FILTER_pass = ['.','PASS']
+    l2, chrom2, pos2 = next(split_line_vcf(fd_gold))
 
-    ##FILTER=<ID=OC,Description="Coverage threshold exceeded">
-    ##FILTER=<ID=RC,Description="RTG variant is a complex region">
-    ##FILTER=<ID=RX,Description="RTG variant contained within hypercomplex region">
-    ##FILTER=<ID=RCEQUIV,Description="RTG variant is equivalent to the previous variant">
-    ##FILTER=<ID=OTHER,Description="Variant is invalid for unknown reasons">
-    ##FILTER=<ID=PHI,Description="This variant has a phasing incompatibility">
-    ##FILTER=<ID=PHR,Description="This variant should be ignored as it has been replaced by a variant with a repair for phasing incompatibility">
-    ##FILTER=<ID=PME,Description="This variant should be ignored as the genotype ploidy of some of the samples did not match the expected ploidy">
-    FILTER = None
-##    while FILTER not in :
-    while FILTER not in l_FILTER_pass:
-        l2, chrom2, pos2 = next(split_line_vcf(fd_gold))
-        FILTER = l2[6]
+    if fd_bed:
+        chrom_bed, pos1_bed, pos2_bed = next(split_line_bed(fd_bed))
 
     nFalse = 0
     nTrue = 0
 
-##    for l1, chrom1, pos1 in split_line_vcf(fd_predict):
-    while True:
-        if predict == 'vcf':
-            try:
-                l1, chrom1, pos1 = next(split_line_vcf(fd_predict))
-            except StopIteration:
-                break
-        else:
-            l1, chrom1, pos1 = next(split_line_bgl(fd_predict))
+    for l1, chrom1, pos1 in split_line_vcf(fd_predict):
+##    while True:
+##        try:
+##            l1, chrom1, pos1 = next(split_line_vcf(fd_predict))
+##        except StopIteration:
+##            break
 
         ## skip SNP/INDEL
-        if predict == 'vcf':
-            ref1 = l1[3]
-            alt1 = l1[4]
-        else:
-            ref1 = l1[1]
-            alt1 = l1[2]
-        bool_INDEL = is_INDEL(ref1, alt1)
-#        if pos1 == 726481:
-#            print(ref1,alt1)
-#            print(bool_INDEL)
-#            stop
-        if mode == 'SNP' and bool_INDEL == True:
-            continue
-        if mode == 'INDEL' and bool_INDEL == False:
-            continue
+        ref1 = l1[3]
+        alt1 = l1[4]
+        if args.mode != 'BOTH':
+            bool_INDEL = is_INDEL(ref1, alt1)
+    #        if pos1 == 726481:
+    #            print(ref1,alt1)
+    #            print(bool_INDEL)
+    #            stop
+            if args.mode == 'SNP' and bool_INDEL == True:
+                continue
+            if args.mode == 'INDEL' and bool_INDEL == False:
+                continue
 
-        ## skip non-call and reference-call
-        ## http://www.1000genomes.org/node/101
-        ## "The first sub-field must always be the genotype (GT)."
+        ## skip non-call and REFREF-call
         GT1 = l1[col1].split(':')[0]
         if GT1 == './.' or GT1 == '0/0':
-            if d_args['sort'] == 'VQSLOD':
+            if args.sort == 'VQSLOD':
                 ## Keep recal in sync with vcf line reading.
                 next(split_line_vcf(fd_recal))
             continue
 
+        ## bed filtering
+        if fd_bed:
+            while l_chroms.index(chrom1) > l_chroms.index(chrom_bed):
+                chrom_bed, pos1_bed, pos2_bed = next(split_line_bed(fd_bed))
+            while pos1 > pos2_bed:
+                chrom_bed, pos1_bed, pos2_bed = next(split_line_bed(fd_bed))
+            if pos1_bed > pos1:
+                if args.sort == 'VQSLOD':
+                    next(split_line_vcf(fd_recal))
+                continue
+            pass
+                
 ##        VQSLOD = parse_VQSLOD(fd_recal)
-        if d_args['sort'] == 'VQSLOD':
-            sort = VQSLOD = parse_VQSLOD(fd_recal,chrom1,pos1)
+        if args.sort == 'VQSLOD':
+            sort = VQSLOD = parse_VQSLOD(fd_recal, chrom1, pos1)
         else:
             sort = QUAL = l1[5] 
 
         bool_TF = None
         bool_break = False
+        bool_read = False
         while True:
             if chrom1 != chrom2:
                 if l_chroms.index(chrom1) > l_chroms.index(chrom2):
+                    bool_read = True
                     pass
                 else:
                     bool_TF = False
@@ -171,72 +146,76 @@ def loop_lines(
                 pass
             elif pos1 == pos2:
                 if bool_TF != None and l2[6] != 'PASS':
+                    stop1
                     pass
-                else:
-                    GT2 = l2[col2].split(':')[0].replace('|','/')
-                    ref2 = l2[3]
-                    alt2 = l2[4]
-                    ## compare genotypes
-##                    bool_TF = compareGT(GT1,ref1,alt1,GT2,ref2,alt2,bool_TF)
-                    ## do not compare genotypes/haplotypes, but only positions/sites
+                GT2 = l2[col2].split(':')[0].replace('|','/')
+                ref2 = l2[3]
+                alt2 = l2[4]
+                gt1 = GT2gt(GT1, ref1, alt1)
+                gt2 = GT2gt(GT2, ref2, alt2)
+                if gt1 == gt2:
                     bool_TF = True
-                    pass
-                pass
+                elif gt1 == list(reversed(gt2)):
+                    bool_TF = True
+                else:
+                    bool_TF = False
+                break
+##                ## compare genotypes
+####                bool_TF = compareGT(GT1,ref1,alt1,GT2,ref2,alt2,bool_TF)
+##                ## do not compare genotypes/haplotypes, but only positions/sites
+##                bool_TF = True
+##                pass
             elif pos1 > pos2:
+                bool_read = True
                 pass
             ## elif pos2 > pos1:
             else:
                 if bool_TF == None:
                     bool_TF = False ## FP or TN
+                else:
+                    stop2
                 break
-            FILTER = None
-            while FILTER not in l_FILTER_pass:
+            if bool_read:
                 try:
                     l2, chrom2, pos2 = next(split_line_vcf(fd_gold))
                 except StopIteration:
                     bool_break = True
-                    break
-                FILTER = l2[6]
+                bool_read = False
             if bool_break:
                 break
             continue
+        ## last variant of gold vcf
         if bool_break:
             break
 
-
-        if bool_TF == None: stoptmpunexpected
-
+        assert bool_TF != None
+        assert pos1 <= pos2
+        
         QUAL = l1[5]
 
-        ## this is wrong
-        if mode == 'INDEL':
-            l_refalt = [ref1]+alt1.split(',')
-            l_GT = GT1.split('/')
-##            l_lengths = [len(l_refalt[int(i)])-len(ref1) for i in l_GT]
-            if l_GT[0] == l_GT[1]:
-                bool_het = False
-            else:
-                bool_het = True
-        ## this is wrong
+        if len(gt1[0]) == len(ref1) and len(gt1[1]) == len(ref1):
+            bool_INDEL = False
+            type_variant = 'SNP'
+            if not len(ref1) == 1:  # assert not MNP
+                print(ref1, alt1, ref2, alt2)
+                print(gt1)
+                print(gt2)
+                stop
         else:
-##            l_lengths = [0]
-            if GT1 == '0/0' or GT1 == '1/1' or GT1 == '0|0' or GT1 == '1|1':
-                bool_het = False
-            else:
-                bool_het = True
-        l_lengths = [None]
-        for lengthINDEL in l_lengths:
-            if bool_TF == False:
-                nFalse +=1
-            else:
-                nTrue += 1
-            line = '{chrom}\t{pos}\t{bool_TF}\t{QUAL}'.format(
-                chrom=chrom1, pos=pos1, bool_TF=bool_TF, QUAL=QUAL,)
-##            line += '\t{sort}\t{length}\t{bool_het}\n'.format(
-##                sort=sort, length=lengthINDEL, bool_het=bool_het)
-            line += '\t{sort}\n'.format(
-                sort=sort)
-            fd_out.write(line)
+            bool_INDEL = True
+            type_variant = 'INDEL'
+
+        if bool_TF == False:
+            nFalse +=1
+        else:
+            nTrue += 1
+        line = '{chrom}\t{pos}\t{bool_TF}\t'.format(
+            chrom=chrom1, pos=pos1, bool_TF=bool_TF)
+        line += '{}\t{}\t{}\t'.format(QUAL, sort, GT1)
+        line += '{}\t{}\t'.format(ref1, alt1)
+        line += '\n'
+        fd_out.write(line)
+        print(line)
 
     print('False', nFalse)
     print('True', nTrue)
@@ -246,6 +225,20 @@ def loop_lines(
 ##'{if($3=="False") {FP++} else {TP++}; print FP/nFalse, TP/nTrue}'
 
     return
+
+
+def GT2gt(GT, ref, alt):
+
+    l = [ref]+alt.split(',')
+    gt = [l[int(i)] for i in GT.split('/')]
+
+    if ref == 'ACAAAAAAAAAC':
+        print(GT, ref, alt)
+        print(gt[0])
+        print(gt[1])
+        stop
+
+    return gt
 
 
 def parse_VQSLOD(fd_recal,chrom1,pos1):
@@ -403,28 +396,27 @@ def argparser():
 
     parser.add_argument('--gold', '--truth', required=True)
 
-    parser.add_argument('--recal')
-
-    parser.add_argument('--tranches')
+    parser.add_argument('--recal', required=False)
 
     parser.add_argument('--predict', required=True, nargs='+')
 
-    parser.add_argument('--sampleID_predict')
+    parser.add_argument('--sampleID_predict', required=False)
 
-    parser.add_argument('--sampleID_gold', '--sampleID_truth')
+    parser.add_argument(
+        '--sampleID_gold', '--sampleID_truth', required=False)
 
-    parser.add_argument('--mode', choices=['BOTH','SNP','INDEL'])
+    parser.add_argument('--mode', default='BOTH', choices=['BOTH','SNP','INDEL'])
 
-    parser.add_argument('--sort', default='QUAL', choices=['QUAL', 'VQSLOD'])
+    parser.add_argument(
+        '--sort', default='QUAL', choices=['QUAL', 'VQSLOD'], required=True)
 
     parser.add_argument('--out')
 
-##    print(vars(parser.parse_args()))
-    d_args = {}
-    for name,value in vars(parser.parse_args()).items():
-        d_args[name] = value
+    parser.add_argument('--bed', required=False)
 
-    return d_args
+    args = parser.parse_args()
+
+    return args
 
 
 if __name__ == '__main__':
