@@ -32,12 +32,12 @@ class main():
         if self.args.AR_input:
             self.run_ApplyRecalibration()
 
-##        self.HaplotypeCaller()
-##        self.CombineGVCFs()
-##        self.GenotypeGVCFs()
-##
-##        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
-##        self.VariantRecalibrator()
+        self.HaplotypeCaller()
+        self.CombineGVCFs()
+        self.GenotypeGVCFs()
+
+        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
+        self.VariantRecalibrator()
 
         self.ApplyRecalibration()
 
@@ -488,6 +488,9 @@ and requires less than 100MB of memory'''
              BgzfWriter(fp_out, 'wb') as fd_out:
             ## write meta-information header
             print('##fileformat=VCFv4.1', file=fd_out)
+            print('##filedate={}'.format(
+                datetime.datetime.now().strftime("%Y%m%d")), file=fd_out)
+            print('##source="GATK_pipeline.py"', file=fd_out)
             chrom_SNP = chrom_INDEL = None
             for line_VCF in fd_source:
                 if line_VCF[:2] == '##':
@@ -547,7 +550,10 @@ and requires less than 100MB of memory'''
 
         memMB = 12900  # todo: move to argparse
         window = 50000  # todo: move to argparse
-        queue = 'normal'  # todo: move to argparse
+        if self.checkpoint:
+            queue = 'normal'  # todo: move to argparse
+        else:
+            queue = 'basement'
 
         l_chroms = []
         for source_SNP in self.parse_sources()['SNP']:
@@ -570,12 +576,13 @@ and requires less than 100MB of memory'''
         lines = ['#!/bin/bash\n']
         ## parse chromosome from command line
         lines += ['chrom=$1']
-        lines += ['pos1=$2']
-        lines += ['pos2=$3']
+        lines += ['pos1=$3']
+        lines += ['pos2=$4']
+        lines += ['LSB_JOBINDEX=$2']
         lines += ['out=out_BEAGLE/$chrom/${LSB_JOBINDEX}']
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
-        lines += ['if [ -s $out.gprobs.gz ]; then exit; fi']
+        lines += ['if [ -s $out.vcf.gz ]; then exit; fi']
         ## initiate BEAGLE
         lines += ['{} \\'.format(
             self.init_java(self.fp_software_beagle, memMB))]
@@ -603,11 +610,12 @@ and requires less than 100MB of memory'''
         lines += [' nsamples=4 \\']
         lines += [' buildwindow=1200 \\']
         ## term cmd
-        lines += self.term_cmd('BEAGLE', ['$out.gprobs.gz'],)
+        lines += self.term_cmd('BEAGLE', ['$out.vcf.gz'],)
         ## write shell script
         if not os.path.isfile('shell/BEAGLE.sh'):
             self.write_shell('shell/BEAGLE.sh',lines,)
-
+        if self.bool_checkpoint and not os.path.isfile('shell/brestart.sh'):
+            self.write_brestart()
         if not os.path.isdir('LSF/BEAGLE'):
             os.mkdir('LSF/BEAGLE')
 
@@ -615,6 +623,7 @@ and requires less than 100MB of memory'''
         ## execute shell script
         ##
         for chrom in l_chroms:
+            if chrom in [str(c) for c in range(9,12)]: continue #tmp!!!
             print('BEAGLE chrom', chrom)
             fd_vcf = gzip.open(
                 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom), 'rt')
@@ -642,7 +651,6 @@ and requires less than 100MB of memory'''
 
             pos2 = pos
             index = (cnt//window)+1
-            stop3
             self.bsub_BEAGLE(chrom, pos1, pos2, index, memMB, queue)
 
         return
@@ -650,10 +658,11 @@ and requires less than 100MB of memory'''
 
     def bsub_BEAGLE(self, chrom, pos1, pos2, index, memMB, queue):
 
+        fn_out = 'out_BEAGLE/{}/{}.vcf.gz'.format(
+            chrom, index)
+
         ## finished?
-        fn_out = 'out_BEAGLE/{}/{}.{}.gprobs.gz'.format(
-            chrom, chrom, index)
-        if os.path.isfile(fn_out):
+        if os.path.isfile('{}.tbi'.format(fn_out)):
             return
 
         ## started and running?
@@ -662,33 +671,72 @@ and requires less than 100MB of memory'''
             if os.path.getsize(fn):
                 ## running?
                 with open(fn) as f:
-                    if 'iteration' in f.readlines()[-1]:
+                    line = f.readlines()[-1]
+                    if 'mean edges' in line or 'iterations' in line:
                         return
+            else:
+                stop
 
         print(chrom,index)
 
-        J = '{}.{}[{}-{}]'.format('BEAGLE', chrom, index, index,)
-        LSF_affix = '{}/{}.%I'.format('BEAGLE', chrom)
-        cmd = self.bsub_cmd(
+        J = '{}.{}.{}'.format('BEAGLE', chrom, index,)
+        LSF_affix = '{}/{}.{}'.format('BEAGLE', chrom, index)
+        cmd_BEAGLE = self.bsub_cmd(
             'BEAGLE', J, memMB=memMB, LSF_affix=LSF_affix,
-            chrom=chrom, queue=queue, pos1=pos1, pos2=pos2,)
+            chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index)
 
         if self.bool_checkpoint:
-            s = subprocess.check_output(cmd, shell=True).decode()
+            s = subprocess.check_output(cmd_BEAGLE, shell=True).decode()
             print(s)
             jobID = int(re.match('.*?<(.*?)>',s).group(1))
             print(jobID)
-            cmd = 'bash brestart.sh %i %s %i' %(jobID, self.project, memMB)
-            cmd = 'bsub -G %s -q small -w "ended(%i)" %s' %(
-                self.project, jobID, cmd)
-            print(cmd)
-            subprocess.call(cmd, shell=True)
+            cmd_brestart = 'bsub -G %s' %(self.project)
+            cmd_brestart += ' -o brestart.out -e brestart.err'
+            cmd_brestart += ' -q small -w "ended(%i)"' %(jobID)
+            cmd_brestart += ' bash shell/brestart.sh %i %s %i' %(
+                jobID, self.project, memMB)
+            print(cmd_brestart)
+            print()
+            subprocess.call(cmd_brestart, shell=True)
         else:
-            subprocess.call(cmd, shell=True)
-
-        stop
+            subprocess.call(cmd_BEAGLE, shell=True)
 
         return
+
+
+    def bsub_cmd(
+        self,
+        analysis_type,
+        J,
+        queue='normal',memMB=4000,
+        LSF_affix=None,
+        chrom=None, index=None, pos1=None, pos2=None,
+        num_threads=None, bam=None, mode=None,
+        ):
+
+        if not LSF_affix:
+            LSF_affix = '{}/{}'.format(analysis_type, analysis_type,)
+
+        cmd = 'bsub -J"{}" -q {}'.format(J,queue,)
+        cmd += ' -G {}'.format(self.project)
+        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
+            memMB,memMB,memMB,)
+        cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
+        cmd += ' -e {}/LSF/{}.err'.format(os.getcwd(), LSF_affix)
+        if num_threads:
+            cmd += ' -n{} -R"span[hosts=1]"'.format(num_threads)
+        if self.bool_checkpoint:
+            cmd += ' -k "{} method=blcrkill 600"'.format(
+                os.path.join(os.getcwd(), 'checkpoint'))
+            cmd += ' -r'
+        if self.bool_checkpoint:
+            cmd += ' cr_run'
+        cmd += ' bash {}/shell/{}.sh'.format(os.getcwd(), analysis_type,)
+        for x in (chrom, index, bam, mode, pos1, pos2):
+            if x:
+                cmd += ' {}'.format(x)
+
+        return cmd
 
 
     def shell_CombineGVCFs(self, T, memMB):
@@ -871,32 +919,37 @@ and requires less than 100MB of memory'''
 
     def write_brestart(self,):
 
-        with open('brestart.sh', 'w') as f:
+        with open('shell/brestart.sh', 'w') as f:
             f.write('sleep 30\n')
             f.write("IFS=$'\\n'\n")
             f.write('jobID=$1\n')
             f.write('project=$2\n')
             f.write('memMB=$3\necho memMB $memMB\n')
             f.write('pwd=$(pwd)\n')
+            ## parse bhist
             f.write('bhist=$(bhist -l $jobID)\n')
             f.write('i=$(echo $bhist | fgrep TERM_RUNLIMIT | wc -l)\n') ## exit code 140, run limit
             f.write('j=$(echo $bhist | fgrep "Exited with exit code 16" | wc -l)\n') ## exit code 16, pid taken
             f.write('k=$(echo $bhist | fgrep "Checkpoint failed" | wc -l)\n')
             f.write('l=$(echo $bhist | fgrep "Done successfully" | wc -l)\n')
-            f.write('if [ $l -eq 0 ]; then\n')
-            f.write('if [ $i -eq 0 -a $j -eq 0 -a $k -eq 0 ]; then echo $bhist >> bhist_unexpectederror_or_success.tmp; exit; fi\n')
-            f.write('fi\n')
+            ## exit if done succesfully
+            f.write('if [ $l -eq 1 ]; then echo $bhist >> bhist_success.tmp; exit; fi\n')
+            ## exit if not done succesfully or unknown error
+            f.write('if [ $l -eq 0 -a $i -eq 0 -a $j -eq 0 -a $k -eq 0 ]; then echo $bhist >> bhist_unexpectederror.tmp; exit; fi\n')
+            ## restart job and capture jobID
             f.write('s=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
-            f.write('echo s $s\n')
-            f.write('if [ $k -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
+            ## report if checkpoint failed
+            f.write('if [ $k -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
+            ## be verbose
+            f.write('echo s $s\n')
             f.write('echo jobID $jobID\n')
             f.write('echo memMB $memMB\n')
-#            f.write("bsub -R 'select[mem>900] rusage[mem=900]' -M900 \\\n")
+            ## bsub this chaperone restart script again
             f.write("bsub -R 'select[mem>'$memMB'] rusage[mem='$memMB']' -M$memMB \\\n")
             f.write(' -o tmp_brestart2.out -e tmp_brestart2.err \\\n')
             f.write(' -G $project -q normal -w "ended($jobID)" \\\n')
-            f.write(' bash brestart.sh $jobID $project $memMB\n')
+            f.write(' bash shell/brestart.sh $jobID $project $memMB\n')
 
         return
 
@@ -1045,64 +1098,6 @@ and requires less than 100MB of memory'''
         return lines
 
 
-    def ApplyRecalibration_emit_INDELs(self):
-
-        analysis_type = T = 'ApplyRecalibration'
-        mode = 'SNP'
-##        num_threads = 1
-        queue = 'normal'
-        memMB = 15900
-
-        for mode in ['SNP']:
-
-            ## check input existence
-            fp_recal = 'out_VariantRecalibrator/{}.recal'.format(mode)
-            fp_tranches = 'out_VariantRecalibrator/{}.tranches'.format(mode)
-            if self.check_in(
-                'VariantRecalibrator', [fp_recal, fp_tranches,],
-                'touch/VariantRecalibrator.SNP.touch'):
-                continue
-
-            ## check if process already started and otherwise lock for this process
-            if self.touch('{}.{}'.format(analysis_type, mode)):
-                continue
-
-            ## write shell script
-            lines = []
-            lines += ['chrom=$1']
-            lines += ['mode=$2']
-            lines += ['out=out_{}/$mode.$chrom.vcf.gz\n'.format(T)]
-            lines += self.init_GATK_cmd(analysis_type, memMB,)
-            lines += [
-                ' --input out_GenotypeGVCFs/$chrom.vcf.gz \\']
-            lines += [' --recal_file {} \\'.format(fp_recal)]
-            lines += [' --tranches_file {} \\'.format(fp_tranches)]
-            lines += [' --out $out \\']
-            lines += [' --mode $mode \\']
-            lines += [' --excludeFiltered \\']
-            lines += [
-                ' --ts_filter_level {:.1f} \\'.format(self.ts_filter_level)]
-            lines += self.term_cmd(
-                '{}.$mode'.format(analysis_type), ['$out'],)
-            if not os.path.isfile('shell/{}.sh'.format(T)):
-                self.write_shell('shell/{}.sh'.format(T), lines,)
-
-            ## create LSF folder
-            if not os.path.isdir('LSF/{}'.format(T)):
-                os.mkdir('LSF/{}'.format(T))
-
-            ## execute shell script
-            for chrom in self.chroms:
-                J = 'AR.{}.{}'.format(mode, chrom)
-                cmd = self.bsub_cmd(
-                    analysis_type, J, memMB=memMB,
-                    LSF_affix='{}/{}.{}'.format(analysis_type, mode, chrom),
-                    queue=queue, mode=mode, chrom=chrom,)
-                self.execmd(cmd)
-
-        return
-
-
 
     def init_GATK_cmd(self, analysis_type, memMB):
 
@@ -1133,41 +1128,6 @@ and requires less than 100MB of memory'''
 
 
         return lines
-
-
-    def bsub_cmd(
-        self,
-        analysis_type,
-        J,
-        queue='normal',memMB=4000,
-        LSF_affix=None,
-        chrom=None, index=None, pos1=None, pos2=None,
-        num_threads=None, bam=None, mode=None,
-        ):
-
-        if not LSF_affix:
-            LSF_affix = '{}/{}'.format(analysis_type, analysis_type,)
-
-        cmd = 'bsub -J"{}" -q {}'.format(J,queue,)
-        cmd += ' -G {}'.format(self.project)
-        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
-            memMB,memMB,memMB,)
-        cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
-        cmd += ' -e {}/LSF/{}.err'.format(os.getcwd(), LSF_affix)
-        if num_threads:
-            cmd += ' -n{} -R"span[hosts=1]"'.format(num_threads)
-        if self.bool_checkpoint:
-            cmd += ' -k "{} method=blcr 710"'.format(
-                os.path.join(os.getcwd(), 'checkpoint'))
-            cmd += ' -r'
-        if self.bool_checkpoint:
-            cmd += ' cr_run'
-        cmd += ' bash {}/shell/{}.sh'.format(os.getcwd(),analysis_type,)
-        for x in (chrom, index, bam, mode, pos1, pos2):
-            if x:
-                cmd += ' {}'.format(x)
-
-        return cmd
 
 
     def term_cmd(self, analysis_type, l_fp_out, extra=None):
