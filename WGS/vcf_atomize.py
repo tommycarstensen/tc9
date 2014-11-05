@@ -57,27 +57,20 @@ def print_new_line(line, fd_out, pattern, d_fai, fd_ref, args):
         REFALT_tuples = [(POS, REF, ALT, (0,1), (0,1))]
         type_variant = 'SNP'
         pass
-    ## 2) MNP or multiallelic SNP
+    ## 2) MNP
     elif len(REF) > 1 and all([len(ALT_i) == len(REF) for ALT_i in l_ALT]):
-        ## multiallelic SNP
-        if len(REF) == 1:
-            type_variant == 'SNP'
-            print(REF, ALT)
-            stop
-        ## MNP
-        else:
-            type_variant = 'MNP'
-            REFALT_tuples = []
-            for POS_new, REFALT in enumerate(zip(*[REF]+l_ALT), POS):
-                if not args.keep_multiallelics:
-                    REFALT_tuples += [
-                        (POS_new, REFALT[0], REFALT[i], (0,1), (0,i))
-                        for i in range(1, len(REFALT))]
-                else:
-                    REFALT_tuples += [(
-                        POS_new, REFALT[0], ','.join(REFALT[1:]),
-                        tuple(range(len(REFALT))),
-                        tuple(range(len(REFALT))))]
+        type_variant = 'MNP'
+        REFALT_tuples = []
+        for POS_new, REFALT in enumerate(zip(*[REF]+l_ALT), POS):
+            if not args.keep_multiallelics:
+                REFALT_tuples += [
+                    (POS_new, REFALT[0], REFALT[i], (0,1), (0,i))
+                    for i in range(1, len(REFALT))]
+            else:
+                REFALT_tuples += [(
+                    POS_new, REFALT[0], ','.join(REFALT[1:]),
+                    tuple(range(len(REFALT))),
+                    tuple(range(len(REFALT))))]
     ## 4) INDEL or multiallelic SNP or complex (e.g. MNP and INDEL)
     else:
         if (
