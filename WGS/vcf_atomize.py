@@ -96,8 +96,11 @@ def print_new_line(line, fd_out, pattern, d_fai, fd_ref, args):
     for (
         i, (POS_new, REF_new, ALT_new, GT_tuple_new, GT_tuple_old)
         ) in enumerate(REFALT_tuples):
-        if REF_new == ALT_new:
-            continue
+        ## continue if REF and ALT identical
+        if type_variant != 'SNP':
+            if all([REF_new == ALT_new.split(',')[i] for i in range(len(ALT_new.split(',')))]):
+                continue
+        assert not all([REF_new == ALT_new.split(',')[i] for i in range(len(ALT_new.split(',')))])
         POS_new, REF_new, ALT_new = trim_and_left_align(
             d_fai, fd_ref, CHROM, POS_new, REF_new, ALT_new)
         REFALT_tuples[i] = (POS_new, REF_new, ALT_new, GT_tuple_new, GT_tuple_old)
