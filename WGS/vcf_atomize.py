@@ -100,30 +100,6 @@ def print_new_line(line, fd_out, pattern, d_fai, fd_ref, args):
                 for i in range(len(l_ALT))]
         type_variant = 'INDEL'
 
-    assert type(REFALT_tuples) == list
-    assert type(REFALT_tuples[0]) == tuple
-    assert type(REFALT_tuples[0][0]) == int
-    try:
-        assert type(REFALT_tuples[0][1]) == str
-    except:
-        print(REFALT_tuples, REFALT_tuples[0][1])
-        stop1
-    assert type(REFALT_tuples[0][2]) == str
-    try:
-        assert type(REFALT_tuples[0][3]) == tuple
-    except:
-        print(REFALT_tuples)
-        stop2
-    assert type(REFALT_tuples[0][3][0]) == int
-    assert REFALT_tuples[0][3][0] == 0
-    assert type(REFALT_tuples[0][3][1]) == int
-    assert REFALT_tuples[0][3][1] != 0
-    assert type(REFALT_tuples[0][4]) == tuple
-    assert type(REFALT_tuples[0][4][0]) == int
-    assert REFALT_tuples[0][4][0] == 0
-    assert type(REFALT_tuples[0][4][1]) == int
-    assert REFALT_tuples[0][4][1] != 0
-
     for (
         i, (POS_new, REF_new, ALT_new, GT_tuple_new, GT_tuple_old)
         ) in enumerate(REFALT_tuples):
@@ -138,11 +114,6 @@ def print_new_line(line, fd_out, pattern, d_fai, fd_ref, args):
         ## sort by POS_new and GT_tuple_old
         ) in sorted(REFALT_tuples, key = operator.itemgetter(0, 4)):
 
-        if type_variant == 'MNP' and REF_new == ALT_new:
-            continue
-        assert REF_new != ALT_new
-        POS_new, REF_new, ALT_new = trim_and_left_align(
-            d_fai, fd_ref, CHROM, POS_new, REF_new, ALT_new)
         if not args.keep_multiallelics:
             assert len(ALT_new.split(',')) == 1
         line_new = '{CHROM}\t{POS}\t{ID}\t{REF}\t{ALT}\t\
