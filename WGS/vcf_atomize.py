@@ -249,6 +249,10 @@ def open_file(file, mode='r'):
 
 def read_fai(path_fai):
 
+    if not os.path.exists(path_fai):
+        sys.stderr.write('Does not exist: {}'.format(path_fai))
+        sys.exit()
+
     d = {}
     with open(path_fai) as file_fai:
         for line_fai in file_fai:
