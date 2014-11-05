@@ -138,6 +138,9 @@ def print_new_line(line, fd_out, pattern, d_fai, fd_ref, args):
         ## sort by POS_new and GT_tuple_old
         ) in sorted(REFALT_tuples, key = operator.itemgetter(0, 4)):
 
+        if type_variant == 'MNP' and REF_new == ALT_new:
+            continue
+        assert REF_new != ALT_new
         POS_new, REF_new, ALT_new = trim_and_left_align(
             d_fai, fd_ref, CHROM, POS_new, REF_new, ALT_new)
         if not args.keep_multiallelics:
