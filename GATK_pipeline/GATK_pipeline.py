@@ -36,13 +36,19 @@ class main():
         self.CombineGVCFs()
         self.GenotypeGVCFs()
 
-        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
+##        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
+##        self.chroms.remove('X')  ## tmp!!!
+##        self.chroms.remove('Y')  ## tmp!!!
+##        self.chroms.remove('MT')  ## tmp!!!
         self.VariantRecalibrator()
 
         self.ApplyRecalibration()
 
-##        ## phased imputation reference panels not available for chrY
-##        self.chroms.remove('Y')
+        ## phased imputation reference panels not available for chrY
+        try:
+            self.chroms.remove('Y')
+        except ValueError:
+            pass
 ##        ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
 ##        self.chroms.remove('X')
         self.BEAGLE4()
@@ -552,8 +558,13 @@ and requires less than 100MB of memory'''
         window = 50000  # todo: move to argparse
         if self.checkpoint:
             queue = 'normal'  # todo: move to argparse
+            nthreads = 1
         else:
             queue = 'basement'
+            nthreads = 1
+            queue = 'long'
+            nthreads = 4
+            nthreads = 12
 
         l_chroms = []
         for source_SNP in self.parse_sources()['SNP']:
@@ -594,27 +605,28 @@ and requires less than 100MB of memory'''
 ##        lines += [' excludemarkers={} \\'.format(excludemarkers)]
         lines += [' chrom=$chrom:$pos1-$pos2 \\']
         ## Other arguments
-        lines += [' nthreads=1 \\']
-        lines += [' window={} \\'.format(window)]
-        lines += [' overlap=3000 \\']
+        lines += [' nthreads={:d} \\'.format(nthreads)]
+        lines += [' window={} \\'.format(window)]  # default 50000 as of r1274
+        lines += [' overlap=3000 \\']  # default 3000
         lines += [' gprobs=true \\']
         lines += [' usephase=false \\']
         lines += [' seed=-99999 \\']
-        lines += [' singlescale=1.0 \\']
-        lines += [' duoscale=1.0 \\']
-        lines += [' trioscale=1.0 \\']
-        lines += [' burnin-its=5 \\']
-        lines += [' phase-its=5 \\']
-        lines += [' impute-its=5 \\']
+        lines += [' singlescale=0.8 \\']  # default 0.8 as of r1389
+        lines += [' duoscale=1.0 \\']  # default 1.0
+        lines += [' trioscale=1.0 \\']  # default 1.0
+        lines += [' burnin-its=5 \\']  # default 5
+        lines += [' phase-its=5 \\']  # default 5
+        lines += [' impute-its=5 \\']  # default 5
         ## Advanced options not recommended for general use
-        lines += [' nsamples=4 \\']
-        lines += [' buildwindow=1200 \\']
+        lines += [' nsamples=4 \\']  # default 4
+        lines += [' buildwindow=1200 \\']  # default 1200 as of r1274
         ## term cmd
-        lines += self.term_cmd('BEAGLE', ['$out.vcf.gz'],)
+        lines += self.term_cmd(
+            'BEAGLE', ['$out.vcf.gz'], extra='tabix -p vcf $out.vcf.gz')
         ## write shell script
         if not os.path.isfile('shell/BEAGLE.sh'):
             self.write_shell('shell/BEAGLE.sh',lines,)
-        if self.bool_checkpoint and not os.path.isfile('shell/brestart.sh'):
+        if self.checkpoint:
             self.write_brestart()
         if not os.path.isdir('LSF/BEAGLE'):
             os.mkdir('LSF/BEAGLE')
@@ -623,7 +635,6 @@ and requires less than 100MB of memory'''
         ## execute shell script
         ##
         for chrom in l_chroms:
-            if chrom in [str(c) for c in range(9,12)]: continue #tmp!!!
             print('BEAGLE chrom', chrom)
             fd_vcf = gzip.open(
                 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom), 'rt')
@@ -641,7 +652,8 @@ and requires less than 100MB of memory'''
                 elif cnt % window == 0:
                     pos2 = pos
                     index = cnt//window
-                    self.bsub_BEAGLE(chrom, pos1, pos2, index, memMB, queue)
+                    self.bsub_BEAGLE(
+                        chrom, pos1, pos2, index, memMB, queue, nthreads)
                     print(chrom, ':', pos1, '-', pos2, index, cnt)
                     pos = pos_prev = None
                 else:
@@ -651,12 +663,13 @@ and requires less than 100MB of memory'''
 
             pos2 = pos
             index = (cnt//window)+1
-            self.bsub_BEAGLE(chrom, pos1, pos2, index, memMB, queue)
+            self.bsub_BEAGLE(
+                chrom, pos1, pos2, index, memMB, queue, nthreads)
 
         return
 
 
-    def bsub_BEAGLE(self, chrom, pos1, pos2, index, memMB, queue):
+    def bsub_BEAGLE(self, chrom, pos1, pos2, index, memMB, queue, nthreads):
 
         fn_out = 'out_BEAGLE/{}/{}.vcf.gz'.format(
             chrom, index)
@@ -668,11 +681,33 @@ and requires less than 100MB of memory'''
         ## started and running?
         fn = 'LSF/BEAGLE/{}.{}.out'.format(chrom, index)
         if os.path.isfile(fn):
+            print('a', fn)
             if os.path.getsize(fn):
+                print('b', fn)
                 ## running?
                 with open(fn) as f:
                     line = f.readlines()[-1]
+                    print(line)
                     if 'mean edges' in line or 'iterations' in line:
+                        return
+            else:
+                stop
+
+        ## started and finished? ## tmp!!!
+        fn = 'out_BEAGLE/{}/{}.log'.format(chrom, index)
+        if os.path.isfile(fn):
+            print('a', fn)
+            if os.path.getsize(fn):
+                print('b', fn)
+                ## running?
+                with open(fn) as f:
+                    line = f.readlines()[-1]
+                    print(line)
+                    if line.rstrip().split()[-1] == 'finished':
+                        stopshouldnothappen ## tmp!!!
+##                        subprocess.call(
+##                            'tabix -p vcf out_BEAGLE/{}/{}.vcf.gz'.format(
+##                                chrom, index), shell=True)
                         return
             else:
                 stop
@@ -683,9 +718,10 @@ and requires less than 100MB of memory'''
         LSF_affix = '{}/{}.{}'.format('BEAGLE', chrom, index)
         cmd_BEAGLE = self.bsub_cmd(
             'BEAGLE', J, memMB=memMB, LSF_affix=LSF_affix,
-            chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index)
+            chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index,
+            num_threads=nthreads)
 
-        if self.bool_checkpoint:
+        if self.checkpoint:
             s = subprocess.check_output(cmd_BEAGLE, shell=True).decode()
             print(s)
             jobID = int(re.match('.*?<(.*?)>',s).group(1))
@@ -724,12 +760,12 @@ and requires less than 100MB of memory'''
         cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
         cmd += ' -e {}/LSF/{}.err'.format(os.getcwd(), LSF_affix)
         if num_threads:
-            cmd += ' -n{} -R"span[hosts=1]"'.format(num_threads)
-        if self.bool_checkpoint:
+            cmd += ' -n{:d} -R"span[hosts=1]"'.format(num_threads)
+        if self.checkpoint:
             cmd += ' -k "{} method=blcrkill 600"'.format(
                 os.path.join(os.getcwd(), 'checkpoint'))
             cmd += ' -r'
-        if self.bool_checkpoint:
+        if self.checkpoint:
             cmd += ' cr_run'
         cmd += ' bash {}/shell/{}.sh'.format(os.getcwd(), analysis_type,)
         for x in (chrom, index, bam, mode, pos1, pos2):
@@ -776,14 +812,21 @@ and requires less than 100MB of memory'''
         lines += [' -L $chrom \\']
         lines += [' -V lists/{}.$chrom.list \\'.format(T)]
         lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
-        lines += [' -nt 4 \\'.format(T)]
+        lines += [' -nt 8 \\'.format(T)]
         lines += [' --annotation InbreedingCoeff \\']  # default
-        lines += [' --annotation FisherStrand \\']  # default
+#        lines += [' --annotation FisherStrand \\']  # default
+        lines += [' --annotation StrandOddsRatio \\']  # default in 3.3?
         lines += [' --annotation QualByDepth \\']  # default
         lines += [' --annotation ChromosomeCounts \\']  # default
         lines += [' --annotation GenotypeSummaries \\']  # default
         lines += [' --annotation MappingQualityRankSumTest \\']
         lines += [' --annotation ReadPosRankSumTest \\']
+        if self.coverage > 10:
+            lines += [' --standard_min_confidence_threshold_for_calling 30 \\']
+            lines += [' --standard_min_confidence_threshold_for_emitting 30 \\']
+        else:
+            lines += [' --standard_min_confidence_threshold_for_calling 0 \\']
+            lines += [' --standard_min_confidence_threshold_for_emitting 0 \\']
 
         ## terminate shell script
         lines += self.term_cmd(T, ['$out.tbi'])
@@ -849,7 +892,7 @@ and requires less than 100MB of memory'''
         s = '{} -Djava.io.tmpdir={}'.format(java, 'tmp')
         ## set maximum heap size
         s += ' -Xmx{}m'.format(memMB)
-        if self.bool_checkpoint:
+        if self.checkpoint:
             s += ' -XX:-UsePerfData -Xrs '
         s += ' \\\n -jar {}'.format(jar)
 
@@ -921,6 +964,7 @@ and requires less than 100MB of memory'''
 
         with open('shell/brestart.sh', 'w') as f:
             f.write('sleep 30\n')
+            ## internal field separator
             f.write("IFS=$'\\n'\n")
             f.write('jobID=$1\n')
             f.write('project=$2\n')
@@ -928,26 +972,36 @@ and requires less than 100MB of memory'''
             f.write('pwd=$(pwd)\n')
             ## parse bhist
             f.write('bhist=$(bhist -l $jobID)\n')
-            f.write('i=$(echo $bhist | fgrep TERM_RUNLIMIT | wc -l)\n') ## exit code 140, run limit
-            f.write('j=$(echo $bhist | fgrep "Exited with exit code 16" | wc -l)\n') ## exit code 16, pid taken
-            f.write('k=$(echo $bhist | fgrep "Checkpoint failed" | wc -l)\n')
-            f.write('l=$(echo $bhist | fgrep "Done successfully" | wc -l)\n')
+            ## Checkpoint succeeded
+            f.write('''cpsucc=$(echo $bhist | sed 's/ *//g' | grep Checkpointsucceeded | wc -l)\n''')
+            ##  exit code 13, TERM_CHKPNT, Job killed after checkpointing
+            f.write('''exit13=$(echo $bhist | sed 's/ *//g' | grep "Exitedwithexitcode13" | wc -l)\n''')  # could also be 13x
+            ##  exit code 143, SIGTERM
+            f.write('''exit143=$(echo $bhist | sed 's/ *//g' | grep "Exitedwithexitcode143" | wc -l)\n''')
+            ## exit code 140, run limit
+            f.write('''exit140=$(echo $bhist | grep TERM_RUNLIMIT | wc -l)\n''')
+            ## exit code 16, pid taken
+            f.write('''exit16=$(echo $bhist | sed 's/ *//g'| grep Exitedwithexitcode16 | wc -l)\n''')
+            ## Checkpoint failed
+            f.write('''cpfail=$(echo $bhist | sed 's/ *//g'| grep "Checkpointfailed" | wc -l)\n''')
+            ## Done successfully
+            f.write('''donesuc=$(echo $bhist | sed 's/ *//g'| grep "Donesuccessfully" | wc -l)\n''')
             ## exit if done succesfully
-            f.write('if [ $l -eq 1 ]; then echo $bhist >> bhist_success.tmp; exit; fi\n')
-            ## exit if not done succesfully or unknown error
-            f.write('if [ $l -eq 0 -a $i -eq 0 -a $j -eq 0 -a $k -eq 0 ]; then echo $bhist >> bhist_unexpectederror.tmp; exit; fi\n')
+            f.write('if [ $donesuc -eq 1 ]; then echo $bhist >> bhist_success.tmp; exit; fi\n')
+            ## exit if not checkpoint succeeded and not PID taken
+            f.write('if [ $exit143 -eq 0 -a $cpsucc -eq 0 -a $exit13 -eq 0 -a $exit16 -eq 0 ]; then echo $bhist >> bhist_unexpectederror.tmp; exit; fi\n')
             ## restart job and capture jobID
             f.write('s=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
             ## report if checkpoint failed
-            f.write('if [ $k -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
+            f.write('if [ $cpfail -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
             ## be verbose
             f.write('echo s $s\n')
             f.write('echo jobID $jobID\n')
             f.write('echo memMB $memMB\n')
             ## bsub this chaperone restart script again
             f.write("bsub -R 'select[mem>'$memMB'] rusage[mem='$memMB']' -M$memMB \\\n")
-            f.write(' -o tmp_brestart2.out -e tmp_brestart2.err \\\n')
+            f.write(' -o brestart.out -e brestart.err \\\n')
             f.write(' -G $project -q normal -w "ended($jobID)" \\\n')
             f.write(' bash shell/brestart.sh $jobID $project $memMB\n')
 
@@ -1077,9 +1131,11 @@ and requires less than 100MB of memory'''
         s_annotation = ''
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
         ## http://gatkforums.broadinstitute.org/discussion/2318/undocumented-change-in-2-4-a-depthofcoverage
-        s_annotation += ' --annotation Coverage'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
-        s_annotation += ' -A FisherStrand'
+        s_annotation += ' -A Coverage'
+##        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
+##        s_annotation += ' -A FisherStrand'
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_annotator_StrandOddsRatio.php
+        s_annotation += ' -A StrandOddsRatio'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_HaplotypeScore.html
         s_annotation += ' -A HaplotypeScore'
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
@@ -1332,8 +1388,7 @@ and requires less than 100MB of memory'''
         ## optional arguments
         ##
         parser.add_argument(
-            '--checkpoint', '--bool_checkpoint', dest='bool_checkpoint',
-            action='store_true', default=False)
+            '--checkpoint', action='store_true', default=False)
 
         parser.add_argument(
             '--chroms', type=str, nargs='+',
