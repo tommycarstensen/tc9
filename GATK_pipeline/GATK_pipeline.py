@@ -108,6 +108,8 @@ class main():
                 if not os.path.getsize(d_sex2bamlist[sex]):
                     continue
 
+                sample_ploidy = get_ploidy(chrom, sex)
+
                 for i in range(1, 1+math.ceil((cstop-cstart)/size_fragment_bp)):
 
                     pos1 = cstart+(i-1)*size_fragment_bp
@@ -137,7 +139,10 @@ class main():
                         'out_{}'.format(affix)), exist_ok=True)
 
                     variables = []
-                    variables += ['chrom={}'.format(chrom)]
+                    if chrom in ('PAR1', 'PAR2'):
+                        variables += ['chrom=X']
+                    else:
+                        variables += ['chrom={}'.format(chrom)]
                     variables += ['pos1={}'.format(pos1)]
                     variables += ['pos2={}'.format(pos2)]
                     variables += ['XL={}'.format(XL)]
@@ -145,6 +150,7 @@ class main():
                     variables += ['out=out_{}.vcf.gz'.format(affix)]
                     variables += ['nct={}'.format(nct)]
                     variables += ['nt={}'.format(nt)]
+                    variables += ['sample_ploidy={}'.format(sample_ploidy)]
                     variables = ' '.join(variables)
 
                     LSB_JOBNAME = '{} {} {} {}'.format('UG', chrom, i, sex)
@@ -155,6 +161,20 @@ class main():
                     self.execmd(cmd)
 
         return
+
+
+    def get_ploidy(self, chrom, sex):
+        
+        if chrom == 'Y':
+            sample_ploidy = 1
+        elif chrom == 'X' and sex == 'f':
+            sample_ploidy = 2
+        elif chrom == 'X' and sex == 'm':
+            sample_ploidy = 1
+        else:
+            sample_ploidy = 2
+
+        return sample_ploidy
 
 
     def get_sex_and_XL(self, chrom):
@@ -168,9 +188,6 @@ class main():
                 'f':'lists/bams.f.list'}
 ##                elif chrom in ('PAR1', 'PAR2'):
             XL = 'lists/XL.PAR.list'
-        else:
-            d_sex2bamlist = {'':'lists/bams.list'}
-            XL = 'lists/XL.none.list'
 
         return d_sex2bamlist, XL
 
@@ -210,6 +227,8 @@ class main():
                 with open(d_sex2bamlist[sex], 'r') as f:
                     list_bams = [line.strip() for line in f]
 
+                sample_ploidy = self.get_ploidy(chrom, sex)
+
                 for bam in self.bams:
                     basename = os.path.splitext(os.path.basename(bam))[0]
 
@@ -242,12 +261,16 @@ class main():
                         'out_{}'.format(affix)), exist_ok=True)
 
                     variables = []
-                    variables += ['chrom={}'.format(chrom)]
+                    if chrom in ('PAR1', 'PAR2'):
+                        variables += ['chrom=X']
+                    else:
+                        variables += ['chrom={}'.format(chrom)]
                     variables += ['input_file={}'.format(bam)]
                     variables += ['XL={}'.format(XL)]
                     variables += ['out=out_{}.vcf.gz'.format(affix)]
                     variables += ['nct={}'.format(nct)]
                     variables += ['nt={}'.format(nt)]
+                    variables += ['sample_ploidy={}'.format(sample_ploidy)]
                     variables = ' '.join(variables)
 
                     J = '{} {}'.format('HC', basename)
@@ -560,6 +583,8 @@ class main():
             ## GATKwalker, optional, out
             ##
             lines += [' --rscript_file out_{}/{}.plots.R \\'.format(T, mode,)]
+
+            lines += ['"\n\neval $cmd']
 
             ## Terminate command and rerun pipeline.
             lines += self.term_cmd(
@@ -1034,6 +1059,8 @@ and requires less than 100MB of memory'''
         lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
         lines += [' -o $out \\']
 
+        lines += ['"\n\neval $cmd']
+
         ## terminate shell script
         lines += self.term_cmd(T, ['$out.tbi'],)
 
@@ -1068,6 +1095,8 @@ and requires less than 100MB of memory'''
         lines += [' --annotation ReadPosRankSumTest \\']
         lines += [' --standard_min_confidence_threshold_for_calling 30 \\']
         lines += [' --standard_min_confidence_threshold_for_emitting 30 \\']
+
+        lines += ['"\n\neval $cmd']
 
         ## terminate shell script
         lines += self.term_cmd(T, ['$out.tbi'])
@@ -1286,12 +1315,6 @@ and requires less than 100MB of memory'''
 
         lines = ['#!/bin/bash\n']
 
-        ## http://gatkforums.broadinstitute.org/discussion/4639/x-chromosome-gentyping
-        lines += ['sample_ploidy=2']
-        lines += ['if [ $chrom == "Y" ]; then sample_ploidy=1; fi']
-        lines += ['if [ $chrom == "PAR1" ]; then sample_ploidy=2; chrom=X; fi']
-        lines += ['if [ $chrom == "PAR2" ]; then sample_ploidy=2; chrom=X; fi']
-
 ##        lines += self.bash_chrom2len(d_chrom_ranges, size_fragment_bp)
 
 ##        ## exit if job started
@@ -1334,7 +1357,9 @@ and requires less than 100MB of memory'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom:$pos1-$pos2 \\']
-        lines += ['--excludeIntervals $XL \\']
+        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
+        s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
+        lines += [s]
         if self.intervals:
             lines += ['--intervals {} \\'.format(self.intervals)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
@@ -1409,7 +1434,7 @@ and requires less than 100MB of memory'''
             lines += [' -stand_call_conf 4 \\']
             lines += [' -stand_emit_conf 4 \\']
 
-        lines += ['\n']
+        lines += ['"\n\neval $cmd']
 
         return lines
 
@@ -1444,9 +1469,6 @@ and requires less than 100MB of memory'''
             for region in ('PAR1','PAR2'):
                 f.write('X:{:d}-{:d}\n'.format(
                     d_chrom_ranges['PAR1'][0], d_chrom_ranges['PAR2'][1]))
-            pass
-        with open('lists/XL.none.list', 'w') as f:
-            pass
 
         return
 
@@ -1468,11 +1490,13 @@ and requires less than 100MB of memory'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom:$pos1-$pos2 \\']
-        lines += ['--excludeIntervals $XL \\']
+        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
+        s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
+        lines += [s]
         if self.intervals:
-            lines += ['--intervals {} \\'.format(self.intervals)]
+            lines += [' --intervals {} \\'.format(self.intervals)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
-            lines += ['--interval_set_rule INTERSECTION \\']
+            lines += [' --interval_set_rule INTERSECTION \\']
             pass
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
@@ -1544,9 +1568,11 @@ and requires less than 100MB of memory'''
         s_annotation += ' -A ReadPosRankSumTest'
         lines += [' {} \\'.format(s_annotation)]
 
+        lines += [' --sample_ploidy $sample_ploidy \\']
+
         lines += [' --emitRefConfidence GVCF \\']
 
-        lines += ['\n']
+        lines += ['"\n\neval $cmd']
 
         return lines
 
@@ -1568,7 +1594,7 @@ and requires less than 100MB of memory'''
         ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
         ## http://www.broadinstitute.org/gatk/guide/article?id=2846
         s_java = self.init_java(self.fp_GATK, memMB, java=self.java)
-        s += ' {} \\'.format(s_java)
+        s += ' cmd="{} \\'.format(s_java)
         lines += ['\n{}'.format(s)]
 
         ## CommandLineGATK, required, in
