@@ -108,15 +108,16 @@ class main():
                 if not os.path.getsize(d_sex2bamlist[sex]):
                     continue
 
-                sample_ploidy = get_ploidy(chrom, sex)
+                sample_ploidy = self.get_ploidy(chrom, sex)
 
-                for i in range(1, 1+math.ceil((cstop-cstart)/size_fragment_bp)):
+                for i in range(
+                    1, 1+math.ceil((cstop-cstart)/size_fragment_bp)):
 
-                    pos1 = cstart+(i-1)*size_fragment_bp
-                    pos2 = min(cstop, (cstart-1)+i*size_fragment_bp)
+                    pos1 = 1+cstart//size_fragment_bp+(i-1)*size_fragment_bp
+                    pos2 = min(cstop, (pos1-1)+size_fragment_bp)
 
                     affix = '{}/{}/{}'.format(T, chrom, i)
-                    if sex:
+                    if sex and chrom == 'X':
                         affix += '.{}'.format(sex)
 
                     ## Skip if output was generated.
@@ -145,7 +146,8 @@ class main():
                         variables += ['chrom={}'.format(chrom)]
                     variables += ['pos1={}'.format(pos1)]
                     variables += ['pos2={}'.format(pos2)]
-                    variables += ['XL={}'.format(XL)]
+                    if XL:
+                        variables += ['XL={}'.format(XL)]
                     variables += ['input_file={}'.format(d_sex2bamlist[sex])]
                     variables += ['out=out_{}.vcf.gz'.format(affix)]
                     variables += ['nct={}'.format(nct)]
@@ -161,35 +163,6 @@ class main():
                     self.execmd(cmd)
 
         return
-
-
-    def get_ploidy(self, chrom, sex):
-        
-        if chrom == 'Y':
-            sample_ploidy = 1
-        elif chrom == 'X' and sex == 'f':
-            sample_ploidy = 2
-        elif chrom == 'X' and sex == 'm':
-            sample_ploidy = 1
-        else:
-            sample_ploidy = 2
-
-        return sample_ploidy
-
-
-    def get_sex_and_XL(self, chrom):
-
-        if chrom == 'Y':
-            d_sex2bamlist = {'m':'lists/bams.m.list'}
-            XL = 'lists/XL.PAR.list'
-        elif chrom == 'X':
-            d_sex2bamlist = {
-                'm':'lists/bams.m.list',
-                'f':'lists/bams.f.list'}
-##                elif chrom in ('PAR1', 'PAR2'):
-            XL = 'lists/XL.PAR.list'
-
-        return d_sex2bamlist, XL
 
 
     def HaplotypeCaller(self):
@@ -266,7 +239,8 @@ class main():
                     else:
                         variables += ['chrom={}'.format(chrom)]
                     variables += ['input_file={}'.format(bam)]
-                    variables += ['XL={}'.format(XL)]
+                    if XL:
+                        variables += ['XL={}'.format(XL)]
                     variables += ['out=out_{}.vcf.gz'.format(affix)]
                     variables += ['nct={}'.format(nct)]
                     variables += ['nt={}'.format(nt)]
@@ -1468,7 +1442,7 @@ and requires less than 100MB of memory'''
         with open('lists/XL.PAR.list', 'w') as f:
             for region in ('PAR1','PAR2'):
                 f.write('X:{:d}-{:d}\n'.format(
-                    d_chrom_ranges['PAR1'][0], d_chrom_ranges['PAR2'][1]))
+                    d_chrom_ranges[region][0], d_chrom_ranges[region][1]))
 
         return
 
@@ -1576,6 +1550,37 @@ and requires less than 100MB of memory'''
 
         return lines
 
+
+    def get_ploidy(self, chrom, sex):
+        
+        if chrom == 'Y':
+            sample_ploidy = 1
+        elif chrom == 'X' and sex == 'f':
+            sample_ploidy = 2
+        elif chrom == 'X' and sex == 'm':
+            sample_ploidy = 1
+        else:
+            sample_ploidy = 2
+
+        return sample_ploidy
+
+
+    def get_sex_and_XL(self, chrom):
+
+        if chrom == 'Y':
+            d_sex2bamlist = {'m':'lists/bams.m.list'}
+            XL = None
+        elif chrom == 'X':
+            d_sex2bamlist = {
+                'm':'lists/bams.m.list',
+                'f':'lists/bams.f.list'}
+##                elif chrom in ('PAR1', 'PAR2'):
+            XL = 'lists/XL.PAR.list'
+        else:
+            d_sex2bamlist = {'':'lists/bams.list'}
+            XL = None
+
+        return d_sex2bamlist, XL
 
 
     def init_GATK_cmd(self, analysis_type, memMB):
