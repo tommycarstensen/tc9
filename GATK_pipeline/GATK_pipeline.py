@@ -703,6 +703,8 @@ and requires less than 100MB of memory'''
 
     def run_ApplyRecalibration(self):
 
+        ## todo20150112: tc9: use heapq.merge() on SNP and INDEL line generators
+        
         d_minVQSLod = self.parse_minVQSLods()
 
         chrom = os.path.basename(self.args.AR_input).split('.')[0]
@@ -1892,23 +1894,4 @@ if __name__ == '__main__':
 
 ## TODO
 
-## todo20140902: tc9: run HC per chromosome
 ## todo20140902: tc9: make CombineGVCFs start each time 200 samples and a chromosome finishes? different/random 200 samples or the same 200 samples for each chromosome..?!
-## todo20140902: tc9: make it possible to add on extra samples (e.g. NA12878) and run GenotypeGVCFs after running HC on the new sample bam.
-
-## DISK USAGE
-
-## todo20140216: tc9: write all output (BEAGLE) to gzipped files
-
-
-## CPU
-
-## todo20130320: tc9: make the function BEAGLE_divide run in "parallel"; i.e. run a process for each chromosome
-## todo20130424: tc9: run BEAGLE_divide in parallel for each chromosome
-
-
-## MEMORY
-
-## todo20130204: tc9: make memory sample size dependent... only tested on 3 datasets with 100 samples each...
-
-## todo20130320: tc9: test memory requirements when more than 100 samples
