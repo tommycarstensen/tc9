@@ -37,46 +37,59 @@ class main():
             self.HaplotypeCaller()
             self.CombineGVCFs()
             self.GenotypeGVCFs()
+            self.caller = 'HC'
         elif self.coverage < 15:
             self.UnifiedGenotyper()
+            self.caller = 'UG'
 
-##        ## 1000G_phase1.snps.high_confidence.b37.vcf.gz only contains chromosomes 1-22 and X
-##        self.chroms.remove('X')  ## tmp!!!
-##        self.chroms.remove('Y')  ## tmp!!!
-##        self.chroms.remove('MT')  ## tmp!!!
         self.VariantRecalibrator()
 
         self.ApplyRecalibration()
 
-        ## phased imputation reference panels not available for chrY
-        try:
-            self.chroms.remove('Y')
-        except ValueError:
-            pass
+##        ## phased imputation reference panels not available for chrY
+##        try:
+##            self.chroms.remove('Y')
+##        except ValueError:
+##            pass
 ##        ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
 ##        self.chroms.remove('X')
-        self.BEAGLE4()
+        self.beagle4()
 
         return
-
 
     def UnifiedGenotyper(self):
 
         T = analysis_type = 'UnifiedGenotyper'
+        ## fragment sizes determines runtime determines queue
         queue = 'normal'
-        size_fragment_bp = 5*10**5  # normal
+        size_bp = 5 * 10 ** 5  # normal
         queue = 'long'
-        size_fragment_bp = 2*10**6  # long
+        size_bp = 2 * 10 ** 6  # long
         ## http://gatkforums.broadinstitute.org/discussion/1975/how-can-i-use-parallelism-to-make-gatk-tools-run-faster
         nct = 3
         nt = 8
-        ## Each data thread needs to be given the full amount of memory you’d normally give a single run. So if you’re running a tool that normally requires 2 Gb of memory to run, if you use -nt 4, the multithreaded run will use 8 Gb of memory. In contrast, CPU threads will share the memory allocated to their “mother” data thread, so you don’t need to worry about allocating memory based on the number of CPU threads you use.
-        memMB = 2900+8*len(self.bams)
-        memMB = nt*4000-100
+        ## Each data thread needs to be given the full amount of memory
+        ## you’d normally give a single run. So if you’re running a tool
+        ## that normally requires 2 Gb of memory to run, if you use -nt 4,
+        ## the multithreaded run will use 8 Gb of memory. In contrast,
+        ## CPU threads will share the memory allocated to their “mother”
+        ## data thread, so you don’t need to worry about allocating memory
+        ## based on the number of CPU threads you use.
+        memMB = 2900 + 8 * len(self.bams)
+        memMB = nt * 4000 - 100
+        memMB = nt * 4000 - 100
         memMB = 47900
+##        memMB = 63900; nct = 1; nt = 1
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
+
+##        d_Y = {}
+##        url = 'ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/chrY/chrY_callable_regions.20130802.bed'
+##        with urllib.request.urlopen(url) as f:
+##            for line in f:
+##                line = line.decode('utf-8')
+##                pos1, pos2 = [int(x) for x in line.split()[1:]]
 
         ## Write bam lists for
         ## all (autosomes, PAR), male (Y) and female (nonPAR X) samples.
@@ -98,6 +111,13 @@ class main():
         for chrom in self.chroms:
 
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
+            ## Memory consumption seems to explode for UG,
+            ## when doing haploidy for Y and nonPAR X.
+            ## Therefore do diploidy.
+            d_sex2bamlist = {'': 'lists/bams.list'}
+            XL = None
+
+            ## Look up chromosome ranges.
             cstart = d_chrom_ranges[chrom][0]
             cstop = d_chrom_ranges[chrom][1]
 
@@ -108,13 +128,15 @@ class main():
                 if not os.path.getsize(d_sex2bamlist[sex]):
                     continue
 
-                sample_ploidy = self.get_ploidy(chrom, sex)
+                ## See comment above about memory and haploidy.
+##                sample_ploidy = self.get_ploidy(chrom, sex)
+                sample_ploidy = 2
 
                 for i in range(
-                    1, 1+math.ceil((cstop-cstart)/size_fragment_bp)):
+                    1, 1 + math.ceil((cstop - cstart) / size_bp)):
 
-                    pos1 = 1+cstart//size_fragment_bp+(i-1)*size_fragment_bp
-                    pos2 = min(cstop, (pos1-1)+size_fragment_bp)
+                    pos1 = 1 + cstart // size_bp + (i - 1) * size_bp
+                    pos2 = min(cstop, (pos1 - 1) + size_bp)
 
                     affix = '{}/{}/{}'.format(T, chrom, i)
                     if sex and chrom == 'X':
@@ -127,7 +149,7 @@ class main():
 
                     ## Skip if output is being generated.
                     if os.path.isfile('LSF/{}.err'.format(affix)):
-                        if time.time()-os.path.getmtime(
+                        if time.time() - os.path.getmtime(
                             'LSF/{}.err'.format(affix)) < 300:
                             continue
                         if os.path.isfile('LSF/{}.out'.format(affix)):
@@ -163,7 +185,6 @@ class main():
                     self.execmd(cmd)
 
         return
-
 
     def HaplotypeCaller(self):
 
@@ -220,7 +241,7 @@ class main():
                     ## Skip bam and chromosome if output is being generated.
                     if os.path.isfile('LSF/{}.err'.format(affix)):
                         ## file changed within the past 5 minutes?
-                        if time.time()-os.path.getmtime(
+                        if time.time() - os.path.getmtime(
                             'LSF/{}.err'.format(affix)) < 300:
                             continue
                         else:
@@ -256,7 +277,6 @@ class main():
 
         return
 
-
     def shell_HC(self, T, memMB):
 
         lines = ['#!/bin/bash\n']
@@ -278,17 +298,16 @@ class main():
         lines += self.term_cmd(T, ['$out.tbi'])
 
         ## write shell script
-        self.write_shell('shell/{}.sh'.format(T),lines,)
+        self.write_shell('shell/{}.sh'.format(T), lines,)
 
         return
-
 
     def parse_chrom_ranges(self):
 
         d_chrom_ranges = {}
 
         ## 1000G chromosome ranges
-        fn = '%s.fai' %(self.reference_sequence)
+        fn = '%s.fai'.format(self.reference_sequence)
         fd = open(fn)
         lines = fd.readlines()
         fd.close()
@@ -296,7 +315,7 @@ class main():
             l = line.strip().split()
             chrom = l[0]
             chrom_len = int(l[1])
-##            if not chromosome in ['X','Y',]:
+##            if not chromosome in ('X','Y'):
 ##                chrom = int(chromosome)
             d_chrom_ranges[chrom] = (1, chrom_len)
 ##            ## break, when we reach the Y chromosome
@@ -317,10 +336,11 @@ class main():
                     continue
                 l = line.split()
                 if l[0] in ('PAR#1', 'PAR#2') and l[1] == 'X':
-                    d_chrom_ranges[l[0].replace('#','')] = (int(l[2]),int(l[3]))
+                    k = l[0].replace('#', '')
+                    v = (int(l[2]), int(l[3]))
+                    d_chrom_ranges[k] = v
 
         return d_chrom_ranges
-
 
     def CombineGVCFs(self):
 
@@ -358,15 +378,15 @@ class main():
                 with open(fn_list) as f:
                     l_combined += f.read().rstrip().split('\n')
 
-            l_vcfs_in = list(sorted(list(set(l_vcfs_in)-set(l_combined))))
+            l_vcfs_in = list(sorted(list(set(l_vcfs_in) - set(l_combined))))
 
             for i, vcf in enumerate(
                 l_vcfs_in,
-                self.gVCF_limit*len(glob.glob(
+                self.gVCF_limit * len(glob.glob(
                     'lists/{}.{}.*.list'.format(T, chrom)))):
-                if i%self.gVCF_limit == 0:
+                if i % self.gVCF_limit == 0:
                     fn_out = 'lists/{T}.{chrom}.{i}.list'.format(
-                        T=T, chrom=chrom, i=i//self.gVCF_limit)
+                        T=T, chrom=chrom, i=i // self.gVCF_limit)
                     assert not os.path.isfile(fn_out)
                     fd_out = open(fn_out, 'w')
                 fd_out.write('{}\n'.format(vcf))
@@ -391,7 +411,6 @@ class main():
             sys.exit()
 
         return
-
 
     def GenotypeGVCFs(self):
 
@@ -445,7 +464,6 @@ class main():
 
         return
 
-
     def VariantRecalibrator(self):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
@@ -458,14 +476,22 @@ class main():
         ##
         ## 1) check input existence (vcf)
         ##
-        l_vcfs_in = [
-            'out_GenotypeGVCFs/{}.vcf.gz'.format(chrom) for chrom in self.chroms]
+        if self.caller == 'HC':
+            l_vcfs_in = [
+                'out_GenotypeGVCFs/{}.vcf.gz'.format(chrom) for chrom in self.chroms]
+            T_prev = 'GenotypeGVCFs'
+        elif self.caller == 'UG':
+            import itertools
+            l_vcfs_in = [
+                vcf for chrom in self.chroms for vcf in glob.glob(
+                    'out_UnifiedGenotyper/{}/*.vcf.gz'.format(chrom))]
+            T_prev = 'UnifiedGenotyper'
         if self.check_in(
-            'GenotypeGVCFs', ['{}.tbi'.format(vcf) for vcf in l_vcfs_in],
-            'touch/GenotypeGVCFs.touch'):
+            T_prev, ['{}.tbi'.format(vcf) for vcf in l_vcfs_in],
+            'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
-        d_resources = {'SNP':self.fp_resources_SNP, 'INDEL':self.fp_resources_INDEL,}
+        d_resources = {'SNP': self.fp_resources_SNP, 'INDEL': self.fp_resources_INDEL}
 
         if not os.path.isdir('LSF/VariantRecalibrator'):
             os.mkdir('LSF/VariantRecalibrator')
@@ -473,12 +499,12 @@ class main():
             os.mkdir('out_VariantRecalibrator')
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
-        for mode in ['SNP', 'INDEL',]:
+        for mode in ('SNP', 'INDEL'):
 
-            memMB = {'SNP':20900, 'INDEL':8900}[mode]
+            memMB = {'SNP': 20900, 'INDEL': 8900}[mode]
 
             ## 2) touch / check output
-            bool_continue = self.touch('{}.{}'.format(analysis_type,mode))
+            bool_continue = self.touch('{}.{}'.format(T, mode))
             if bool_continue == True:
                 continue
 
@@ -544,10 +570,10 @@ class main():
 
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--TStranche
             l_TStranches = []
-    ##        l_TStranches += [99.70+i/20. for i in range(6,0,-1,)]
-            l_TStranches += [99+i/10. for i in range(10,0,-1,)]
-            l_TStranches += [90+i/2. for i in range(18,-1,-1,)]
-##            l_TStranches += [70+i for i in range(19,-1,-1,)]
+    ##        l_TStranches += [99.70 + i/20. for i in range(6, 0, -1,)]
+            l_TStranches += [99 + i / 10. for i in range(10, 0, -1,)]
+            l_TStranches += [90 + i / 2. for i in range(18, -1, -1,)]
+##            l_TStranches += [70 + i for i in range(19, -1, -1,)]
             s_TStranches = ''
             for TStranche in l_TStranches:
                 s_TStranches += '--TStranche {:.1f} '.format(TStranche)
@@ -562,19 +588,21 @@ class main():
 
             ## Terminate command and rerun pipeline.
             lines += self.term_cmd(
-                '{}.{}'.format(analysis_type,mode),[fp_tranches,fp_recal,],)
+                '{}.{}'.format(analysis_type, mode), [fp_tranches, fp_recal])
 
-            self.write_shell('shell/{}.{}.sh'.format(analysis_type,mode,), lines,)
+            self.write_shell('shell/{}.{}.sh'.format(T, mode,), lines)
+
+#            variables += ['nt={}'.format(nt)]
 
             LSB_JOBNAME = 'VR.{}'.format(mode)
             cmd = self.bsub_cmd(
-                '{}.{}'.format(analysis_type, mode), LSB_JOBNAME, memMB=memMB, queue=queue,
-                LSF_affix='{}/{}'.format(analysis_type,mode,),
-                num_threads=num_threads)
+                '{}.{}'.format(analysis_type, mode), LSB_JOBNAME,
+                LSF_queue=queue,
+                LSF_affix='{}/{}'.format(T, mode),
+                LSF_n=num_threads, LSF_memMB=memMB)
             self.execmd(cmd)
 
         return
-
 
     def skip_header(self, fd):
 
@@ -584,7 +612,6 @@ class main():
             yield line
 
         return
-
 
     def hook_compressed_text(self, filename, mode):
 
@@ -596,7 +623,6 @@ class main():
 
         return f
 
-
     def parse_recal(self, fd, pattern):
 
         line = next(self.skip_header(fd))
@@ -606,7 +632,6 @@ class main():
         VQSLod = float(re.match(pattern, l[7]).group(1))
 
         return chrom, pos, VQSLod
-
 
     def parse_sources(self):
 
@@ -623,14 +648,13 @@ class main():
 
         return d_sources
 
-
     def parse_minVQSLods(self):
 
         d_ts_filter_level = {
-            'SNP':self.ts_filter_level_SNP,
-            'INDEL':self.ts_filter_level_INDEL,}
+            'SNP': self.ts_filter_level_SNP,
+            'INDEL': self.ts_filter_level_INDEL}
         d_minVQSLod = {}
-        for mode in ('SNP','INDEL'):
+        for mode in ('SNP', 'INDEL'):
             with open(
                 'out_VariantRecalibrator/{}.tranches'.format(mode)) as f:
                 for line in f:
@@ -647,7 +671,6 @@ class main():
 
         return d_minVQSLod
 
-
     def bsub_ApplyRecalibration(self):
 
         d_sources = self.parse_sources()
@@ -659,7 +682,7 @@ class main():
         for source_SNP, source_INDEL in zip(
             d_sources['SNP'], d_sources['INDEL']):
             chrom = os.path.basename(source_SNP).split('.')[0]
-            assert chrom in [str(i) for i in range(1,23)]+['X', 'Y', 'MT']
+            assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
             s = ''
             s += 'bsub -G {} '.format(self.project)
             s += ' -o LSF/ApplyRecalibration/{}.out'.format(chrom)
@@ -671,7 +694,6 @@ class main():
         sys.exit()
 
         return
-
 
     def ApplyRecalibration(self):
 
@@ -688,7 +710,7 @@ and requires less than 100MB of memory'''
                 'VariantRecalibrator',
                 [
                     'out_VariantRecalibrator/{}.recal'.format(mode),
-                    'out_VariantRecalibrator/{}.tranches'.format(mode),],
+                    'out_VariantRecalibrator/{}.tranches'.format(mode)],
                 'touch/VariantRecalibrator.{}.touch'.format(mode)):
                 sys.exit()
 
@@ -700,11 +722,10 @@ and requires less than 100MB of memory'''
 
         return
 
-
     def run_ApplyRecalibration(self):
 
-        ## todo20150112: tc9: use heapq.merge() on SNP and INDEL line generators
-        
+        ## todo20150112: tc9: use heapq.merge() on SNP+INDEL line generators
+
         d_minVQSLod = self.parse_minVQSLods()
 
         chrom = os.path.basename(self.args.AR_input).split('.')[0]
@@ -771,11 +792,10 @@ and requires less than 100MB of memory'''
         with open('touch/ApplyRecalibration.touch', 'a') as f:
             f.write('{}.tbi\n'.format(fp_out))
 
-        ## return and continue with BEAGLE if all AR processes completed
+        ## return and continue with beagle if all AR processes completed
         return
 
-
-    def BEAGLE4(self):
+    def beagle4(self):
 
         ## http://faculty.washington.edu/browning/beagle
 
@@ -805,7 +825,7 @@ and requires less than 100MB of memory'''
             sys.exit()
 
         ## 2) check that process didn't start or end
-        if self.touch('BEAGLE'):
+        if self.touch('beagle'):
             return
 
         ## initiate shell script
@@ -819,7 +839,7 @@ and requires less than 100MB of memory'''
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
         lines += ['if [ -s $out.vcf.gz ]; then exit; fi']
-        ## initiate BEAGLE
+        ## initiate beagle
         lines += ['{} \\'.format(
             self.init_java(self.fp_software_beagle, memMB))]
         ## Arguments for specifying data
@@ -847,20 +867,20 @@ and requires less than 100MB of memory'''
         lines += [' buildwindow=1200 \\']  # default 1200 as of r1274
         ## term cmd
         lines += self.term_cmd(
-            'BEAGLE', ['$out.vcf.gz'], extra='tabix -p vcf $out.vcf.gz')
+            'beagle', ['$out.vcf.gz'], extra='tabix -p vcf $out.vcf.gz')
         ## write shell script
-        if not os.path.isfile('shell/BEAGLE.sh'):
-            self.write_shell('shell/BEAGLE.sh',lines,)
+        if not os.path.isfile('shell/beagle.sh'):
+            self.write_shell('shell/beagle.sh', lines,)
         if self.checkpoint:
             self.write_brestart()
-        if not os.path.isdir('LSF/BEAGLE'):
-            os.mkdir('LSF/BEAGLE')
+        if not os.path.isdir('LSF/beagle'):
+            os.mkdir('LSF/beagle')
 
         ##
         ## execute shell script
         ##
         for chrom in l_chroms:
-            print('BEAGLE chrom', chrom)
+            print('beagle chrom', chrom)
             fd_vcf = gzip.open(
                 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom), 'rt')
             cnt = 0
@@ -868,7 +888,7 @@ and requires less than 100MB of memory'''
             for line in fd_vcf:
                 if line[0] == '#':
                     continue
-                l = line.split('\t',2)
+                l = line.split('\t', 2)
                 chrom = l[0]
                 pos = int(l[1])
                 cnt += 1
@@ -876,14 +896,17 @@ and requires less than 100MB of memory'''
                     pos1 = pos
                 elif cnt % window == 0:
                     pos2 = pos
-                    index = cnt//window
+                    index = cnt // window
                     variables = []
-                    variables += ['out=out_BEAGLE/{}/{}'.format(chrom, index)]
+                    variables += ['out=out_beagle/{}/{}'.format(chrom, index)]
                     variables += ['chrom={}'.format(chrom)]
                     variables += ['pos1={}'.format(pos1)]
                     variables += ['pos2={}'.format(pos2)]
                     variables = ' '.join(variables)
-                    self.bsub_BEAGLE(
+                    ## Generate optional output with Beagle window ranges.
+                    with open('lists/beagle.coords', 'a') as f:
+                        f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
+                    self.bsub_beagle(
                         chrom, pos1, pos2, index, memMB, queue, nthreads)
                     print(chrom, ':', pos1, '-', pos2, index, cnt)
                     pos = pos_prev = None
@@ -893,25 +916,26 @@ and requires less than 100MB of memory'''
                 continue
 
             pos2 = pos
-            index = (cnt//window)+1
+            index = (cnt // window) + 1
 
             variables = []
-            variables += ['out=out_BEAGLE/{}/{}'.format(chrom, index)]
+            variables += ['out=out_beagle/{}/{}'.format(chrom, index)]
             variables += ['chrom={}'.format(chrom)]
             variables += ['pos1={}'.format(pos1)]
             variables += ['pos2={}'.format(pos2)]
             variables = ' '.join(variables)
 
-            self.bsub_BEAGLE(
+            with open('lists/beagle.coords', 'a') as f:
+                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
+            self.bsub_beagle(
                 LSF_memMB=memMB, LSF_queue=queue, LSF_n=nthreads,
                 variables=variables)
 
         return
 
+    def bsub_beagle(self, chrom, pos1, pos2, index, memMB, queue, nthreads):
 
-    def bsub_BEAGLE(self, chrom, pos1, pos2, index, memMB, queue, nthreads):
-
-        fn_out = 'out_BEAGLE/{}/{}.vcf.gz'.format(
+        fn_out = 'out_beagle/{}/{}.vcf.gz'.format(
             chrom, index)
 
         ## finished?
@@ -919,7 +943,7 @@ and requires less than 100MB of memory'''
             return
 
         ## started and running?
-        fn = 'LSF/BEAGLE/{}.{}.out'.format(chrom, index)
+        fn = 'LSF/beagle/{}.{}.out'.format(chrom, index)
         if os.path.isfile(fn):
             print('a', fn)
             if os.path.getsize(fn):
@@ -934,7 +958,7 @@ and requires less than 100MB of memory'''
                 stop
 
         ## started and finished? ## tmp!!!
-        fn = 'out_BEAGLE/{}/{}.log'.format(chrom, index)
+        fn = 'out_beagle/{}/{}.log'.format(chrom, index)
         if os.path.isfile(fn):
             print('a', fn)
             if os.path.getsize(fn):
@@ -944,41 +968,40 @@ and requires less than 100MB of memory'''
                     line = f.readlines()[-1]
                     print(line)
                     if line.rstrip().split()[-1] == 'finished':
-                        stopshouldnothappen ## tmp!!!
+                        stopshouldnothappen  # tmp!!!
 ##                        subprocess.call(
-##                            'tabix -p vcf out_BEAGLE/{}/{}.vcf.gz'.format(
+##                            'tabix -p vcf out_beagle/{}/{}.vcf.gz'.format(
 ##                                chrom, index), shell=True)
                         return
             else:
                 stop
 
-        print(chrom,index)
+        print(chrom, index)
 
-        LSB_JOBNAME = '{}.{}.{}'.format('BEAGLE', chrom, index,)
-        LSF_affix = '{}/{}.{}'.format('BEAGLE', chrom, index)
-        cmd_BEAGLE = self.bsub_cmd(
-            'BEAGLE', LSB_JOBNAME, memMB=memMB, LSF_affix=LSF_affix,
+        LSB_JOBNAME = '{}.{}.{}'.format('beagle', chrom, index,)
+        LSF_affix = '{}/{}.{}'.format('beagle', chrom, index)
+        cmd_beagle = self.bsub_cmd(
+            'beagle', LSB_JOBNAME, memMB=memMB, LSF_affix=LSF_affix,
             chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index,
             num_threads=nthreads)
 
         if self.checkpoint:
-            s = subprocess.check_output(cmd_BEAGLE, shell=True).decode()
+            s = subprocess.check_output(cmd_beagle, shell=True).decode()
             print(s)
-            jobID = int(re.match('.*?<(.*?)>',s).group(1))
+            jobID = int(re.match('.*?<(.*?)>', s).group(1))
             print(jobID)
-            cmd_brestart = 'bsub -G %s' %(self.project)
+            cmd_brestart = 'bsub -G {}'.format(self.project)
             cmd_brestart += ' -o brestart.out -e brestart.err'
-            cmd_brestart += ' -q small -w "ended(%i)"' %(jobID)
-            cmd_brestart += ' bash shell/brestart.sh %i %s %i' %(
+            cmd_brestart += ' -q small -w "ended({})"'.format(jobID)
+            cmd_brestart += ' bash shell/brestart.sh {:d} {} {:d}'.format(
                 jobID, self.project, memMB)
             print(cmd_brestart)
             print()
             subprocess.call(cmd_brestart, shell=True)
         else:
-            subprocess.call(cmd_BEAGLE, shell=True)
+            subprocess.call(cmd_beagle, shell=True)
 
         return
-
 
     def bsub_cmd(
         self,
@@ -994,8 +1017,8 @@ and requires less than 100MB of memory'''
 
         cmd = 'bsub -J"{}" -q {}'.format(LSB_JOBNAME, LSF_queue)
         cmd += ' -G {}'.format(self.project)
-        cmd += " -M%i -R'select[mem>%i] rusage[mem=%i]'" %(
-            LSF_memMB, LSF_memMB, LSF_memMB,)
+        cmd += " -M{:d} -R'select[mem>{:d}] rusage[mem={:d}]'".format(
+            LSF_memMB, LSF_memMB, LSF_memMB)
         cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
         cmd += ' -e {}/LSF/{}.err'.format(os.getcwd(), LSF_affix)
         if LSF_n > 1:
@@ -1019,7 +1042,6 @@ and requires less than 100MB of memory'''
 ##                cmd += ' {}'.format(x)
 
         return cmd
-
 
     def shell_CombineGVCFs(self, T, memMB):
 
@@ -1045,7 +1067,6 @@ and requires less than 100MB of memory'''
 
         return
 
-
     def shell_GenotypeGVCFs(self, T, memMB):
 
         lines = ['#!/bin/bash\n']
@@ -1069,6 +1090,8 @@ and requires less than 100MB of memory'''
         lines += [' --annotation GenotypeSummaries \\']  # default
         lines += [' --annotation MappingQualityRankSumTest \\']
         lines += [' --annotation ReadPosRankSumTest \\']
+        lines += [' -A StrandBiasBySample \\']
+        lines += [' -A VariantType \\']
         lines += [' --standard_min_confidence_threshold_for_calling 30 \\']
         lines += [' --standard_min_confidence_threshold_for_emitting 30 \\']
 
@@ -1082,17 +1105,14 @@ and requires less than 100MB of memory'''
 
         return
 
-
-
-    def execmd(self,cmd):
+    def execmd(self, cmd):
 
         print(cmd)
-        subprocess.call(cmd,shell=True)
+        subprocess.call(cmd, shell=True)
 
         return
 
-
-    def write_shell(self,fp,lines,):
+    def write_shell(self, fp, lines,):
 
         os.makedirs(os.path.dirname(fp), exist_ok=True)
 
@@ -1100,7 +1120,7 @@ and requires less than 100MB of memory'''
             print(type(lines))
             stop
 
-        s = '\n'.join(lines)+'\n\n'
+        s = '\n'.join(lines) + '\n\n'
         fd = open(fp, 'w')
         fd.write(s)
         fd.close()
@@ -1108,8 +1128,7 @@ and requires less than 100MB of memory'''
 
         return
 
-
-    def parse_marker(self,line_m,):
+    def parse_marker(self, line_m,):
 
         l_markers = line_m.split()
         pos_ref = int(l_markers[1])
@@ -1118,20 +1137,17 @@ and requires less than 100MB of memory'''
 
         return pos_ref, A_ref, B_ref
 
-
-    def alphanum_key(self,s):
+    def alphanum_key(self, s):
         ## http://dave.st.germa.in/blog/2007/12/11/exception-handling-slow/
         NUM_RE = re.compile('([0-9]+)')
         return [int(c) if c.isdigit() else c for c in NUM_RE.split(s)]
 
-
-    def sort_nicely(self,l):
+    def sort_nicely(self, l):
         ## http://nedbatchelder.com/blog/200712/human_sorting.html
         """ Sort the given list in the way that humans expect.
         """
         l.sort(key=self.alphanum_key)
         return l
-
 
     def init_java(self, jar, memMB, java='java'):
 
@@ -1144,7 +1160,6 @@ and requires less than 100MB of memory'''
 
         return s
 
-
     def check_in(self, analysis_type, l_fp_in, fp_touch,):
 
         d_l_fp_out = {}
@@ -1155,17 +1170,17 @@ and requires less than 100MB of memory'''
         d_l_fp_out['touch'] = l_fp_out
 
         ## todo: use os.walk here instead...
-        for dirname in ['',]:
+        for dirname in ['']:
             d_l_fp_out[dirname] = []
             l = os.listdir(os.path.join(dirname, 'out_{}'.format(analysis_type)))
             for s in l:
-                path1 = os.path.join('out_{}'.format(analysis_type),s)
-                path2 = os.path.join(dirname,path1)
+                path1 = os.path.join('out_{}'.format(analysis_type), s)
+                path2 = os.path.join(dirname, path1)
                 ## append files in chromosomal subdirectories
                 if os.path.isdir(path2):
                     l = os.listdir(path2)
                     for fn in l:
-                        d_l_fp_out[dirname] += [os.path.join(path1,fn)]
+                        d_l_fp_out[dirname] += [os.path.join(path1, fn)]
                 ## append files in main dir
                 elif os.path.isfile(path2):
                     d_l_fp_out[dirname] += [path1]
@@ -1176,11 +1191,11 @@ and requires less than 100MB of memory'''
                     stop_not_expected
 
         bool_exit = False
-        for dirname,l_fp_out in d_l_fp_out.items():
-            if len(set(l_fp_in)-set(l_fp_out)) > 0:
+        for dirname, l_fp_out in d_l_fp_out.items():
+            if len(set(l_fp_in) - set(l_fp_out)) > 0:
                 print('{} and possibly {} other files not generated.'.format(
-                    list(set(l_fp_in)-set(l_fp_out))[0],
-                    len(set(l_fp_in)-set(l_fp_out))-1,))
+                    list(set(l_fp_in) - set(l_fp_out))[0],
+                    len(set(l_fp_in) - set(l_fp_out)) - 1,))
                 print('dirname', dirname)
                 print('{} has not run to completion. Exiting.'.format(analysis_type))
                 bool_exit = True
@@ -1189,14 +1204,13 @@ and requires less than 100MB of memory'''
 
         return bool_exit
 
-
-    def touch(self,analysis_type):
+    def touch(self, analysis_type):
 
         bool_return = False
         fn_touch = 'touch/{}.touch'.format(analysis_type)
         if os.path.isfile(fn_touch):
             if self.verbose == True:
-                print('in progress or completed:', analysis_type)
+                print('in progress or completed:{}'.format(analysis_type))
             bool_return = True
         else:
             if not os.path.isdir(os.path.dirname(fn_touch)):
@@ -1205,8 +1219,9 @@ and requires less than 100MB of memory'''
 
         return bool_return
 
-
     def write_brestart(self,):
+
+        ## clean up this ugly function!!!
 
         with open('shell/brestart.sh', 'w') as f:
             f.write('sleep 30\n')
@@ -1240,58 +1255,25 @@ and requires less than 100MB of memory'''
             f.write('s=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
             ## report if checkpoint failed
-            f.write('if [ $cpfail -ne 0 ]; then echo $s >> checkpointfailed_brestartout.tmp; fi\n')
+            f.write('if [ $cpfail -ne 0 ]; then echo $s')
+            f.write(' >> checkpointfailed_brestartout.tmp; fi\n')
             ## be verbose
             f.write('echo s $s\n')
             f.write('echo jobID $jobID\n')
             f.write('echo memMB $memMB\n')
             ## bsub this chaperone restart script again
-            f.write("bsub -R 'select[mem>'$memMB'] rusage[mem='$memMB']' -M$memMB \\\n")
+            f.write('bsub')
+            f.write(" -R 'select[mem>'$memMB'] rusage[mem='$memMB']'")
+            f.write(" -M$memMB \\\n")
             f.write(' -o brestart.out -e brestart.err \\\n')
             f.write(' -G $project -q normal -w "ended($jobID)" \\\n')
             f.write(' bash shell/brestart.sh $jobID $project $memMB\n')
 
         return
 
-
-##    def bash_chrom2len(self, d_chrom_ranges, size_fragment_bp):
-##
-##        l_chroms = list(sorted(d_chrom_ranges.keys()))
-##        lines = []
-##        lines += ['\n## define arrays']
-##        lines += ['chroms=(%s)' %(' '.join(l_chroms))]
-##        lines += ['starts=(%s)' %(' '.join([
-##            str(d_chrom_ranges[chrom][0]) for chrom in l_chroms],),)]
-##        lines += ['stops=(%s)' %(' '.join([
-##            str(d_chrom_ranges[chrom][1]) for chrom in l_chroms],),)]
-##
-##        lines += ['\n## find chromosome index in array of chromosomes']
-##        lines += ['for ((index=0; index<${#chroms[@]}; index++))\ndo']
-##        lines += ['if [ "${chroms[$index]}" == "$chrom" ]\nthen']
-##        lines += ['break\nfi\ndone\n']
-##
-##        lines += ['\n## find length of chromosome passed via the command line']
-##        lines += ['start=${starts[$index]}\n']
-##        lines += ['stop=${stops[$index]}\n']
-##
-##        ##
-##        ## do not allow interval to exceed the length of the chromosome
-##        ## otherwise it will raise an I/O error
-##        ##
-##        lines += ['posmax=$(($start-1+(${LSB_JOBINDEX}+0)*%i))' %(size_fragment_bp)]
-##        lines += ['echo $posmax $start $LSB_JOBINDEX; exit']
-##        lines += ['if [ $posmax -gt $stop ]']
-##        lines += ['then posmax=$lenchrom']
-##        lines += ['fi\n']
-##
-##        return lines
-
-
     def shell_UG(self, T, memMB, nct, nt):
 
         lines = ['#!/bin/bash\n']
-
-##        lines += self.bash_chrom2len(d_chrom_ranges, size_fragment_bp)
 
 ##        ## exit if job started
 ##        lines += ['if [ -s $out ]; then exit; fi\n']
@@ -1310,10 +1292,9 @@ and requires less than 100MB of memory'''
         lines += self.term_cmd(T, ['$out.tbi'])
 
         ## write shell script
-        self.write_shell('shell/{}.sh'.format(T),lines)
+        self.write_shell('shell/{}.sh'.format(T), lines)
 
         return
-
 
     def body_UnifiedGenotyper(self):
 
@@ -1350,7 +1331,6 @@ and requires less than 100MB of memory'''
         if self.alleles:
             lines += [' --alleles {} \\'.format(self.alleles)]
 
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         if self.dbsnp:
             lines += [' --dbsnp {} \\'.format(self.dbsnp)]
@@ -1361,7 +1341,7 @@ and requires less than 100MB of memory'''
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
         lines += [' --out $out \\']
-        
+
         ##
         ## Optional Parameters
         ##
@@ -1386,13 +1366,15 @@ and requires less than 100MB of memory'''
         s_annotation += ' -A HaplotypeScore'
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_annotator_InbreedingCoeff.php
         s_annotation += ' -A InbreedingCoeff'
+        s_annotation += ' -A StrandBiasBySample'
+        s_annotation += ' -A VariantType'
         lines += [' {} \\'.format(s_annotation)]
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotype_likelihoods_model
-        lines += [' --genotype_likelihoods_model BOTH \\'] ## default value SNP
+        lines += [' --genotype_likelihoods_model BOTH \\']  # default value SNP
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)] ## default value DISCOVERY
+        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
 
         lines += [' --sample_ploidy $sample_ploidy \\']
 
@@ -1414,7 +1396,6 @@ and requires less than 100MB of memory'''
 
         return lines
 
-
     def write_bam_and_XL_lists(self, d_chrom_ranges):
 
         if not os.path.isdir('lists'):
@@ -1425,8 +1406,8 @@ and requires less than 100MB of memory'''
         if self.sex:
             with open(self.sex) as f:
                 d_sample2sex = {
-                    line.split()[0]:line.split()[1].lower()[0] for line in f}
-            d_sex2bam = {'m':[], 'f':[]}
+                    line.split()[0]: line.split()[1].lower()[0] for line in f}
+            d_sex2bam = {'m': [], 'f': []}
             for bam in self.bams:
                 sample = os.path.splitext(os.path.basename(bam))[0]
                 try:
@@ -1442,12 +1423,11 @@ and requires less than 100MB of memory'''
         ## Create region lists. One of them empty.
         ## http://gatkforums.broadinstitute.org/discussion/1204/what-input-files-does-the-gatk-accept-require
         with open('lists/XL.PAR.list', 'w') as f:
-            for region in ('PAR1','PAR2'):
+            for region in ('PAR1', 'PAR2'):
                 f.write('X:{:d}-{:d}\n'.format(
                     d_chrom_ranges[region][0], d_chrom_ranges[region][1]))
 
         return
-
 
     def body_HaplotypeCaller(self,):
 
@@ -1490,7 +1470,6 @@ and requires less than 100MB of memory'''
         if self.alleles:
             lines += [' --alleles {} \\'.format(self.alleles)]
 
-        ## dbSNP file. rsIDs from this file are used to populate the ID column of the output.
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         if self.dbsnp:
             lines += [' --dbsnp {} \\'.format(self.dbsnp)]
@@ -1507,7 +1486,7 @@ and requires less than 100MB of memory'''
         ##
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)] ## default value DISCOVERY
+        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
@@ -1552,9 +1531,8 @@ and requires less than 100MB of memory'''
 
         return lines
 
-
     def get_ploidy(self, chrom, sex):
-        
+
         if chrom == 'Y':
             sample_ploidy = 1
         elif chrom == 'X' and sex == 'f':
@@ -1566,24 +1544,22 @@ and requires less than 100MB of memory'''
 
         return sample_ploidy
 
-
     def get_sex_and_XL(self, chrom):
 
         if chrom == 'Y':
-            d_sex2bamlist = {'m':'lists/bams.m.list'}
+            d_sex2bamlist = {'m': 'lists/bams.m.list'}
             XL = None
         elif chrom == 'X':
             d_sex2bamlist = {
-                'm':'lists/bams.m.list',
-                'f':'lists/bams.f.list'}
+                'm': 'lists/bams.m.list',
+                'f': 'lists/bams.f.list'}
 ##                elif chrom in ('PAR1', 'PAR2'):
             XL = 'lists/XL.PAR.list'
         else:
-            d_sex2bamlist = {'':'lists/bams.list'}
+            d_sex2bamlist = {'': 'lists/bams.list'}
             XL = None
 
         return d_sex2bamlist, XL
-
 
     def init_GATK_cmd(self, analysis_type, memMB):
 
@@ -1598,8 +1574,6 @@ and requires less than 100MB of memory'''
         lines += ['mkdir -p $(dirname $out)']
 
         s = ''
-        ## Java version alert: starting with release 2.6, GATK now requires Java 1.7. See Version Highlights for 2.6 for details.
-        ## http://www.broadinstitute.org/gatk/guide/article?id=2846
         s_java = self.init_java(self.fp_GATK, memMB, java=self.java)
         s += ' cmd="{} \\'.format(s_java)
         lines += ['\n{}'.format(s)]
@@ -1609,15 +1583,14 @@ and requires less than 100MB of memory'''
         lines += [' --analysis_type {} \\'.format(analysis_type)]
         ## CommandLineGATK, optional, in
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
-        lines += [' --reference_sequence {} \\'.format(self.reference_sequence)]
+        lines += [
+            ' --reference_sequence {} \\'.format(self.reference_sequence)]
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#-nct
         lines += [' --num_cpu_threads_per_data_thread $nct \\']
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_engine_CommandLineGATK.php#--num_threads
         lines += [' --num_threads $nt \\']
 
-
         return lines
-
 
     def term_cmd(self, analysis_type, l_fp_out, extra=None):
 
@@ -1625,14 +1598,14 @@ and requires less than 100MB of memory'''
             print(l_fp_out)
             stop
 
-
         lines = ['\n']
         lines += ['if [ $? -eq 0 ]; then']
         for fp_out in l_fp_out:
             fp_out = fp_out
             ## previous command exited cleanly
             lines += ['if [ ! -s {} ]; then exit; fi'.format(fp_out)]
-            lines += ['echo {} >> touch/{}.touch'.format(fp_out, analysis_type,)]
+            lines += [
+                'echo {} >> touch/{}.touch'.format(fp_out, analysis_type,)]
 
         if extra:
             lines += ['{}\n'.format(extra)]
@@ -1662,7 +1635,6 @@ and requires less than 100MB of memory'''
 
         return lines
 
-
     def args_to_command_line(self):
 
         s = ''
@@ -1683,41 +1655,38 @@ and requires less than 100MB of memory'''
 
         return s
 
-
     def is_file(self, str_):
         if not os.path.isfile(str_) and not os.path.islink(str_):
             msg = '{} is neither a readable file nor a symbolic link' % str_
             raise argparse.ArgumentTypeError(msg)
         return str_
 
-
     def is_file_or_dir(self, str_):
         print(str_)
         if not any([
-            os.path.isfile(str_),os.path.islink(str_),os.path.isdir(str_)]):
+            os.path.isfile(str_), os.path.islink(str_), os.path.isdir(str_)]):
             msg = '{} is neither a readable file nor a directory' % str_
             raise argparse.ArgumentTypeError(msg)
         return str_
 
-
-    def add_arguments(self,parser):
+    def add_arguments(self, parser):
 
         ## required arguments
 
         parser.add_argument(
-            '--fp_bams', '--bam', '--bams', '--input',
+            '--bam', '--bams', '--input',
             help='Path to bam file and/or directory containing bam files',
             nargs='+', required=True, type=self.is_file_or_dir)
 
         parser.add_argument('--coverage', required=True, type=float)
 
         parser.add_argument(
-            '--build', required=True, type=int, choices=[37,38])
+            '--build', required=True, type=int, choices=[37, 38])
 
         parser.add_argument('--sex', required=False, type=self.is_file)
 
         parser.add_argument(
-            '--fp_GATK', '--GATK', '--gatk', '--jar', required=True,
+            '--GATK', '--gatk', '--jar', required=True,
             help='File path to GATK', type=self.is_file)
 
         parser.add_argument('--project', required=True)
@@ -1731,10 +1700,7 @@ and requires less than 100MB of memory'''
         ##
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-        parser.add_argument(
-            '--intervals', '-L',
-            help='Additionally, one may specify a rod file to traverse over the positions for which there is a record in the file (e.g. -L file.vcf).',
-            )
+        parser.add_argument('--intervals', '-L')
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
         parser.add_argument(
@@ -1747,8 +1713,7 @@ and requires less than 100MB of memory'''
         ## Optional Inputs
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
-        parser.add_argument(
-            '--alleles', help='The set of alleles at which to genotype when --genotyping_mode is GENOTYPE_GIVEN_ALLELES.',)
+        parser.add_argument('--alleles')
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         parser.add_argument('--dbsnp', '-D')
@@ -1757,9 +1722,7 @@ and requires less than 100MB of memory'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         parser.add_argument(
-            '--genotyping_mode', '-gt_mode',
-            help='Specifies how to determine the alternate alleles to use for genotyping.',
-            default='DISCOVERY')
+            '--genotyping_mode', '-gt_mode', default='DISCOVERY')
 
         ##
         ## CombineGVCFs/GenotypeGVCFs related arguments
@@ -1773,48 +1736,34 @@ and requires less than 100MB of memory'''
         ##
 
         parser.add_argument(
-            '--fp_resources_SNP', '--resources_SNP', '--VR_snp',
-            help='File path to a file with -resource lines to append to GATK VR',)
+            '--resources_SNP', '--VR_snp',
+            help='Path to a file with -resource lines to append to GATK VR',)
 
         parser.add_argument(
-            '--fp_resources_INDEL', '--resources_INDEL', '--VR_indel',
-            help='File path to a file with -resource lines to append to GATK VR',)
-
-##        parser.add_argument(
-##            '--hapmap',
-##            help='File path to hapmap vcf to be used by VariantCalibrator (e.g. hapmap_3.3.b37.sites.vcf)',
-##            )
-##
-
-##        parser.add_argument(
-##            '--omni',
-##            help='File path to omni vcf to be used by VariantCalibrator (e.g. 1000G_omni2.5.b37.sites.vcf)',
-##            )
+            '--resources_INDEL', '--VR_indel',
+            help='Path to a file with -resource lines to append to GATK VR',)
 
         ##
         ## ApplyRecalibration
         ##
 
-        ## What VQSR training sets / arguments should I use for my specific project?
         ## https://www.broadinstitute.org/gatk/guide/article?id=1259
         parser.add_argument(
-            '--ts_filter_level_SNP', '--ts_SNP', type=float, required=True,)
+            '--ts_SNP', type=float, required=True,)
 
         parser.add_argument(
-            '--ts_filter_level_INDEL', '--ts_INDEL', type=float, required=True,)
+            '--ts_INDEL', type=float, required=True,)
 
         parser.add_argument('--AR_input')
 
         ##
-        ## BEAGLE
+        ## beagle
         ##
         parser.add_argument(
-            '--fp_software_beagle', '--beagle', '--BEAGLE', '--BEAGLEjar',
-            help='File path to BEAGLE .jar file (e.g. beagle_3.3.2.jar)',
+            '--beagle',
+            help='File path to beagle.jar file (e.g. beagle_3.3.2.jar)',
             required=True,
             )
-
-        parser.add_argument('--i_BEAGLE_nsamples', default=20)
 
         ##
         ## optional arguments
@@ -1824,13 +1773,14 @@ and requires less than 100MB of memory'''
 
         parser.add_argument(
             '--chroms', type=str, nargs='+',
-            default=[str(i+1) for i in range(22)]+['X', 'Y', 'MT', 'PAR1', 'PAR2'])
+            default=[
+                str(i + 1) for i in range(22)] + [
+                    'X', 'Y', 'MT', 'PAR1', 'PAR2'])
 
         parser.add_argument(
             '--ped', type=self.is_file)
 
         return parser
-
 
     def parse_arguments(self):
 
@@ -1842,15 +1792,15 @@ and requires less than 100MB of memory'''
         self.args = namespace_args = parser.parse_args()
 
         ## setatrr
-        for k,v in vars(namespace_args).items():
-            setattr(self,k,v)
+        for k, v in vars(namespace_args).items():
+            setattr(self, k, v)
 
         if self.fp_GATK is None and self.fp_options is None:
             parser.error('--GATK or --arguments')
 
         s_arguments = ''
-        for k,v in vars(namespace_args).items():
-            s_arguments += '{} {}\n'.format(k,v)
+        for k, v in vars(namespace_args).items():
+            s_arguments += '{} {}\n'.format(k, v)
 
         if self.arguments == None or self.arguments == 'None':
             self.arguments = '{}.arguments'.format(self.project)
@@ -1878,7 +1828,6 @@ and requires less than 100MB of memory'''
 
         return
 
-
     def __init__(self):
 
         ## parse command line arguments
@@ -1887,11 +1836,6 @@ and requires less than 100MB of memory'''
 
         return
 
-
 if __name__ == '__main__':
     self = main()
     self.main()
-
-## TODO
-
-## todo20140902: tc9: make CombineGVCFs start each time 200 samples and a chromosome finishes? different/random 200 samples or the same 200 samples for each chromosome..?!
