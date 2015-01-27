@@ -161,27 +161,27 @@ class main():
                     os.makedirs(os.path.dirname(
                         'out_{}'.format(affix)), exist_ok=True)
 
-                    variables = []
+                    d_arguments = {}
                     if chrom in ('PAR1', 'PAR2'):
-                        variables += ['chrom=X']
+                        d_arguments['chrom'] = 'X'
                     else:
-                        variables += ['chrom={}'.format(chrom)]
-                    variables += ['pos1={}'.format(pos1)]
-                    variables += ['pos2={}'.format(pos2)]
+                        d_arguments['chrom'] = chrom
+                    d_arguments['pos1'] = pos1
+                    d_arguments['pos2'] = pos2
                     if XL:
-                        variables += ['XL={}'.format(XL)]
-                    variables += ['input_file={}'.format(d_sex2bamlist[sex])]
-                    variables += ['out=out_{}.vcf.gz'.format(affix)]
-                    variables += ['nct={}'.format(nct)]
-                    variables += ['nt={}'.format(nt)]
-                    variables += ['sample_ploidy={}'.format(sample_ploidy)]
-                    variables = ' '.join(variables)
+                        d_arguments['XL'] = XL
+                    d_arguments['input_file'] = d_sex2bamlist[sex]
+                    d_arguments['out'] = 'out_{}.vcf.gz'.format(affix)
+                    d_arguments['nct'] = nct
+                    d_arguments['nt'] = nt
+                    d_arguments['sample_ploidy'] = sample_ploidy
+                    arguments = self.args_dict2str(d_arguments)
 
                     LSB_JOBNAME = '{} {} {} {}'.format('UG', chrom, i, sex)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
-                        LSF_memMB=memMB, LSF_queue=queue, LSF_n=nct,
-                        variables=variables)
+                        LSF_memMB=memMB, LSF_queue=queue, LSF_n=nt*nct,
+                        arguments=arguments)
                     self.execmd(cmd)
 
         return
@@ -254,7 +254,6 @@ class main():
                     os.makedirs(os.path.dirname(
                         'out_{}'.format(affix)), exist_ok=True)
 
-                    variables = []
                     if chrom in ('PAR1', 'PAR2'):
                         variables += ['chrom=X']
                     else:
@@ -280,6 +279,7 @@ class main():
     def shell_HC(self, T, memMB):
 
         lines = ['#!/bin/bash\n']
+
         lines += ['basename=$(basename $file_input | rev | cut -d "." -f2- | rev)']
 ##        ## exit if job started
 ##        lines += ['if [ -s $out ]; then exit; fi\n']
@@ -307,7 +307,7 @@ class main():
         d_chrom_ranges = {}
 
         ## 1000G chromosome ranges
-        fn = '%s.fai'.format(self.reference_sequence)
+        fn = '{}.fai'.format(self.reference_sequence)
         fd = open(fn)
         lines = fd.readlines()
         fd.close()
@@ -491,12 +491,14 @@ class main():
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
-        d_resources = {'SNP': self.fp_resources_SNP, 'INDEL': self.fp_resources_INDEL}
+        d_resources = {'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
 
-        if not os.path.isdir('LSF/VariantRecalibrator'):
-            os.mkdir('LSF/VariantRecalibrator')
-        if not os.path.isdir('out_VariantRecalibrator'):
-            os.mkdir('out_VariantRecalibrator')
+        if not os.path.isdir('LSF/{}'.format(T)):
+            os.mkdir('LSF/{}'.format(T))
+        if not os.path.isdir('out_{}'.format(T)):
+            os.mkdir('out_{}'.format(T))
+
+        d_arguments = {'nt':num_threads, 'nct':1}
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
         for mode in ('SNP', 'INDEL'):
@@ -509,15 +511,16 @@ class main():
                 continue
 
             ## Define file paths.
-            fp_tranches = 'out_VariantRecalibrator/{}.tranches'.format(mode)
-            fp_recal = 'out_VariantRecalibrator/{}.recal'.format(mode)
+            tranches = 'out_{}/{}.tranches'.format(T, mode)
+            recal = 'out_{}/{}.recal'.format(T, mode)
 
-            lines = ['out={}'.format(fp_tranches)]
+            lines = []
+
+            d_arguments['out'] = tranches
+            arguments = self.args_dict2str(d_arguments)
 
             ## Initiate GATK walker.
-            lines += self.init_GATK_cmd(analysis_type, memMB,)
-
-            lines += [' --num_threads {} \\'.format(num_threads)]
+            lines += self.init_GATK_cmd(analysis_type, memMB, d_arguments.keys())
 
             ## required, in
             lines += [' --input {} \\'.format(vcf) for vcf in l_vcfs_in]
@@ -548,8 +551,8 @@ class main():
             ##
             ## required, out
             ##
-            lines += [' --recal_file {} \\'.format(fp_recal)]
-            lines += [' --tranches_file {} \\'.format(fp_tranches)]
+            lines += [' --recal_file {} \\'.format(recal)]
+            lines += [' --tranches_file {} \\'.format(tranches)]
 
             ##
             ## Optional Parameters.
@@ -588,21 +591,44 @@ class main():
 
             ## Terminate command and rerun pipeline.
             lines += self.term_cmd(
-                '{}.{}'.format(analysis_type, mode), [fp_tranches, fp_recal])
+                '{}.{}'.format(analysis_type, mode), [tranches, recal])
 
             self.write_shell('shell/{}.{}.sh'.format(T, mode,), lines)
-
-#            variables += ['nt={}'.format(nt)]
 
             LSB_JOBNAME = 'VR.{}'.format(mode)
             cmd = self.bsub_cmd(
                 '{}.{}'.format(analysis_type, mode), LSB_JOBNAME,
                 LSF_queue=queue,
                 LSF_affix='{}/{}'.format(T, mode),
-                LSF_n=num_threads, LSF_memMB=memMB)
+                LSF_n=num_threads, LSF_memMB=memMB, arguments=arguments)
             self.execmd(cmd)
 
         return
+
+    def args2getopts(self, l_args):
+
+        s = ''
+        s += 'string_arguments=$@\n'
+        s += 'array_arguments=($string_arguments)\n'
+        s += 'i=0\n'
+        s += 'for argument in $string_arguments; do \n'
+        s += ' i=$(($i+1))\n'
+        s += ' case $argument in\n'
+        for arg in l_args:
+            s += '  --{}) {}=${{array_arguments[$i]}};;\n'.format(arg, arg)
+        s += ' esac\n'
+        s += 'done\n'
+        
+##        s += 'while getopts ":{}:" o; do\n'.format(':'.join(l_args))
+##        s += '    case "${o}" in\n'
+##        for arg in l_args:
+##            s += '        {})\n'.format(arg)
+##            s += '            {}=${{OPTARG}}\n'.format(arg)
+##            s += '            ;;\n'
+##        s += '    esac\n'
+##        s += 'done\n'
+
+        return s
 
     def skip_header(self, fd):
 
@@ -681,7 +707,8 @@ class main():
 
         for source_SNP, source_INDEL in zip(
             d_sources['SNP'], d_sources['INDEL']):
-            chrom = os.path.basename(source_SNP).split('.')[0]
+##            chrom = os.path.basename(source_SNP).split('.')[0]
+            chrom = os.path.basename(os.path.dirname(source_SNP))
             assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
             s = ''
             s += 'bsub -G {} '.format(self.project)
@@ -689,7 +716,7 @@ class main():
             s += ' -e LSF/ApplyRecalibration/{}.err'.format(chrom)
             s += ' -J AR{}'.format(chrom)
             self.args.AR_input = source_SNP
-            s += self.args_to_command_line()
+            s += self.args_rerun()
             subprocess.call(s, shell=True)
         sys.exit()
 
@@ -731,13 +758,13 @@ and requires less than 100MB of memory'''
         chrom = os.path.basename(self.args.AR_input).split('.')[0]
 
         pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
-        fp_out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
-        if os.path.isfile(fp_out):
+        out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
+        if os.path.isfile(out):
             sys.exit()
         with open('out_VariantRecalibrator/SNP.recal') as fd_recal_SNP, \
              open('out_VariantRecalibrator/INDEL.recal') as fd_recal_INDEL, \
              gzip.open(self.args.AR_input, 'rt') as fd_source, \
-             BgzfWriter(fp_out, 'wb') as fd_out:
+             BgzfWriter(out, 'wb') as fd_out:
             ## write meta-information header
             print('##fileformat=VCFv4.1', file=fd_out)
             print('##filedate={}'.format(
@@ -766,8 +793,10 @@ and requires less than 100MB of memory'''
                     if VQSLod_INDEL >= d_minVQSLod['INDEL']:
                         print(line_VCF, end='', file=fd_out)
                     try:
-                        chrom_INDEL, pos_INDEL, VQSLod_INDEL = self.parse_recal(
-                            fd_recal_INDEL, pattern)
+                        (
+                            chrom_INDEL, pos_INDEL, VQSLod_INDEL
+                            ) = self.parse_recal(
+                                fd_recal_INDEL, pattern)
                     except StopIteration:
                         continue
                     continue
@@ -787,10 +816,10 @@ and requires less than 100MB of memory'''
             pass
 
         ## index bgz output
-        subprocess.call('tabix -p vcf {}'.format(fp_out), shell=True)
+        subprocess.call('tabix -p vcf {}'.format(out), shell=True)
         ## confirm process has run to completion by writing to file
         with open('touch/ApplyRecalibration.touch', 'a') as f:
-            f.write('{}.tbi\n'.format(fp_out))
+            f.write('{}.tbi\n'.format(out))
 
         ## return and continue with beagle if all AR processes completed
         return
@@ -831,17 +860,17 @@ and requires less than 100MB of memory'''
         ## initiate shell script
         lines = ['#!/bin/bash\n']
         ## parse chromosome from command line
+        lines += [args2getopts(('chrom', 'pos1', 'pos2', 'out'))]
         lines += ['chrom=$1']
         lines += ['pos1=$3']
         lines += ['pos2=$4']
-        lines += ['LSB_JOBINDEX=$2']
         lines += ['out=$out']
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
         lines += ['if [ -s $out.vcf.gz ]; then exit; fi']
         ## initiate beagle
         lines += ['{} \\'.format(
-            self.init_java(self.fp_software_beagle, memMB))]
+            self.init_java(self.jar_beagle, memMB))]
         ## Arguments for specifying data
         lines += [' gl=out_ApplyRecalibration/$chrom.vcf.gz \\']
         if self.ped:
@@ -879,6 +908,7 @@ and requires less than 100MB of memory'''
         ##
         ## execute shell script
         ##
+        d_arguments = {}
         for chrom in l_chroms:
             print('beagle chrom', chrom)
             fd_vcf = gzip.open(
@@ -897,17 +927,17 @@ and requires less than 100MB of memory'''
                 elif cnt % window == 0:
                     pos2 = pos
                     index = cnt // window
-                    variables = []
-                    variables += ['out=out_beagle/{}/{}'.format(chrom, index)]
-                    variables += ['chrom={}'.format(chrom)]
-                    variables += ['pos1={}'.format(pos1)]
-                    variables += ['pos2={}'.format(pos2)]
-                    variables = ' '.join(variables)
+                    d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
+                    d_arguments['chrom'] = chrom
+                    d_arguments['pos1'] = pos1
+                    d_arguments['pos2'] = pos2
+                    arguments = args_dict2str(d_arguments)
                     ## Generate optional output with Beagle window ranges.
                     with open('lists/beagle.coords', 'a') as f:
                         f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
                     self.bsub_beagle(
-                        chrom, pos1, pos2, index, memMB, queue, nthreads)
+                        chrom, pos1, pos2, index, memMB, queue, nthreads,
+                        arguments=arguments)
                     print(chrom, ':', pos1, '-', pos2, index, cnt)
                     pos = pos_prev = None
                 else:
@@ -918,7 +948,6 @@ and requires less than 100MB of memory'''
             pos2 = pos
             index = (cnt // window) + 1
 
-            variables = []
             variables += ['out=out_beagle/{}/{}'.format(chrom, index)]
             variables += ['chrom={}'.format(chrom)]
             variables += ['pos1={}'.format(pos1)]
@@ -933,7 +962,9 @@ and requires less than 100MB of memory'''
 
         return
 
-    def bsub_beagle(self, chrom, pos1, pos2, index, memMB, queue, nthreads):
+    def bsub_beagle(
+        self, chrom, pos1, pos2, index, memMB, queue, nthreads,
+        arguments=''):
 
         fn_out = 'out_beagle/{}/{}.vcf.gz'.format(
             chrom, index)
@@ -983,7 +1014,7 @@ and requires less than 100MB of memory'''
         cmd_beagle = self.bsub_cmd(
             'beagle', LSB_JOBNAME, memMB=memMB, LSF_affix=LSF_affix,
             chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index,
-            num_threads=nthreads)
+            num_threads=nthreads, arguments=arguments)
 
         if self.checkpoint:
             s = subprocess.check_output(cmd_beagle, shell=True).decode()
@@ -1005,11 +1036,11 @@ and requires less than 100MB of memory'''
 
     def bsub_cmd(
         self,
-        ## variables outside script
+        ## bsub command line arguments
         shell_affix, LSB_JOBNAME,
         LSF_queue='normal', LSF_memMB=4000, LSF_affix=None, LSF_n=1,
-        ## variables inside script
-        variables='',
+        ## bash command line arguments
+        arguments='',
         ):
 
         if not LSF_affix:
@@ -1034,9 +1065,10 @@ and requires less than 100MB of memory'''
 ##            'pos1': pos1, 'pos2':pos2}.items():
 ##            if v:
 ##                cmd += ' {}={}'.format(k, v)
-        cmd += ' {}'.format(variables)
+##        cmd += ' {}'.format(variables)
         bash_cmd = ' bash {}/shell/{}.sh'.format(os.getcwd(), shell_affix)
         cmd += bash_cmd
+        cmd += ' {}'.format(arguments)
 ##        for x in (chrom, index, bam, mode, pos1, pos2):
 ##            if x:
 ##                cmd += ' {}'.format(x)
@@ -1052,7 +1084,7 @@ and requires less than 100MB of memory'''
         lines += ['## exit if job started']
         lines += ['if [ -s $out ]; then exit; fi\n']
 
-        lines += self.init_GATK_cmd(T, memMB,)
+        lines += self.init_GATK_cmd(T, memMB, tuple_args)
         lines += [' -L $chrom \\']
         lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
         lines += [' -o $out \\']
@@ -1077,7 +1109,7 @@ and requires less than 100MB of memory'''
         lines += ['## exit if job finished']
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
-        lines += self.init_GATK_cmd(T, memMB,)
+        lines += self.init_GATK_cmd(T, memMB, tuple_args)
         lines += [' -L $chrom \\']
         lines += [' -V lists/{}.$chrom.list \\'.format(T)]
         lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
@@ -1281,7 +1313,9 @@ and requires less than 100MB of memory'''
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
         ## initiate GATK command
-        lines += self.init_GATK_cmd(T, memMB)
+        lines += self.init_GATK_cmd(T, memMB, (
+            'out', 'chrom', 'pos1', 'pos2', 'input_file',
+            'nct', 'nt', 'XL', 'sample_ploidy'))
 
         ## append GATK command options
         lines += self.body_UnifiedGenotyper()
@@ -1387,6 +1421,7 @@ and requires less than 100MB of memory'''
             lines += [' -stand_call_conf 10 \\']
             lines += [' -stand_emit_conf 10 \\']
         else:
+            print(self.bams)
             print(self.project)
             stop
             lines += [' -stand_call_conf 4 \\']
@@ -1561,11 +1596,15 @@ and requires less than 100MB of memory'''
 
         return d_sex2bamlist, XL
 
-    def init_GATK_cmd(self, analysis_type, memMB):
+    def init_GATK_cmd(self, analysis_type, memMB, args):
 
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_engine_CommandLineGATK.php
 
         lines = []
+
+        lines += [self.args2getopts(args)]
+
+        lines += ['if [ "$nct" == "" ]; then nct=1; fi']
 
         ## exit if output exists
         lines += ['if [ -s $out ]; then exit; fi']
@@ -1574,7 +1613,7 @@ and requires less than 100MB of memory'''
         lines += ['mkdir -p $(dirname $out)']
 
         s = ''
-        s_java = self.init_java(self.fp_GATK, memMB, java=self.java)
+        s_java = self.init_java(self.path_GATK, memMB, java=self.path_java)
         s += ' cmd="{} \\'.format(s_java)
         lines += ['\n{}'.format(s)]
 
@@ -1627,7 +1666,7 @@ and requires less than 100MB of memory'''
         fd.close()
         self.execmd('chmod +x rerun.sh')
 
-        s = self.args_to_command_line()
+        s = self.args_rerun()
         fd = open('rerun_python.sh', 'w')
         fd.write(s)
         fd.close()
@@ -1635,12 +1674,19 @@ and requires less than 100MB of memory'''
 
         return lines
 
-    def args_to_command_line(self):
+    def args_rerun(self):
 
         s = ''
         s += ' {}'.format(sys.executable)
         s += ' {}'.format(sys.argv[0])
-        for k, v in vars(self.args).items():
+        s += self.args_dict2str(vars(self.args))
+
+        return s
+
+    def args_dict2str(self, _dict):
+
+        s = ''
+        for k, v in _dict.items():
             if v == False:
                 continue
             elif v == None:
@@ -1674,7 +1720,7 @@ and requires less than 100MB of memory'''
         ## required arguments
 
         parser.add_argument(
-            '--bam', '--bams', '--input',
+            '--path_bams', '--bam', '--input',
             help='Path to bam file and/or directory containing bam files',
             nargs='+', required=True, type=self.is_file_or_dir)
 
@@ -1686,14 +1732,14 @@ and requires less than 100MB of memory'''
         parser.add_argument('--sex', required=False, type=self.is_file)
 
         parser.add_argument(
-            '--GATK', '--gatk', '--jar', required=True,
+            '--path_GATK', '--GATK', '--gatk', '--jar', required=True,
             help='File path to GATK', type=self.is_file)
 
         parser.add_argument('--project', required=True)
 
         parser.add_argument('--arguments', '--args')
 
-        parser.add_argument('--java', required=True, type=self.is_file)
+        parser.add_argument('--path_java', '--java', required=True, type=self.is_file)
 
         ##
         ## CommandLineGATK arguments
@@ -1795,7 +1841,7 @@ and requires less than 100MB of memory'''
         for k, v in vars(namespace_args).items():
             setattr(self, k, v)
 
-        if self.fp_GATK is None and self.fp_options is None:
+        if self.path_GATK is None and self.options is None:
             parser.error('--GATK or --arguments')
 
         s_arguments = ''
@@ -1818,11 +1864,11 @@ and requires less than 100MB of memory'''
                 setattr(self, k, v)
 
         self.bams = []
-        for fp in self.fp_bams:
-            if os.path.isdir(fp):
-                self.bams += glob.glob(os.path.join(fp, '*.bam'))
-            elif os.path.isfile(fp):
-                self.bams += [fp]
+        for path_bam in self.path_bams:
+            if os.path.isdir(path_bam):
+                self.bams += glob.glob(os.path.join(path_bam, '*.bam'))
+            elif os.path.isfile(path_bam):
+                self.bams += [path_bam]
             else:
                 stop_take_care_of_symlinks
 
