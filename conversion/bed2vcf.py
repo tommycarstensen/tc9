@@ -1,37 +1,337 @@
-#!/software/bin/python
+#!/bin/python3
 
-## T. Carstensen (tc9), M.S. Sandhu (ms23), D. Gurdasani (dg11)
-## Wellcome Trust Sanger Institute, 2012
+## Tommy Carstensen, Wellcome Trust Sanger Institute
+## December 2013, January 2015
 
-## THIS SCRIPT CURRENTLY DOESN'T WORK!!!
-
+import argparse
 import os
+import math
+import re
+import datetime
+import sys
+import gzip
+
 
 def main():
 
-    dbSNP = '/lustre/scratch107/projects/uganda/users/tc9/in_GATK/dbsnp_135.b37.vcf'
-    fp_in = '/lustre/scratch107/projects/agv/phasing_rel/shapeit2/data/omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped.bed'
-    fn_out = 'omni2.5-8_20120516_gwa_ugand_gtu_autosomes_postsampqc_postsnpqc_flipped.vcf'
-    walker = 'VariantsToVCF'
-    R = '/lustre/scratch111/resources/vrpipe/ref/Homo_sapiens/1000Genomes/human_g1k_v37.fasta'
+    args = argparser()
 
-    s = 'bsub \
-    -e %s.err \
-    -M4000000 -R\'select[mem>4000] rusage[mem=4000]\' \
-    -J %s \
-    ' %(walker,walker,)
-    s += ' java -Xmx4g -jar /software/varinf/releases/GATK/GenomeAnalysisTK-1.4-15-gcd43f01/GenomeAnalysisTK.jar \
-   -R %s \
-   -T VariantsToVCF \
-   -o %s \
-   --variant:BED %s \
-   --dbsnp %s \
-   ' %(R,fn_out,fp_in,dbSNP,)
-    print s
-##    stop
-    os.system(s)
+    l_fam_sampleIDs = parse_fam(args.bfile + '.fam')
+    l_vcf_sampleIDs = shorten_sampleIDs(l_fam_sampleIDs)
+
+    if args.keep:
+        l_keep_sampleIDs = parse_keep(path_keep, l_fam_sampleIDs)
+        l_keep_index = index_keep(l_keep_sampleIDs, l_fam_sampleIDs)
+    else:
+        l_keep_index = list(range(len(l_fam_sampleIDs)))
+
+    assert len(l_vcf_sampleIDs) == len(l_fam_sampleIDs)
+
+    ## Get count of samples.
+    n_samples = len(l_fam_sampleIDs)
+    n_bytes_per_SNP = math.ceil(n_samples/4)
+    ## Get count of SNPs. Only needed to keep track of completion percent.
+    with open(args.bfile + '.bim', 'r') as bim:
+        n_SNPs = len(bim.readlines())
+
+    d_fai = read_fai(args.ref + '.fai')
+
+    with open(args.bfile + '.bed', 'rb') as bed, \
+         gzip.open(args.vcf, 'wt') as vcf, \
+         open(args.bfile + '.bim', 'r') as bim, \
+         open(args.ref, 'r') as ref:
+        convert(
+            args, bed, vcf, bim, ref, d_fai,
+            l_vcf_sampleIDs, n_bytes_per_SNP, l_keep_index, n_samples, n_SNPs)
 
     return
+
+def convert(
+    args, bed, vcf, bim, ref, d_fai,
+    l_vcf_sampleIDs, n_bytes_per_SNP, l_keep_index, n_samples, n_SNPs):
+      
+    write_metadata(args, vcf)
+    write_header(vcf, l_vcf_sampleIDs)
+
+    ## Write first 3 bytes of bed file.
+    magic_number = bytearray([108,27])
+    mode = bytearray([1])
+    bed.read(len(magic_number)+len(mode))
+
+    QUAL = '.'
+    FILTER = '.'
+    FORMAT = 'GT'
+
+    ## data lines
+    i_SNP = 0
+    while True:
+        i_SNP += 1
+        if i_SNP % 1000 == 0:
+            print('SNP {} of {} SNPs'.format(i_SNP, n_SNPs))
+        line_bim = bim.readline()
+        if not line_bim: break
+        ## By default, the minor allele is coded A1
+        ## and the major allele is coded A2
+        CHROM, ID, _, POS, A1, A2 = line_bim.rstrip().split()
+        if CHROM != '20': continue  # tmp!!!
+        ## monomorphic
+        if A2 == '0':
+            ALT = '.'
+
+        ## Parse reference allele from reference sequence.
+        REF = parse_ref(d_fai, ref, CHROM, int(POS))
+
+        ## Parse alleles and genotypes from bed file.
+        cnt_allele_nonmissing, cnt_allele_A1, genotype_fields = parse_bed(
+            bed, n_bytes_per_SNP, l_keep_index, REF, A2)
+
+        ## Calculate minor allele frequency.
+        AF_A1 = cnt_allele_A1/cnt_allele_nonmissing
+
+        ## Convert MAF to allele frequency for the ALT allele.
+        if REF == A2:
+            ALT = A1
+            AF = AF_A1
+        elif REF == A1:
+            ALT = A2
+            AF = 1-AF_A1
+        elif A1 == '0':
+            ALT = '.'
+            AF = AF_A1
+            assert AF == 0
+        else:
+            print(REF, A1, A2, AF_A1)
+            stop
+
+        ## Join fixed fields.
+        INFO = 'AF={0:.4f}'.format(AF)
+        fixed_fields = '\t'.join((
+            CHROM,POS,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT))
+
+        ## Combine fixed fields and genotype fields.
+        line_vcf = fixed_fields+genotype_fields+'\n'
+
+        ## Write line to file.
+        vcf.write(line_vcf)
+
+    return
+
+
+def parse_bed(bed, n_bytes_per_SNP, l_keep_index, REF, A2):
+
+    '''http://pngu.mgh.harvard.edu/~purcell/plink/binary.shtml'''
+
+    bytesSNP = bed.read(n_bytes_per_SNP)
+    cnt_allele_A1 = 0
+    cnt_allele_nonmissing = 0
+    genotype_fields = ''
+    for i_keep in l_keep_index:
+        ## Convert sample index to byte index.
+        i_byte = i_keep//4
+        ## Convert byte index to byte.
+        byte = bytesSNP[i_byte]
+##                s8 = str(bin(byte)[2:]).zfill(8)
+        ## Format byte as string.
+        s8 = '{:08b}'.format(byte)#[::-1]
+        ## Get genotype as string.
+        i = i_keep%4
+        s2 = s8[8-2*i-2:8-2*i]
+        ## Genotype missing.
+        if s2 == '01':
+            genotype_fields += '\t./.'
+        else:
+            if s2 == '00':
+                if REF == A2:
+                    genotype_fields += '\t1/1'
+                else:
+                    genotype_fields += '\t0/0'
+            elif s2 == '11':
+                if REF == A2:
+                    genotype_fields += '\t0/0'
+                else:
+                    genotype_fields += '\t1/1'
+            else:
+                assert s2 == '10'
+                genotype_fields += '\t0/1'
+            cnt_allele_nonmissing += 2
+            cnt_allele_A1 += s2.count('0')
+
+    return cnt_allele_nonmissing, cnt_allele_A1, genotype_fields
+
+
+def write_metadata(args, vcf):
+
+    ## metadata
+    vcf.write('##fileformat=VCFv4.3\n')
+    vcf.write('##fileDate={}\n'.format(datetime.date.today()))
+    vcf.write('##source={}.bed\n'.format(args.bfile))
+    vcf.write('##source={}\n'.format(sys.argv[0]))
+    vcf.write('##reference={}\n'.format(args.ref))
+    vcf.write('##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n')
+
+    return
+
+def write_header(vcf, l_vcf_sampleIDs):
+
+    ## header line
+    vcf.write('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT')
+    for sampleID in l_vcf_sampleIDs:
+        vcf.write('\t{}'.format(sampleID))
+    vcf.write('\n')
+
+    return
+
+def read_fai(path_fai):
+
+    assert os.path.isfile(path_fai)
+
+    d = {}
+    with open(path_fai) as file_fai:
+        for line_fai in file_fai:
+            l = line_fai.rstrip().split()
+            chrom = l[0]
+            byte_length = int(l[1])
+            byte_start = int(l[2])
+            bytes_per_line_excl_line_break = int(l[3])
+            bytes_per_line_incl_line_break = int(l[4])
+            d[chrom] = {'length': byte_length, 'start': byte_start}
+
+    return d
+
+
+def parse_ref(d_fai, fd_ref, CHROM, POS, size=1):
+
+    ## parse ref
+    cnt = cnt_chars_per_line_excluding_newline = 60
+    row1 = (POS - 1) // cnt
+    row2 = (POS - 1 + size) // cnt
+    size += row2 - row1
+    col = (POS - 1) % cnt
+    byte_init = d_fai[CHROM]['start']
+    offset = byte_init + (cnt + 1) * row1 + col
+    fd_ref.seek(offset)
+    read = fd_ref.read(size).replace('\n', '')
+
+    return read
+
+
+def index_keep(l_keep_sampleIDs,l_fam_sampleIDs):
+
+    if not l_keep_sampleIDs:
+        l_keep_sampleIDs = l_fam_sampleIDs
+
+    if len(set(l_keep_sampleIDs)-set(l_fam_sampleIDs)) > 0:
+        print('keep is not a subset of fam')
+        sys.exit()
+
+##    l_keep_index = []
+##    for i in range(len(l_fam_sampleIDs)):
+##        sampleID = l_fam_sampleIDs[i]
+##        if not sampleID in l_keep_sampleIDs:
+##            continue
+##        l_keep_index += [i]
+    l_keep_index = list(sorted(
+        [l_fam_sampleIDs.index(sampleID) for sampleID in l_keep_sampleIDs]))
+
+    return l_keep_index
+    
+
+def parse_fam(fp_fam,):
+    
+    l_keep_index = []
+
+    with open(fp_fam,'r') as fam:
+        l_sampleIDs = [line.rstrip().split()[0] for line in fam]
+    with open(fp_fam,'r') as fam:
+        line = fam.readline()
+        if line.split()[0] != line.rstrip().split()[1]:
+            print('havent written code for when FID and IID are different')
+            sys.exit()
+
+    if len(l_sampleIDs) != len(set(l_sampleIDs)):
+        print('duplicate sample IDs')
+        print(l_sampleIDs)
+        stop
+
+    return l_sampleIDs
+
+
+def shorten_sampleIDs(l_sampleIDs_long):
+
+##    if fp_update_ids:
+##        with open(fp_update_ids) as f:
+##            d_update = {
+##                line.strip().split()[0]:line.strip().split()[2] for line in f}
+##    else:
+##        d_update = {sampleID:sampleID for sampleID in l_sampleIDs_long}
+
+    keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(.+\d\d\d\d\d\d\d)')
+
+    l_sampleIDs_short = []
+
+    for sampleID_long in l_sampleIDs_long:
+##        sampleID_long = d_update[sampleID_long]
+        match = result = keyword.search(sampleID_long)
+        if match:
+            sampleID_short = match.group(2)
+        else:
+            sampleID_short = sampleID_long
+        l_sampleIDs_short += [sampleID_short]
+
+    return l_sampleIDs_short
+
+
+def parse_keep(fp_keep,l_fam_sampleIDs):
+
+    if fp_keep:
+        with open(fp_keep) as keep:
+            l_keep_sampleIDs_unsorted = [line.rstrip().split()[0] for line in keep]
+##        for sampleID in l_fam_sampleIDs:
+##            if not sampleID in l_keep_sampleIDs_unsorted:
+##                continue
+        l_keep_sampleIDs = [
+            sampleID for sampleID in l_fam_sampleIDs
+            if sampleID in l_keep_sampleIDs_unsorted]
+    else:
+        l_keep_sampleIDs = l_fam_sampleIDs
+
+    return l_keep_sampleIDs
+
+
+def argparser():
+
+    parser = argparse.ArgumentParser()
+
+    ## Required.
+    parser.add_argument('--vcf', '--out', required = True)
+    parser.add_argument('--bfile', '--in', required = True)
+    s_help = 'The A2 allele is saved as the reference by PLINK2, '
+    s_help = 'but a reference sequence is needed to determine REF and ALT.'
+    parser.add_argument(
+        '--ref', required = True, default=None,
+        help=s_help,
+        )
+
+    ## Optional. Good to have instead of creating intermediate bed files.
+    parser.add_argument('--keep', required = False, default=None)
+##    parser.add_argument('--update-ids', required = False, default=None)
+
+    args = namespace_args = parser.parse_args()
+
+    ## Assert that input exists.
+    assert all([
+        os.path.isfile('{}.{}'.format(args.bfile, suffix))
+        for suffix in ('bed','bim','fam')])
+    assert os.path.isfile(args.ref)
+
+    ## Do not allow non-compressed output vcf file.
+    assert os.path.splitext(args.vcf)[1] == '.gz'
+
+    ## Do not allow compressed reference sequence for now.
+    assert os.path.splitext(args.ref)[1] == '.fa'
+
+    return args
+
 
 if __name__ == '__main__':
     main()
