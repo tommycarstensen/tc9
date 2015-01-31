@@ -10,6 +10,8 @@ import re
 import datetime
 import sys
 import gzip
+import Bio
+from Bio.bgzf import BgzfWriter
 
 
 def main():
@@ -36,8 +38,9 @@ def main():
 
     d_fai = read_fai(args.ref + '.fai')
 
+##         gzip.open(args.vcf, 'wt') as vcf, \
     with open(args.bfile + '.bed', 'rb') as bed, \
-         gzip.open(args.vcf, 'wt') as vcf, \
+         BgzfWriter(args.vcf, 'wb') as vcf, \
          open(args.bfile + '.bim', 'r') as bim, \
          open(args.ref, 'r') as ref:
         convert(
@@ -89,19 +92,20 @@ def convert(
         ## Calculate minor allele frequency.
         AF_A1 = cnt_allele_A1/cnt_allele_nonmissing
 
+        ## ALT = major
         ## Convert MAF to allele frequency for the ALT allele.
-        if REF == A2:
-            ALT = A1
-            AF = AF_A1
-        elif REF == A1:
+        if REF == A1:
             ALT = A2
             AF = 1-AF_A1
+        ## ALT = minor
+        elif REF == A2:
+            ALT = A1
+            AF = AF_A1
         elif A1 == '0':
-            ## not monomorphic
+            ## 
             if not AF_A1 == 0:
-                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}\n'.format(
+                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}'.format(
                     REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
-                continue
                 ALT = A2
                 AF = 1-AF_A1
             ## monomorphic
@@ -111,7 +115,7 @@ def convert(
         ## Neither A1 nor A2 is identical to the reference allele.
         ## Should not happen, but print a warning to stderr and continue.
         else:
-            print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}\n'.format(
+            print('ERROR: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}'.format(
                 REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
             continue
 
@@ -121,12 +125,27 @@ def convert(
             CHROM,POS,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT))
 
         ## Combine fixed fields and genotype fields.
-        line_vcf = fixed_fields+genotype_fields+'\n'
+        line_vcf = fixed_fields+'\t'+genotype_fields+'\n'
 
         ## Write line to file.
         vcf.write(line_vcf)
 
     return
+
+
+def byte2string(byte):
+
+    _str = '{:08b}'.format(byte)
+
+    return _str
+
+
+def multipleGT2singleGT(s8, i_keep):
+
+    i = i_keep%4
+    s2 = s8[8-2*i-2:8-2*i]
+
+    return s2
 
 
 def parse_bed(bed, n_bytes_per_SNP, l_keep_index, REF, A2):
@@ -136,7 +155,7 @@ def parse_bed(bed, n_bytes_per_SNP, l_keep_index, REF, A2):
     bytesSNP = bed.read(n_bytes_per_SNP)
     cnt_allele_A1 = 0
     cnt_allele_nonmissing = 0
-    genotype_fields = ''
+    l_GT = []
     for i_keep in l_keep_index:
         ## Convert sample index to byte index.
         i_byte = i_keep//4
@@ -144,31 +163,38 @@ def parse_bed(bed, n_bytes_per_SNP, l_keep_index, REF, A2):
         byte = bytesSNP[i_byte]
 ##                s8 = str(bin(byte)[2:]).zfill(8)
         ## Format byte as string.
-        s8 = '{:08b}'.format(byte)#[::-1]
+        s8 = byte2string(byte)#[::-1]
         ## Get genotype as string.
-        i = i_keep%4
-        s2 = s8[8-2*i-2:8-2*i]
+        s2 = multipleGT2singleGT(s8, i_keep)
         ## Genotype missing.
         if s2 == '01':
-            genotype_fields += '\t./.'
+            l_GT.append('./.')
         else:
-            if s2 == '00':
-                if REF == A2:
-                    genotype_fields += '\t1/1'
-                else:
-                    genotype_fields += '\t0/0'
-            elif s2 == '11':
-                if REF == A2:
-                    genotype_fields += '\t0/0'
-                else:
-                    genotype_fields += '\t1/1'
-            else:
-                assert s2 == '10'
-                genotype_fields += '\t0/1'
+            l_GT.append(bedGT2vcfGT(s2, REF, A2))
             cnt_allele_nonmissing += 2
             cnt_allele_A1 += s2.count('0')
 
+    genotype_fields = '\t'.join(l_GT)
+
     return cnt_allele_nonmissing, cnt_allele_A1, genotype_fields
+
+
+def bedGT2vcfGT(s2, REF, A2):
+
+    if s2 == '00':
+        if REF == A2:
+            GT = '1/1'
+        else:
+            GT = '0/0'
+    elif s2 == '11':
+        if REF == A2:
+            GT = '0/0'
+        else:
+            GT = '1/1'
+    else:
+        GT = '0/1'
+
+    return GT
 
 
 def write_metadata(args, vcf):
@@ -180,6 +206,7 @@ def write_metadata(args, vcf):
     vcf.write('##source={}\n'.format(sys.argv[0]))
     vcf.write('##reference={}\n'.format(args.ref))
     vcf.write('##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n')
+    vcf.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
 
     return
 
