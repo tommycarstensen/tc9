@@ -97,13 +97,17 @@ def convert(
             ALT = A2
             AF = 1-AF_A1
         elif A1 == '0':
-            AF = AF_A1
             ## not monomorphic
-            if not AF == 0:
+            if not AF_A1 == 0:
+                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}\n'.format(
+                    REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
+                continue
                 ALT = A2
+                AF = 1-AF_A1
             ## monomorphic
             else:
                 ALT = '.'
+                AF = 0
         ## Neither A1 nor A2 is identical to the reference allele.
         ## Should not happen, but print a warning to stderr and continue.
         else:
