@@ -73,7 +73,8 @@ def convert(
         ## By default, the minor allele is coded A1
         ## and the major allele is coded A2
         CHROM, ID, _, POS, A1, A2 = line_bim.rstrip().split()
-        if CHROM != '20': continue  # tmp!!!
+        if args.chrom and CHROM != args.chrom:
+            continue
         ## monomorphic
         if A2 == '0':
             ALT = '.'
@@ -96,12 +97,19 @@ def convert(
             ALT = A2
             AF = 1-AF_A1
         elif A1 == '0':
-            ALT = '.'
             AF = AF_A1
-            assert AF == 0
+            ## not monomorphic
+            if not AF == 0:
+                ALT = A2
+            ## monomorphic
+            else:
+                ALT = '.'
+        ## Neither A1 nor A2 is identical to the reference allele.
+        ## Should not happen, but print a warning to stderr and continue.
         else:
-            print(REF, A1, A2, AF_A1)
-            stop
+            print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}\n'.format(
+                REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
+            continue
 
         ## Join fixed fields.
         INFO = 'AF={0:.4f}'.format(AF)
@@ -315,6 +323,7 @@ def argparser():
     ## Optional. Good to have instead of creating intermediate bed files.
     parser.add_argument('--keep', required = False, default=None)
 ##    parser.add_argument('--update-ids', required = False, default=None)
+    parser.add_argument('--chrom', required = False)
 
     args = namespace_args = parser.parse_args()
 
