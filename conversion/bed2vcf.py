@@ -14,6 +14,9 @@ import Bio
 from Bio.bgzf import BgzfWriter
 
 
+bpb = n_bits_per_byte = 8
+
+
 def main():
 
     args = argparser()
@@ -31,7 +34,6 @@ def main():
 
     ## Get count of samples.
     n_samples = len(l_fam_sampleIDs)
-    n_bytes_per_SNP = math.ceil(n_samples/4)
     ## Get count of SNPs. Only needed to keep track of completion percent.
     with open(args.bfile + '.bim', 'r') as bim:
         n_SNPs = len(bim.readlines())
@@ -45,14 +47,16 @@ def main():
          open(args.ref, 'r') as ref:
         convert(
             args, bed, vcf, bim, ref, d_fai,
-            l_vcf_sampleIDs, n_bytes_per_SNP, l_keep_index, n_samples, n_SNPs)
+            l_vcf_sampleIDs, l_keep_index, n_samples, n_SNPs)
 
     return
 
 def convert(
     args, bed, vcf, bim, ref, d_fai,
-    l_vcf_sampleIDs, n_bytes_per_SNP, l_keep_index, n_samples, n_SNPs):
-      
+    l_vcf_sampleIDs, l_keep_index, n_samples, n_SNPs):
+
+    n_bytes_per_SNP = math.ceil(n_samples/4)
+
     write_metadata(args, vcf)
     write_header(vcf, l_vcf_sampleIDs)
 
@@ -70,7 +74,9 @@ def convert(
     while True:
         i_SNP += 1
         if i_SNP % 1000 == 0:
-            print('SNP {} of {} SNPs'.format(i_SNP, n_SNPs))
+            print('SNP {} of {} SNPs. CHROM={} POS={} time={}'.format(
+                i_SNP, n_SNPs, CHROM, POS,
+                datetime.datetime.now().strftime("%H:%M:%S")))
         line_bim = bim.readline()
         if not line_bim: break
         ## By default, the minor allele is coded A1
@@ -87,7 +93,8 @@ def convert(
 
         ## Parse alleles and genotypes from bed file.
         cnt_allele_nonmissing, cnt_allele_A1, genotype_fields = parse_bed(
-            bed, n_bytes_per_SNP, l_keep_index, REF, A2)
+            bed, l_keep_index, REF, A2, n_bytes_per_SNP)
+##        NCHROBS = cnt_allele_nonmissing
 
         ## Calculate minor allele frequency.
         AF_A1 = cnt_allele_A1/cnt_allele_nonmissing
@@ -113,7 +120,7 @@ def convert(
                 ALT = '.'
                 AF = 0
         ## Neither A1 nor A2 is identical to the reference allele.
-        ## Should not happen, but print a warning to stderr and continue.
+        ## Should not happen. Print an error and continue.
         else:
             print('ERROR: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}'.format(
                 REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
@@ -133,68 +140,59 @@ def convert(
     return
 
 
-def byte2string(byte):
-
-    _str = '{:08b}'.format(byte)
-
-    return _str
-
-
-def multipleGT2singleGT(s8, i_keep):
-
-    i = i_keep%4
-    s2 = s8[8-2*i-2:8-2*i]
-
-    return s2
-
-
-def parse_bed(bed, n_bytes_per_SNP, l_keep_index, REF, A2):
+def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP):
 
     '''http://pngu.mgh.harvard.edu/~purcell/plink/binary.shtml'''
 
     bytesSNP = bed.read(n_bytes_per_SNP)
+    ## Convert to integer from bytes.
+##    int_bytesSNP = int.from_bytes(bytesSNP, 'big')
+    int_bytesSNP2 = int.from_bytes(bytesSNP, 'little')
     cnt_allele_A1 = 0
     cnt_allele_nonmissing = 0
     l_GT = []
     for i_keep in l_keep_index:
-        ## Convert sample index to byte index.
-        i_byte = i_keep//4
-        ## Convert byte index to byte.
-        byte = bytesSNP[i_byte]
-##                s8 = str(bin(byte)[2:]).zfill(8)
-        ## Format byte as string.
-        s8 = byte2string(byte)#[::-1]
-        ## Get genotype as string.
-        s2 = multipleGT2singleGT(s8, i_keep)
-        ## Genotype missing.
-        if s2 == '01':
-            l_GT.append('./.')
-        else:
-            l_GT.append(bedGT2vcfGT(s2, REF, A2))
+        div, mod = divmod(i_keep, 4)
+        ## Calculate size of bit shift for sample.
+        shift2 = 2*i_keep
+        ## Query status of bit with bit masking
+        bits = int_bytesSNP2 >> shift2 & 0b11
+        ## query status of bit
+        if bits == 0:
+            ## hom
+            s2b = '00'
+            cnt_allele_A1 += 2
             cnt_allele_nonmissing += 2
-            cnt_allele_A1 += s2.count('0')
+            if REF == A2:
+                GT = '1/1'
+            else:
+                GT = '0/0'
+        elif bits == 2:
+            ## het
+            s2b = '10'
+            cnt_allele_A1 += 1
+            cnt_allele_nonmissing += 2
+            GT = '0/1'
+        elif bits == 3:
+            ## hom
+            s2b = '11'
+            cnt_allele_nonmissing += 2
+            if REF == A2:
+                GT = '0/0'
+            else:
+                GT = '1/1'
+        elif bits == 1:
+            ## missing
+            s2b = '01'
+            GT = './.'
+        else:
+            print(s2, x)
+            stop2
+        l_GT.append(GT)
 
     genotype_fields = '\t'.join(l_GT)
 
     return cnt_allele_nonmissing, cnt_allele_A1, genotype_fields
-
-
-def bedGT2vcfGT(s2, REF, A2):
-
-    if s2 == '00':
-        if REF == A2:
-            GT = '1/1'
-        else:
-            GT = '0/0'
-    elif s2 == '11':
-        if REF == A2:
-            GT = '0/0'
-        else:
-            GT = '1/1'
-    else:
-        GT = '0/1'
-
-    return GT
 
 
 def write_metadata(args, vcf):
@@ -279,9 +277,9 @@ def parse_fam(fp_fam,):
     
     l_keep_index = []
 
-    with open(fp_fam,'r') as fam:
+    with open(fp_fam, 'r') as fam:
         l_sampleIDs = [line.rstrip().split()[0] for line in fam]
-    with open(fp_fam,'r') as fam:
+    with open(fp_fam, 'r') as fam:
         line = fam.readline()
         if line.split()[0] != line.rstrip().split()[1]:
             print('havent written code for when FID and IID are different')
