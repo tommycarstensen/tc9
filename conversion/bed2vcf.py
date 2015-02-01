@@ -57,6 +57,10 @@ def convert(
 
     n_bytes_per_SNP = math.ceil(n_samples/4)
 
+    ## Prepare list of genotypes instead of appending to empty list.
+    ## The latter is slow.
+    l_GT = [None]*len(l_keep_index)
+
     write_metadata(args, vcf)
     write_header(vcf, l_vcf_sampleIDs)
 
@@ -66,34 +70,28 @@ def convert(
     bed.read(len(magic_number)+len(mode))
 
     QUAL = '.'
-    FILTER = '.'
+    FILTER = 'PASS'
     FORMAT = 'GT'
 
     ## data lines
-    i_SNP = 0
-    while True:
+    for i_SNP, line_bim in enumerate(line_bim):
         i_SNP += 1
-        if i_SNP % 1000 == 0:
-            print('SNP {} of {} SNPs. CHROM={} POS={} time={}'.format(
-                i_SNP, n_SNPs, CHROM, POS,
-                datetime.datetime.now().strftime("%H:%M:%S")))
-        line_bim = bim.readline()
-        if not line_bim: break
         ## By default, the minor allele is coded A1
         ## and the major allele is coded A2
         CHROM, ID, _, POS, A1, A2 = line_bim.rstrip().split()
         if args.chrom and CHROM != args.chrom:
             continue
-        ## monomorphic
-        if A2 == '0':
-            ALT = '.'
+        if i_SNP % 1000 == 0:
+            print('SNP {} of {} SNPs. CHROM={} POS={} time={}'.format(
+                i_SNP, n_SNPs, CHROM, POS,
+                datetime.datetime.now().strftime("%H:%M:%S")))
 
         ## Parse reference allele from reference sequence.
         REF = parse_ref(d_fai, ref, CHROM, int(POS))
 
         ## Parse alleles and genotypes from bed file.
         cnt_allele_nonmissing, cnt_allele_A1, genotype_fields = parse_bed(
-            bed, l_keep_index, REF, A2, n_bytes_per_SNP)
+            bed, l_keep_index, REF, A2, n_bytes_per_SNP, l_GT)
 ##        NCHROBS = cnt_allele_nonmissing
 
         ## Calculate minor allele frequency.
@@ -111,10 +109,11 @@ def convert(
         elif A1 == '0':
             ## 
             if not AF_A1 == 0:
-                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}'.format(
+                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={:.4f}'.format(
                     REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
                 ALT = A2
                 AF = 1-AF_A1
+                continue
             ## monomorphic
             else:
                 ALT = '.'
@@ -122,7 +121,7 @@ def convert(
         ## Neither A1 nor A2 is identical to the reference allele.
         ## Should not happen. Print an error and continue.
         else:
-            print('ERROR: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={}'.format(
+            print('ERROR: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={:.4f}'.format(
                 REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
             continue
 
@@ -140,7 +139,7 @@ def convert(
     return
 
 
-def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP):
+def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP, l_GT):
 
     '''http://pngu.mgh.harvard.edu/~purcell/plink/binary.shtml'''
 
@@ -150,9 +149,7 @@ def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP):
     int_bytesSNP2 = int.from_bytes(bytesSNP, 'little')
     cnt_allele_A1 = 0
     cnt_allele_nonmissing = 0
-    l_GT = []
-    for i_keep in l_keep_index:
-        div, mod = divmod(i_keep, 4)
+    for i, i_keep in enumerate(l_keep_index):
         ## Calculate size of bit shift for sample.
         shift2 = 2*i_keep
         ## Query status of bit with bit masking
@@ -188,7 +185,7 @@ def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP):
         else:
             print(s2, x)
             stop2
-        l_GT.append(GT)
+        l_GT[i] = GT
 
     genotype_fields = '\t'.join(l_GT)
 
