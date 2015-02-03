@@ -112,68 +112,6 @@ class main():
         s_out = ''
         for chrom in self.chroms:
 
-            ## tmp!!!
-            ## submitted Feb2 15:42
-            ## nct=1, nt>1
-            if chrom == '1':
-                nct = 1; nt = 32; queue = 'normal' ## succesful
-            elif chrom == '2':
-                nct = 1; nt = 32; queue = 'normal' ## succesful
-            elif chrom == '3':
-                nct = 1; nt = 32; queue = 'normal' ## succesful
-            elif chrom == '4':
-                nct = 1; nt = 32; queue = 'normal'
-            ## nct>1, nt=1 fails for nct = 4,8,16,32
-            ## nct>1,nt>1,nct*nt=32 (nct=16,nt=2 fails, 32/1, 8/4, 4/8, 2/16 fails)
-            ## 1,24 fails a lot
-            ## nct*nt=32
-            elif chrom == '5':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '6':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '8':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '7':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '9':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '10':
-                nct = 1; nt = 24; queue = 'normal'
-            elif chrom == '12':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '11':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '13':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '14':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '15':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '16':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '17':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '18':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '19':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '20':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '21':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == '22':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == 'X':
-                nct = 1; nt = 32; queue = 'normal'
-            elif chrom == 'Y':
-                nct = 1; nt = 32; queue = 'normal'
-            else:
-                nct = 1; nt = 32; queue = 'normal'
-            if nct*nt <= 2:
-                queue = 'basement'
-            elif nct*nt <= 4:
-                queue = 'long'
-
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
             ## Memory consumption seems to explode for UG,
             ## when doing haploidy for Y and nonPAR X.
