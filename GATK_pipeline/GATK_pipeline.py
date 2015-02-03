@@ -80,7 +80,7 @@ class main():
         memMB = nt * 4000 - 100
         memMB = nt * 4000 - 100
         memMB = 63900
-##        memMB = 63900; nct = 1; nt = 1
+        memMB = 127900; nct = 1; nt = 32
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
@@ -1867,7 +1867,7 @@ and requires less than 100MB of memory'''
             help='Path to a file with -resource lines to append to GATK VR',)
 
         parser.add_argument(
-            '--an_SNP', n_args='+',
+            '--an_SNP', nargs='+',
             choices=[
                 'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
             default=[
@@ -1875,7 +1875,7 @@ and requires less than 100MB of memory'''
                 )
 
         parser.add_argument(
-            '--an_indel', n_args='+',
+            '--an_indel', nargs='+',
             choices=[
                 'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
             default=[
