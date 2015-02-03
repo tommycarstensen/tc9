@@ -219,18 +219,20 @@ class main():
                         if time.time() - os.path.getmtime(
                             'LSF/{}.err'.format(affix)) < 300:
                             continue
+                        ## Otherwise delete prior to run.
                         if os.path.isfile('LSF/{}.out'.format(affix)):
                             os.remove('LSF/{}.out'.format(affix))
                         os.remove('LSF/{}.err'.format(affix))
 
+                    ## Delete old output.
                     if (
                         not os.path.isfile('out_{}.vcf.gz.tbi'.format(affix))
-                        and os.path.isfile('out_{}.vcf.gz'.format(affix))
+                        and os.path.isfile('out_{}.vcf.gz'.format(affix)) and
+                        time.time() - os.path.getmtime(
+                            'out_{}.vcf.gz'.format(affix)) > 15*60
                         ):
-                        if time.time() - os.path.getmtime(
-                            'out_{}.vcf.gz'.format(affix)) > 15*60:
-                            print(out)
-                            os.remove(out)
+                        print(out)
+                        os.remove(out)
 
                     os.makedirs(os.path.dirname(
                         'LSF/{}'.format(affix)), exist_ok=True)
@@ -610,26 +612,11 @@ class main():
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--use_annotation
             ## http://gatkforums.broadinstitute.org/discussion/2805/howto-recalibrate-variant-quality-scores-run-vqsr
             if mode == 'SNP':
-                lines += [
-                    ' -an DP \\',
-                    ' -an QD \\',
-                    ' -an FS \\',
-                    ' -an SOR \\',
-                    ' -an MQ \\',
-                    ' -an MQRankSum \\',
-                    ' -an ReadPosRankSum \\',
-##                    ' -an InbreedingCoeff \\',
-                    ]
+                for an in self.an_SNP:
+                    lines += [' -an {} \\'.format(an)]
             elif mode == 'INDEL':
-                lines += [
-                    ' -an QD \\',
-                    ' -an DP \\',
-                    ' -an FS \\',
-                    ' -an SOR \\',
-                    ' -an MQRankSum \\',
-                    ' -an ReadPosRankSum \\',
-##                    ' -an InbreedingCoeff \\',
-                    ]
+                for an in self.an_indel:
+                    lines += [' -an {} \\'.format(an)]
 
             ##
             ## required, out
@@ -1938,6 +1925,22 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--resources_INDEL', '--VR_indel',
             help='Path to a file with -resource lines to append to GATK VR',)
+
+        parser.add_argument(
+            '--an_SNP', n_args='+',
+            choices=[
+                'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
+            default=[
+                'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum'],
+                )
+
+        parser.add_argument(
+            '--an_indel', n_args='+',
+            choices=[
+                'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
+            default=[
+                'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum'],
+                )
 
         ##
         ## ApplyRecalibration
