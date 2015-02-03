@@ -853,12 +853,25 @@ and requires less than 100MB of memory'''
         if os.path.isfile(out):
             sys.exit()
         os.makedirs(os.path.dirname(out), exist_ok=True)
-            
+
+        ## Assert that all headers are identical.
+        for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
+            with gzip.open(source, 'rt') as fd_source:
+                for line_VCF in fd_source:
+                    if line_VCF[:2] == '##':
+                        continue
+                    if i == 0:
+                        l = line.rstrip().split()
+                    else:
+                        assert l == line.rstrip().split()
+                    break
+
+        ## Open input files and output file.
         with open('out_VariantRecalibrator/SNP.recal') as fd_recal_SNP, \
              open('out_VariantRecalibrator/INDEL.recal') as fd_recal_INDEL, \
              BgzfWriter(out, 'wb') as fd_out:
             ## write meta-information header
-            print('##fileformat=VCFv4.1', file=fd_out)
+            print('##fileformat=VCFv4.2', file=fd_out)
             print('##fileDate={}'.format(
                 datetime.datetime.now().strftime("%Y%m%d")), file=fd_out)
             print('##source={}'.format(
@@ -872,10 +885,14 @@ and requires less than 100MB of memory'''
             while chrom_INDEL != chrom_VCF:
                 chrom_INDEL, pos_INDEL, VQSLod_INDEL = next(self.parse_recal(
                     fd_recal_INDEL, pattern))
+            ## Loop over input files.
             for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
+                ## Open input file.
                 with gzip.open(source, 'rt') as fd_source:
                     ## todo: 2015jan28: do heapq.merge() on SNPs and INDELs
                     ## when Python3.5 is released
+                    ## Skip metainformation lines and header lines
+                    ## and write it to the output from the first input file.
                     for line_VCF in fd_source:
                         if line_VCF[:2] == '##':
                             ## Copy metadata from first file.
@@ -909,7 +926,7 @@ and requires less than 100MB of memory'''
                             ## write sample IDs to output
                             print(line_VCF, end='', file=fd_out)
                         break
-                    ## Loop over remaining lines.
+                    ## Loop over data lines.
                     for line_VCF in fd_source:
                         chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
                         assert chrom == chrom_VCF
@@ -1003,6 +1020,9 @@ and requires less than 100MB of memory'''
         if self.ped:
             lines += [' ped={} \\'.format(self.ped)]
         lines += [' out=$out \\']
+        if self.beagle4_excludesamples:
+            lines += [' excludesamples={} \\'.format(
+                self.beagle4_excludesamples)]
 ##        lines += [' excludemarkers={} \\'.format(excludemarkers)]
         lines += [' chrom=$chrom:$pos1-$pos2 \\']
         ## Other arguments
@@ -1940,6 +1960,9 @@ and requires less than 100MB of memory'''
             help='File path to beagle.jar file (e.g. beagle_3.3.2.jar)',
             required=True,
             )
+
+        parser.add_argument(
+            '--beagle4_excludesamples', required=False, default='NA12878')
 
         ##
         ## optional arguments
