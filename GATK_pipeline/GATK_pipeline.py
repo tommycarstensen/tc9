@@ -12,13 +12,13 @@ import argparse
 import inspect
 import glob
 import fileinput
-import itertools
 import gzip
 import subprocess
 import contextlib
 import Bio
 from Bio.bgzf import BgzfWriter
 import urllib
+import datetime
 
 
 ## README
@@ -66,8 +66,9 @@ class main():
         queue = 'long'
         size_bp = 2 * 10 ** 6  # long
         ## http://gatkforums.broadinstitute.org/discussion/1975/how-can-i-use-parallelism-to-make-gatk-tools-run-faster
-        nct = 3
-        nt = 8
+        nct = 4
+        nt = 4
+        queue = 'normal'
         ## Each data thread needs to be given the full amount of memory
         ## you’d normally give a single run. So if you’re running a tool
         ## that normally requires 2 Gb of memory to run, if you use -nt 4,
@@ -78,7 +79,7 @@ class main():
         memMB = 2900 + 8 * len(self.bams)
         memMB = nt * 4000 - 100
         memMB = nt * 4000 - 100
-        memMB = 47900
+        memMB = 63900
 ##        memMB = 63900; nct = 1; nt = 1
 
         ## Parse chromosome ranges.
@@ -108,7 +109,70 @@ class main():
 
         ## execute shell script
         ## loop over chroms
+        s_out = ''
         for chrom in self.chroms:
+
+            ## tmp!!!
+            ## submitted Feb2 15:42
+            ## nct=1, nt>1
+            if chrom == '1':
+                nct = 1; nt = 32; queue = 'normal' ## succesful
+            elif chrom == '2':
+                nct = 1; nt = 32; queue = 'normal' ## succesful
+            elif chrom == '3':
+                nct = 1; nt = 32; queue = 'normal' ## succesful
+            elif chrom == '4':
+                nct = 1; nt = 32; queue = 'normal'
+            ## nct>1, nt=1 fails for nct = 4,8,16,32
+            ## nct>1,nt>1,nct*nt=32 (nct=16,nt=2 fails, 32/1, 8/4, 4/8, 2/16 fails)
+            ## 1,24 fails a lot
+            ## nct*nt=32
+            elif chrom == '5':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '6':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '8':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '7':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '9':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '10':
+                nct = 1; nt = 24; queue = 'normal'
+            elif chrom == '12':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '11':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '13':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '14':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '15':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '16':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '17':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '18':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '19':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '20':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '21':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == '22':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == 'X':
+                nct = 1; nt = 32; queue = 'normal'
+            elif chrom == 'Y':
+                nct = 1; nt = 32; queue = 'normal'
+            else:
+                nct = 1; nt = 32; queue = 'normal'
+            if nct*nt <= 2:
+                queue = 'basement'
+            elif nct*nt <= 4:
+                queue = 'long'
 
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
             ## Memory consumption seems to explode for UG,
@@ -142,6 +206,9 @@ class main():
                     if sex and chrom == 'X':
                         affix += '.{}'.format(sex)
 
+                    out = 'out_{}.vcf.gz'.format(affix)
+                    s_out += '{}.tbi\n'.format(out)
+
                     ## Skip if output was generated.
                     if os.path.isfile(
                         'out_{}.vcf.gz.tbi'.format(affix)):
@@ -155,6 +222,15 @@ class main():
                         if os.path.isfile('LSF/{}.out'.format(affix)):
                             os.remove('LSF/{}.out'.format(affix))
                         os.remove('LSF/{}.err'.format(affix))
+
+                    if (
+                        not os.path.isfile('out_{}.vcf.gz.tbi'.format(affix))
+                        and os.path.isfile('out_{}.vcf.gz'.format(affix))
+                        ):
+                        if time.time() - os.path.getmtime(
+                            'out_{}.vcf.gz'.format(affix)) > 15*60:
+                            print(out)
+                            os.remove(out)
 
                     os.makedirs(os.path.dirname(
                         'LSF/{}'.format(affix)), exist_ok=True)
@@ -170,19 +246,22 @@ class main():
                     d_arguments['pos2'] = pos2
                     if XL:
                         d_arguments['XL'] = XL
+                    d_arguments['out'] = out
                     d_arguments['input_file'] = d_sex2bamlist[sex]
-                    d_arguments['out'] = 'out_{}.vcf.gz'.format(affix)
                     d_arguments['nct'] = nct
                     d_arguments['nt'] = nt
                     d_arguments['sample_ploidy'] = sample_ploidy
                     arguments = self.args_dict2str(d_arguments)
 
-                    LSB_JOBNAME = '{} {} {} {}'.format('UG', chrom, i, sex)
+                    LSB_JOBNAME = '{}.{}.{} {}'.format('UG', chrom, i, sex)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
                         LSF_memMB=memMB, LSF_queue=queue, LSF_n=nt*nct,
                         arguments=arguments)
                     self.execmd(cmd)
+
+        with open('lists/{}.list'.format(T), 'w') as f:
+            f.write(s_out)
 
         return
 
@@ -282,7 +361,7 @@ class main():
 
         lines += ['basename=$(basename $file_input | rev | cut -d "." -f2- | rev)']
 ##        ## exit if job started
-##        lines += ['if [ -s $out ]; then exit; fi\n']
+##        lines += ['if [ -f $out ]; then exit; fi\n']
         ## exit if job finished
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
@@ -293,8 +372,6 @@ class main():
         lines += self.body_HaplotypeCaller()
 
         ## terminate shell script
-##        lines += self.term_cmd(
-##            analysis_type, ['$out.tbi'], extra='tabix -p vcf $out')
         lines += self.term_cmd(T, ['$out.tbi'])
 
         ## write shell script
@@ -404,7 +481,7 @@ class main():
                     memMB=memMB, queue=queue,
                     LSF_affix='{}/{}.{}'.format(T, chrom, i)
                     )
-                cmd += ' {} {}'.format(chrom, i)
+                cmd += ' {}.{}'.format(chrom, i)
                 self.execmd(cmd)
 
         if bool_exit == True:
@@ -459,6 +536,11 @@ class main():
                 cmd += ' {}'.format(chrom)
                 self.execmd(cmd)
 
+                s_out += 'out_{}/{}.vcf.gz\n'.format(T, chrom)
+
+        with open('lists/{}.list'.format(T), 'w') as f:
+            f.write(s_out)
+
         if bool_exit:
             sys.exit()
 
@@ -477,17 +559,17 @@ class main():
         ## 1) check input existence (vcf)
         ##
         if self.caller == 'HC':
-            l_vcfs_in = [
-                'out_GenotypeGVCFs/{}.vcf.gz'.format(chrom) for chrom in self.chroms]
             T_prev = 'GenotypeGVCFs'
+##            l_vcfs_in = [
+##                'out_GenotypeGVCFs/{}.vcf.gz'.format(chrom) for chrom in self.chroms]
+            with open('lists/{}.list'.format(T_prev)) as f:
+                l_vcfs_in = f.read().rstrip().split('\n')
         elif self.caller == 'UG':
-            import itertools
-            l_vcfs_in = [
-                vcf for chrom in self.chroms for vcf in glob.glob(
-                    'out_UnifiedGenotyper/{}/*.vcf.gz'.format(chrom))]
             T_prev = 'UnifiedGenotyper'
+            with open('lists/{}.list'.format(T_prev)) as f:
+                l_vcfs_in = f.read().rstrip().split('\n')
         if self.check_in(
-            T_prev, ['{}.tbi'.format(vcf) for vcf in l_vcfs_in],
+            T_prev, ['{}'.format(vcf) for vcf in l_vcfs_in],
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
@@ -495,8 +577,6 @@ class main():
 
         if not os.path.isdir('LSF/{}'.format(T)):
             os.mkdir('LSF/{}'.format(T))
-        if not os.path.isdir('out_{}'.format(T)):
-            os.mkdir('out_{}'.format(T))
 
         d_arguments = {'nt':num_threads, 'nct':1}
 
@@ -513,6 +593,8 @@ class main():
             ## Define file paths.
             tranches = 'out_{}/{}.tranches'.format(T, mode)
             recal = 'out_{}/{}.recal'.format(T, mode)
+            tranches = 'out_{}/{}.tranches.gz'.format(T, mode)  # tmp!!!
+            recal = 'out_{}/{}.recal.gz'.format(T, mode)  # tmp!!!
 
             lines = []
 
@@ -523,7 +605,8 @@ class main():
             lines += self.init_GATK_cmd(analysis_type, memMB, d_arguments.keys())
 
             ## required, in
-            lines += [' --input {} \\'.format(vcf) for vcf in l_vcfs_in]
+##            lines += [' --input {} \\'.format(vcf) for vcf in l_vcfs_in]
+            lines += [' --input lists/{}.list'.format(T_prev)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--use_annotation
             ## http://gatkforums.broadinstitute.org/discussion/2805/howto-recalibrate-variant-quality-scores-run-vqsr
             if mode == 'SNP':
@@ -630,15 +713,6 @@ class main():
 
         return s
 
-    def skip_header(self, fd):
-
-        for line in fd:
-            if line[0] == '#':
-                continue
-            yield line
-
-        return
-
     def hook_compressed_text(self, filename, mode):
 
         ext = os.path.splitext(filename)[1]
@@ -651,13 +725,15 @@ class main():
 
     def parse_recal(self, fd, pattern):
 
-        line = next(self.skip_header(fd))
-        l = line.rstrip().split('\t')
-        chrom = l[0]
-        pos = l[1]
-        VQSLod = float(re.match(pattern, l[7]).group(1))
+        for line in fd:
+            if line[0] == '#':
+                continue
+            l = line.rstrip().split('\t')
+            chrom = l[0]
+            pos = l[1]
+            VQSLod = float(re.match(pattern, l[7]).group(1))
 
-        return chrom, pos, VQSLod
+            yield chrom, pos, VQSLod
 
     def parse_sources(self):
 
@@ -677,8 +753,8 @@ class main():
     def parse_minVQSLods(self):
 
         d_ts_filter_level = {
-            'SNP': self.ts_filter_level_SNP,
-            'INDEL': self.ts_filter_level_INDEL}
+            'SNP': self.ts_SNP,
+            'INDEL': self.ts_INDEL}
         d_minVQSLod = {}
         for mode in ('SNP', 'INDEL'):
             with open(
@@ -702,22 +778,33 @@ class main():
         d_sources = self.parse_sources()
         assert d_sources['SNP'] == d_sources['INDEL']
 
-        if not os.path.isdir('LSF/ApplyRecalibration'):
-            os.makedirs('LSF/ApplyRecalibration')
-
-        for source_SNP, source_INDEL in zip(
-            d_sources['SNP'], d_sources['INDEL']):
-##            chrom = os.path.basename(source_SNP).split('.')[0]
+        d_chrom2sources = {}
+        min_mtime = min([
+            os.path.getmtime(
+                'out_VariantRecalibrator/{}.{}'.format(mode, suffix))
+            for suffix in ('recal', 'tranches')
+            for mode in ('SNP', 'INDEL')])
+        for source_SNP in self.parse_sources()['SNP']:
             chrom = os.path.basename(os.path.dirname(source_SNP))
+            try:
+                d_chrom2sources[chrom] += [source_SNP]
+            except KeyError:
+                d_chrom2sources[chrom] = [source_SNP]
+            assert min_mtime > os.path.getmtime(source_SNP)
+        for chrom in self.sort_nicely(list(d_chrom2sources.keys())):
             assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
+            dirname_LSF = 'LSF/ApplyRecalibration'
+            if not os.path.isdir(dirname_LSF):
+                os.makedirs(dirname_LSF)
             s = ''
             s += 'bsub -G {} '.format(self.project)
-            s += ' -o LSF/ApplyRecalibration/{}.out'.format(chrom)
-            s += ' -e LSF/ApplyRecalibration/{}.err'.format(chrom)
+            s += ' -o {}/{}.out'.format(dirname_LSF, chrom)
+            s += ' -e {}/{}.err'.format(dirname_LSF, chrom)
             s += ' -J AR{}'.format(chrom)
-            self.args.AR_input = source_SNP
+            self.args.AR_input = ' '.join(d_chrom2sources[chrom])
             s += self.args_rerun()
             subprocess.call(s, shell=True)
+
         sys.exit()
 
         return
@@ -755,70 +842,118 @@ and requires less than 100MB of memory'''
 
         d_minVQSLod = self.parse_minVQSLods()
 
-        chrom = os.path.basename(self.args.AR_input).split('.')[0]
+##        chrom = os.path.basename(self.args.AR_input).split('.')[0]
+        chrom = chrom_VCF = os.path.basename(os.path.dirname(
+            self.args.AR_input[0]))
+        assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
+##        index = int(os.path.basename(self.args.AR_input).split('.')[0])
 
         pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
         out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
         if os.path.isfile(out):
             sys.exit()
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+            
         with open('out_VariantRecalibrator/SNP.recal') as fd_recal_SNP, \
              open('out_VariantRecalibrator/INDEL.recal') as fd_recal_INDEL, \
-             gzip.open(self.args.AR_input, 'rt') as fd_source, \
              BgzfWriter(out, 'wb') as fd_out:
             ## write meta-information header
             print('##fileformat=VCFv4.1', file=fd_out)
-            print('##filedate={}'.format(
+            print('##fileDate={}'.format(
                 datetime.datetime.now().strftime("%Y%m%d")), file=fd_out)
-            print('##source="GATK_pipeline.py"', file=fd_out)
-            chrom_SNP = chrom_INDEL = None
-            for line_VCF in fd_source:
-                if line_VCF[:2] == '##':
-                    continue
-                assert line_VCF[:6] == '#CHROM'
-                ## write sample IDs to output
-                print(line_VCF, end='', file=fd_out)
-                break
-            while chrom_SNP != chrom:
-                chrom_SNP, pos_SNP, VQSLod_SNP = self.parse_recal(
-                    fd_recal_SNP, pattern)
-            while chrom_INDEL != chrom:
-                chrom_INDEL, pos_INDEL, VQSLod_INDEL = self.parse_recal(
-                    fd_recal_INDEL, pattern)
-            for line_VCF in fd_source:
-                chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
-                assert chrom == chrom_VCF
-                print(chrom, pos_VCF, file=sys.stderr)
-                if pos_VCF == pos_INDEL:
-                    assert chrom_VCF == chrom_INDEL
-                    if VQSLod_INDEL >= d_minVQSLod['INDEL']:
-                        print(line_VCF, end='', file=fd_out)
-                    try:
-                        (
-                            chrom_INDEL, pos_INDEL, VQSLod_INDEL
-                            ) = self.parse_recal(
-                                fd_recal_INDEL, pattern)
-                    except StopIteration:
+            print('##source={}'.format(
+                sys.argv[0]), file=fd_out)
+            ## Skip lines in recal files preceding first position.
+            chrom_SNP = None
+            while chrom_SNP != chrom_VCF:
+                chrom_SNP, pos_SNP, VQSLod_SNP = next(self.parse_recal(
+                    fd_recal_SNP, pattern))
+            chrom_INDEL = None
+            while chrom_INDEL != chrom_VCF:
+                chrom_INDEL, pos_INDEL, VQSLod_INDEL = next(self.parse_recal(
+                    fd_recal_INDEL, pattern))
+            for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
+                with gzip.open(source, 'rt') as fd_source:
+                    ## todo: 2015jan28: do heapq.merge() on SNPs and INDELs
+                    ## when Python3.5 is released
+                    for line_VCF in fd_source:
+                        if line_VCF[:2] == '##':
+                            ## Copy metadata from first file.
+                            if i == 0:
+                                if re.match('^##INFO=', line_VCF):
+                                    print(line_VCF, end='', file=fd_out)
+                                if re.match('^##FILTER=', line_VCF):
+                                    print(line_VCF, end='', file=fd_out)
+                                if re.match('^##FORMAT=', line_VCF):
+                                    print(line_VCF, end='', file=fd_out)
+                                if re.match('^##contig=', line_VCF):
+                                    print(line_VCF, end='', file=fd_out)
+                                if re.match('^##reference=', line_VCF):
+                                    print(line_VCF, end='', file=fd_out)
+        ##                    elif not chrom_VCF and re.match('^##contig', line_VCF):
+        ##                        assert chrom_VCF = re.match('^##contig=<ID=(\w+),', line_VCF).group(1)
+                            ## Print INFO lines, so bcftools does not throw warnings.
+        ##                    elif re.match('^##GATKCommandLine=<', line_VCF):
+        ##                        pos_VCF = re.match(
+        ##                            ''.join([
+        ##                                '^##GATKCommandLine=',
+        ##                                '<.+,CommandLineOptions=',
+        ##                                '".+intervals=\[\w+:(\d+)-\d+\]']),
+        ##                            line_VCF).group(1)
+        ##                        ## assert that integer
+        ##                        pos_VCF = str(int(pos_VCF))
+                                pass
+                            continue
+                        assert line_VCF[:6] == '#CHROM'
+                        if i == 0:
+                            ## write sample IDs to output
+                            print(line_VCF, end='', file=fd_out)
+                        break
+                    ## Loop over remaining lines.
+                    for line_VCF in fd_source:
+                        chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
+                        assert chrom == chrom_VCF
+##                        print(chrom_VCF, pos_VCF, file=sys.stderr)
+                        if pos_VCF == pos_INDEL:
+                            assert chrom_VCF == chrom_INDEL
+                            if VQSLod_INDEL >= d_minVQSLod['INDEL']:
+                                print(line_VCF, end='', file=fd_out)
+                            try:
+                                (
+                                    chrom_INDEL, pos_INDEL, VQSLod_INDEL
+                                    ) = next(self.parse_recal(
+                                        fd_recal_INDEL, pattern))
+                            except StopIteration:
+                                pass
+        ##                        continue
+        ##                    continue
+                        else:
+                            assert pos_VCF == pos_SNP
+                            assert chrom_VCF == chrom_SNP
+                            if VQSLod_SNP >= d_minVQSLod['SNP']:
+                                print(line_VCF, end='', file=fd_out)
+                            chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
+                            try:
+                                chrom_SNP, pos_SNP, VQSLod_SNP = next(self.parse_recal(
+                                    fd_recal_SNP, pattern))
+                            except StopIteration:
+                                pass
+        ##                        continue
+        ##                    continue
+                        ## Continue loop over source input lines.
                         continue
-                    continue
-                else:
-                    assert pos_VCF == pos_SNP
-                    assert chrom_VCF == chrom_SNP
-                    if VQSLod_SNP >= d_minVQSLod['SNP']:
-                        print(line_VCF, end='', file=fd_out)
-                    chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
-                    try:
-                        chrom_SNP, pos_SNP, VQSLod_SNP = self.parse_recal(
-                            fd_recal_SNP, pattern)
-                    except StopIteration:
-                        continue
-                    continue
+                    ## Close source input file.
+                    pass
+                ## Continue loop over source input files.
                 continue
+            ## Close output and recal input files.
             pass
 
         ## index bgz output
         subprocess.call('tabix -p vcf {}'.format(out), shell=True)
         ## confirm process has run to completion by writing to file
         with open('touch/ApplyRecalibration.touch', 'a') as f:
+            f.write('{}\n'.format(out))
             f.write('{}.tbi\n'.format(out))
 
         ## return and continue with beagle if all AR processes completed
@@ -840,17 +975,13 @@ and requires less than 100MB of memory'''
             nthreads = 4
             nthreads = 12
 
-        l_chroms = []
-        for source_SNP in self.parse_sources()['SNP']:
-            l_chroms.append(os.path.basename(source_SNP).split('.')[0])
-
         ## 1) check input existence
+        T_prev = 'ApplyRecalibration'
         if self.check_in(
-            'ApplyRecalibration',
-            [
-                'out_ApplyRecalibration/{}.vcf.gz.tbi'.format(chrom)
-                for chrom in l_chroms],
-            'touch/ApplyRecalibration.touch'):
+            T_prev, [
+                'out_{}/{}.vcf.gz'.format(
+                    T_prev, chrom) for chrom in self.chroms],
+            'touch/{}.touch'.format(T_prev)):
             sys.exit()
 
         ## 2) check that process didn't start or end
@@ -859,18 +990,14 @@ and requires less than 100MB of memory'''
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
-        ## parse chromosome from command line
-        lines += [args2getopts(('chrom', 'pos1', 'pos2', 'out'))]
-        lines += ['chrom=$1']
-        lines += ['pos1=$3']
-        lines += ['pos2=$4']
-        lines += ['out=$out']
+        ## Parse arguments from command line.
+        lines += [self.args2getopts(('chrom', 'pos1', 'pos2', 'out'))]
+        ## Make parent directories of output.
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
-        lines += ['if [ -s $out.vcf.gz ]; then exit; fi']
+        lines += ['if [ -f $out.vcf.gz ]; then exit; fi']
         ## initiate beagle
-        lines += ['{} \\'.format(
-            self.init_java(self.jar_beagle, memMB))]
+        lines += ['{} \\'.format(self.init_java(self.jar_beagle, memMB))]
         ## Arguments for specifying data
         lines += [' gl=out_ApplyRecalibration/$chrom.vcf.gz \\']
         if self.ped:
@@ -905,16 +1032,28 @@ and requires less than 100MB of memory'''
         if not os.path.isdir('LSF/beagle'):
             os.mkdir('LSF/beagle')
 
+        pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
+        d_pos_max = {}
+        for mode in ('SNP','INDEL'):
+            with open('out_VariantRecalibrator/{}.recal'.format(mode)) as f:
+                for chrom, pos, VQSLod in self.parse_recal(f, pattern):
+                    try:
+                        d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
+                    except KeyError:
+                        d_pos_max[chrom] = int(pos)
+
         ##
         ## execute shell script
         ##
         d_arguments = {}
-        for chrom in l_chroms:
+##        for chrom in self.chroms:
+        for chrom in d_pos_max.keys():
             print('beagle chrom', chrom)
             fd_vcf = gzip.open(
-                'out_ApplyRecalibration/{}.vcf.gz'.format(chrom), 'rt')
+                'out_{}/{}.vcf.gz'.format(T_prev, chrom), 'rt')
             cnt = 0
             pos_prev = None
+            pos_max = d_pos_max[chrom]
             for line in fd_vcf:
                 if line[0] == '#':
                     continue
@@ -924,14 +1063,14 @@ and requires less than 100MB of memory'''
                 cnt += 1
                 if cnt == 1 or pos_prev == None:
                     pos1 = pos
-                elif cnt % window == 0:
+                elif cnt % window == 0 or pos == pos_max:
                     pos2 = pos
                     index = cnt // window
                     d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
                     d_arguments['chrom'] = chrom
                     d_arguments['pos1'] = pos1
                     d_arguments['pos2'] = pos2
-                    arguments = args_dict2str(d_arguments)
+                    arguments = self.args_dict2str(d_arguments)
                     ## Generate optional output with Beagle window ranges.
                     with open('lists/beagle.coords', 'a') as f:
                         f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
@@ -945,20 +1084,20 @@ and requires less than 100MB of memory'''
                 pos_prev = pos
                 continue
 
-            pos2 = pos
-            index = (cnt // window) + 1
-
-            variables += ['out=out_beagle/{}/{}'.format(chrom, index)]
-            variables += ['chrom={}'.format(chrom)]
-            variables += ['pos1={}'.format(pos1)]
-            variables += ['pos2={}'.format(pos2)]
-            variables = ' '.join(variables)
-
-            with open('lists/beagle.coords', 'a') as f:
-                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
-            self.bsub_beagle(
-                LSF_memMB=memMB, LSF_queue=queue, LSF_n=nthreads,
-                variables=variables)
+##            pos2 = pos
+##            index = (cnt // window) + 1
+##
+##            d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
+##            d_arguments['chrom'] = chrom
+##            d_arguments['pos1'] = pos1
+##            d_arguments['pos2'] = pos2
+##            arguments = self.args_dict2str(d_arguments)
+##
+##            with open('lists/beagle.coords', 'a') as f:
+##                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
+##            self.bsub_beagle(
+##                LSF_memMB=memMB, LSF_queue=queue, LSF_n=nthreads,
+##                variables=variables)
 
         return
 
@@ -1012,9 +1151,8 @@ and requires less than 100MB of memory'''
         LSB_JOBNAME = '{}.{}.{}'.format('beagle', chrom, index,)
         LSF_affix = '{}/{}.{}'.format('beagle', chrom, index)
         cmd_beagle = self.bsub_cmd(
-            'beagle', LSB_JOBNAME, memMB=memMB, LSF_affix=LSF_affix,
-            chrom=chrom, queue=queue, pos1=pos1, pos2=pos2, index=index,
-            num_threads=nthreads, arguments=arguments)
+            'beagle', LSB_JOBNAME, LSF_memMB=memMB, LSF_affix=LSF_affix,
+            LSF_queue=queue, LSF_n=nthreads, arguments=arguments)
 
         if self.checkpoint:
             s = subprocess.check_output(cmd_beagle, shell=True).decode()
@@ -1160,15 +1298,6 @@ and requires less than 100MB of memory'''
 
         return
 
-    def parse_marker(self, line_m,):
-
-        l_markers = line_m.split()
-        pos_ref = int(l_markers[1])
-        A_ref = l_markers[2]
-        B_ref = l_markers[3]
-
-        return pos_ref, A_ref, B_ref
-
     def alphanum_key(self, s):
         ## http://dave.st.germa.in/blog/2007/12/11/exception-handling-slow/
         NUM_RE = re.compile('([0-9]+)')
@@ -1308,7 +1437,7 @@ and requires less than 100MB of memory'''
         lines = ['#!/bin/bash\n']
 
 ##        ## exit if job started
-##        lines += ['if [ -s $out ]; then exit; fi\n']
+##        lines += ['if [ -f $out ]; then exit; fi\n']
         ## exit if job finished
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
@@ -1321,8 +1450,6 @@ and requires less than 100MB of memory'''
         lines += self.body_UnifiedGenotyper()
 
         ## terminate shell script
-##        lines += self.term_cmd(
-##            analysis_type, ['$out.tbi'], extra='tabix -p vcf $out')
         lines += self.term_cmd(T, ['$out.tbi'])
 
         ## write shell script
@@ -1348,7 +1475,7 @@ and requires less than 100MB of memory'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom:$pos1-$pos2 \\']
-        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
+        s = '"\nif [ "$XL" != "" ]; then cmd=$cmd"'
         s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
         lines += [s]
         if self.intervals:
@@ -1607,13 +1734,16 @@ and requires less than 100MB of memory'''
         lines += ['if [ "$nct" == "" ]; then nct=1; fi']
 
         ## exit if output exists
-        lines += ['if [ -s $out ]; then exit; fi']
+        lines += ['if [ -f $out ]; then exit; fi']
 
         ## create output folder
         lines += ['mkdir -p $(dirname $out)']
 
+        ## Touch output to make other jobs exit instead of overwriting.
+        lines += ['touch $out']
+
         s = ''
-        s_java = self.init_java(self.path_GATK, memMB, java=self.path_java)
+        s_java = self.init_java(self.jar_GATK, memMB, java=self.path_java)
         s += ' cmd="{} \\'.format(s_java)
         lines += ['\n{}'.format(s)]
 
@@ -1732,7 +1862,7 @@ and requires less than 100MB of memory'''
         parser.add_argument('--sex', required=False, type=self.is_file)
 
         parser.add_argument(
-            '--path_GATK', '--GATK', '--gatk', '--jar', required=True,
+            '--jar_GATK', '--path_GATK', '--GATK', '--gatk', required=True,
             help='File path to GATK', type=self.is_file)
 
         parser.add_argument('--project', required=True)
@@ -1800,13 +1930,13 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--ts_INDEL', type=float, required=True,)
 
-        parser.add_argument('--AR_input')
+        parser.add_argument('--AR_input', nargs='+')
 
         ##
         ## beagle
         ##
         parser.add_argument(
-            '--beagle',
+            '--jar_beagle', '--beagle',
             help='File path to beagle.jar file (e.g. beagle_3.3.2.jar)',
             required=True,
             )
@@ -1826,7 +1956,34 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--ped', type=self.is_file)
 
+        parser.add_argument(
+            '--path_bams_exclusion', '--bamXL', '--exclude_bams',
+            required=False, type=self.is_file_or_dir, nargs='*')
+
         return parser
+
+    def parse_bams(self, path_bams):
+
+        list_bams = []
+        for path_bam in path_bams:
+            if os.path.isdir(path_bam):
+                list_bams += glob.glob(os.path.join(path_bam, '*.bam'))
+            elif os.path.isfile(path_bam):
+                if os.path.splitext(path_bam)[1] == '.bam':
+                    list_bams += [path_bam]
+                else:
+                    with open(path_bam) as f:
+                        list_bams += f.read().rstrip().split('\n')
+            else:
+                print(path_bam, path_bams)
+                stop_take_care_of_symlinks
+
+        for bam in list_bams:
+            if not os.path.isfile(bam):
+                print('bam does not exist', bam)
+                sys.exit()
+
+        return list_bams
 
     def parse_arguments(self):
 
@@ -1841,7 +1998,7 @@ and requires less than 100MB of memory'''
         for k, v in vars(namespace_args).items():
             setattr(self, k, v)
 
-        if self.path_GATK is None and self.options is None:
+        if self.jar_GATK is None and self.options is None:
             parser.error('--GATK or --arguments')
 
         s_arguments = ''
@@ -1863,14 +2020,10 @@ and requires less than 100MB of memory'''
                 v = l[1]
                 setattr(self, k, v)
 
-        self.bams = []
-        for path_bam in self.path_bams:
-            if os.path.isdir(path_bam):
-                self.bams += glob.glob(os.path.join(path_bam, '*.bam'))
-            elif os.path.isfile(path_bam):
-                self.bams += [path_bam]
-            else:
-                stop_take_care_of_symlinks
+        self.bams = self.parse_bams(self.path_bams)
+        if self.path_bams_exclusion:
+            self.bams = list(set(self.bams)-set(
+                self.parse_bams(self.path_bams_exclusion)))
 
         return
 
