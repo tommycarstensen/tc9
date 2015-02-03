@@ -553,9 +553,11 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
 
         T = analysis_type = 'VariantRecalibrator'
+        num_threads = 4
         memMB = 19900
         queue = 'yesterday'
-        num_threads = 4
+        num_threads = 16
+        memMB = 127900  # tmp!!! check if it can be lowered...
 
         ##
         ## 1) check input existence (vcf)
@@ -595,8 +597,8 @@ class main():
             ## Define file paths.
             tranches = 'out_{}/{}.tranches'.format(T, mode)
             recal = 'out_{}/{}.recal'.format(T, mode)
-            tranches = 'out_{}/{}.tranches.gz'.format(T, mode)  # tmp!!!
-            recal = 'out_{}/{}.recal.gz'.format(T, mode)  # tmp!!!
+            tranches = 'out_{}/{}.tranches'.format(T, mode)  # tmp!!!
+            recal = 'out_{}/{}.recal'.format(T, mode)  # tmp!!!
 
             lines = []
 
