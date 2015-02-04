@@ -51,8 +51,15 @@ class main():
 ##            self.chroms.remove('Y')
 ##        except ValueError:
 ##            pass
+
 ##        ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
 ##        self.chroms.remove('X')
+##
+##        X chromosome: At present, version 4 requires haploid male X-chromosome genotypes to
+##        be coded as homozygous diploid genotypes. In the current version, the only parent-offspring
+##        relationships with a male offspring that can be included in a pedigree file are motheroffspring
+##        duos having a male offspring.
+
         self.beagle4()
 
         return
@@ -66,8 +73,8 @@ class main():
         queue = 'long'
         size_bp = 2 * 10 ** 6  # long
         ## http://gatkforums.broadinstitute.org/discussion/1975/how-can-i-use-parallelism-to-make-gatk-tools-run-faster
-        nct = 4
-        nt = 4
+        nct = 3
+        nt = 8
         queue = 'normal'
         ## Each data thread needs to be given the full amount of memory
         ## you’d normally give a single run. So if you’re running a tool
@@ -76,11 +83,13 @@ class main():
         ## CPU threads will share the memory allocated to their “mother”
         ## data thread, so you don’t need to worry about allocating memory
         ## based on the number of CPU threads you use.
-        memMB = 2900 + 8 * len(self.bams)
-        memMB = nt * 4000 - 100
-        memMB = nt * 4000 - 100
-        memMB = 63900
-        memMB = 127900; nct = 1; nt = 32
+
+        ## Use all memory if all cores used anyway.
+        if nct * nt == 32:
+            memMB = 255900
+        ## Memory sample count and nt dependent.
+        else:
+            memMB = min(255900, 47900 + 2250 * nt)
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
@@ -145,7 +154,7 @@ class main():
                         affix += '.{}'.format(sex)
 
                     out = 'out_{}.vcf.gz'.format(affix)
-                    s_out += '{}.tbi\n'.format(out)
+                    s_out += '{}\n'.format(out)
 
                     ## Skip if output was generated.
                     if os.path.isfile(
@@ -167,7 +176,7 @@ class main():
                         not os.path.isfile('out_{}.vcf.gz.tbi'.format(affix))
                         and os.path.isfile('out_{}.vcf.gz'.format(affix)) and
                         time.time() - os.path.getmtime(
-                            'out_{}.vcf.gz'.format(affix)) > 15*60
+                            'out_{}.vcf.gz'.format(affix)) > 15 * 60
                         ):
                         print(out)
                         os.remove(out)
@@ -196,7 +205,7 @@ class main():
                     LSB_JOBNAME = '{}.{}.{} {}'.format('UG', chrom, i, sex)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
-                        LSF_memMB=memMB, LSF_queue=queue, LSF_n=nt*nct,
+                        LSF_memMB=memMB, LSF_queue=queue, LSF_n=nt * nct,
                         arguments=arguments)
                     self.execmd(cmd)
 
@@ -299,7 +308,6 @@ class main():
 
         lines = ['#!/bin/bash\n']
 
-        lines += ['basename=$(basename $file_input | rev | cut -d "." -f2- | rev)']
 ##        ## exit if job started
 ##        lines += ['if [ -f $out ]; then exit; fi\n']
         ## exit if job finished
@@ -340,9 +348,11 @@ class main():
 ##                break
 
         if self.build == 37:
-            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All/GCF_000001405.25.regions.txt'
-        elif self.build == 37:
-            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All/GCF_000001405.28.regions.txt'
+            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All'
+            url += '/GCF_000001405.25.regions.txt'
+        elif self.build == 38:
+            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All'
+            url += '/GCF_000001405.28.regions.txt'
         else:
             print('url not provided for build', self.build)
             sys.exit()
@@ -494,8 +504,10 @@ class main():
         num_threads = 4
         memMB = 19900
         queue = 'yesterday'
-        num_threads = 16
+        num_threads = 4
         memMB = 127900  # tmp!!! check if it can be lowered...
+        num_threads = 24
+        queue = 'normal'
 
         ##
         ## 1) check input existence (vcf)
@@ -515,12 +527,13 @@ class main():
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
-        d_resources = {'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
+        d_resources = {
+            'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
 
         if not os.path.isdir('LSF/{}'.format(T)):
             os.mkdir('LSF/{}'.format(T))
 
-        d_arguments = {'nt':num_threads, 'nct':1}
+        d_arguments = {'nt': num_threads, 'nct': 1}
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
         for mode in ('SNP', 'INDEL'):
@@ -534,9 +547,7 @@ class main():
 
             ## Define file paths.
             tranches = 'out_{}/{}.tranches'.format(T, mode)
-            recal = 'out_{}/{}.recal'.format(T, mode)
-            tranches = 'out_{}/{}.tranches'.format(T, mode)  # tmp!!!
-            recal = 'out_{}/{}.recal'.format(T, mode)  # tmp!!!
+            recal = 'out_{}/{}.recal.gz'.format(T, mode)
 
             lines = []
 
@@ -544,7 +555,8 @@ class main():
             arguments = self.args_dict2str(d_arguments)
 
             ## Initiate GATK walker.
-            lines += self.init_GATK_cmd(analysis_type, memMB, d_arguments.keys())
+            lines += self.init_GATK_cmd(
+                analysis_type, memMB, d_arguments.keys())
 
             ## required, in
 ##            lines += [' --input {} \\'.format(vcf) for vcf in l_vcfs_in]
@@ -579,7 +591,8 @@ class main():
             fd = open(d_resources[mode], 'r')
             lines_resources = fd.readlines()
             fd.close()
-            lines += [' {} \\'.format(line.strip()) for line in lines_resources]
+            lines += [
+                ' {} \\'.format(line.strip()) for line in lines_resources]
 
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--TStranche
             l_TStranches = []
@@ -628,7 +641,7 @@ class main():
             s += '  --{}) {}=${{array_arguments[$i]}};;\n'.format(arg, arg)
         s += ' esac\n'
         s += 'done\n'
-        
+
 ##        s += 'while getopts ":{}:" o; do\n'.format(':'.join(l_args))
 ##        s += '    case "${o}" in\n'
 ##        for arg in l_args:
@@ -666,7 +679,9 @@ class main():
 
         d_sources = {}
         for mode in ('SNP', 'INDEL'):
-            with open('out_VariantRecalibrator/{}.recal'.format(mode)) as f:
+            with gzip.open(
+                'out_VariantRecalibrator/{}.recal.gz'.format(
+                    mode), 'rt') as f:
                 for line in f:
                     if line.split('=')[0] != '##GATKCommandLine':
                         continue
@@ -750,7 +765,7 @@ and requires less than 100MB of memory'''
             if self.check_in(
                 'VariantRecalibrator',
                 [
-                    'out_VariantRecalibrator/{}.recal'.format(mode),
+                    'out_VariantRecalibrator/{}.recal.gz'.format(mode),
                     'out_VariantRecalibrator/{}.tranches'.format(mode)],
                 'touch/VariantRecalibrator.{}.touch'.format(mode)):
                 sys.exit()
@@ -794,9 +809,12 @@ and requires less than 100MB of memory'''
                     break
 
         ## Open input files and output file.
-        with open('out_VariantRecalibrator/SNP.recal') as fd_recal_SNP, \
-             open('out_VariantRecalibrator/INDEL.recal') as fd_recal_INDEL, \
-             BgzfWriter(out, 'wb') as fd_out:
+        with gzip.open(
+            'out_VariantRecalibrator/SNP.recal.gz', 'rt') as fd_recal_SNP, \
+            gzip.open(
+                'out_VariantRecalibrator/INDEL.recal.gz',
+                'rt') as fd_recal_INDEL, \
+                BgzfWriter(out, 'wb') as fd_out:
             ## write meta-information header
             print('##fileformat=VCFv4.2', file=fd_out)
             print('##fileDate={}'.format(
@@ -878,8 +896,9 @@ and requires less than 100MB of memory'''
                                 print(line_VCF, end='', file=fd_out)
                             chrom_VCF, pos_VCF = line_VCF.split('\t', 2)[:2]
                             try:
-                                chrom_SNP, pos_SNP, VQSLod_SNP = next(self.parse_recal(
-                                    fd_recal_SNP, pattern))
+                                chrom_SNP, pos_SNP, VQSLod_SNP = next(
+                                    self.parse_recal(
+                                        fd_recal_SNP, pattern))
                             except StopIteration:
                                 pass
         ##                        continue
@@ -981,8 +1000,9 @@ and requires less than 100MB of memory'''
 
         pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
         d_pos_max = {}
-        for mode in ('SNP','INDEL'):
-            with open('out_VariantRecalibrator/{}.recal'.format(mode)) as f:
+        for mode in ('SNP', 'INDEL'):
+            with gzip.open('out_VariantRecalibrator/{}.recal.gz'.format(
+                mode), 'rt') as f:
                 for chrom, pos, VQSLod in self.parse_recal(f, pattern):
                     try:
                         d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
@@ -1013,7 +1033,8 @@ and requires less than 100MB of memory'''
                 elif cnt % window == 0 or pos == pos_max:
                     pos2 = pos
                     index = cnt // window
-                    d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
+                    d_arguments['out'] = 'out_beagle/{}/{}'.format(
+                        chrom, index)
                     d_arguments['chrom'] = chrom
                     d_arguments['pos1'] = pos1
                     d_arguments['pos2'] = pos2
@@ -1280,7 +1301,8 @@ and requires less than 100MB of memory'''
         ## todo: use os.walk here instead...
         for dirname in ['']:
             d_l_fp_out[dirname] = []
-            l = os.listdir(os.path.join(dirname, 'out_{}'.format(analysis_type)))
+            l = os.listdir(
+                os.path.join(dirname, 'out_{}'.format(analysis_type)))
             for s in l:
                 path1 = os.path.join('out_{}'.format(analysis_type), s)
                 path2 = os.path.join(dirname, path1)
@@ -1305,7 +1327,9 @@ and requires less than 100MB of memory'''
                     list(set(l_fp_in) - set(l_fp_out))[0],
                     len(set(l_fp_in) - set(l_fp_out)) - 1,))
                 print('dirname', dirname)
-                print('{} has not run to completion. Exiting.'.format(analysis_type))
+                print(
+                    '{} has not run to completion. Exiting.'.format(
+                        analysis_type))
                 bool_exit = True
 #                print(inspect.stack()[1])
 ##                sys.exit()
@@ -1348,19 +1372,24 @@ and requires less than 100MB of memory'''
             ##  exit code 143, SIGTERM
             f.write('''exit143=$(echo $bhist | sed 's/ *//g' | grep "Exitedwithexitcode143" | wc -l)\n''')
             ## exit code 140, run limit
-            f.write('''exit140=$(echo $bhist | grep TERM_RUNLIMIT | wc -l)\n''')
+            f.write(
+                '''exit140=$(echo $bhist | grep TERM_RUNLIMIT | wc -l)\n''')
             ## exit code 16, pid taken
             f.write('''exit16=$(echo $bhist | sed 's/ *//g'| grep Exitedwithexitcode16 | wc -l)\n''')
             ## Checkpoint failed
-            f.write('''cpfail=$(echo $bhist | sed 's/ *//g'| grep "Checkpointfailed" | wc -l)\n''')
+            f.write('''cpfail=$(echo $bhist | sed 's/ *//g'|''')
+            f.write(''' grep "Checkpointfailed" | wc -l)\n''')
             ## Done successfully
             f.write('''donesuc=$(echo $bhist | sed 's/ *//g'| grep "Donesuccessfully" | wc -l)\n''')
             ## exit if done succesfully
             f.write('if [ $donesuc -eq 1 ]; then echo $bhist >> bhist_success.tmp; exit; fi\n')
             ## exit if not checkpoint succeeded and not PID taken
-            f.write('if [ $exit143 -eq 0 -a $cpsucc -eq 0 -a $exit13 -eq 0 -a $exit16 -eq 0 ]; then echo $bhist >> bhist_unexpectederror.tmp; exit; fi\n')
+            f.write('if [ $exit143 -eq 0 -a $cpsucc -eq 0 -a $exit13 -eq 0')
+            f.write(' -a $exit16 -eq 0 ]; then echo $bhist')
+            f.write(' >> bhist_unexpectederror.tmp; exit; fi\n')
             ## restart job and capture jobID
-            f.write('s=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
+            f.write(
+                's=$(brestart -G $project -M$memMB $pwd/checkpoint/$jobID)\n')
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
             ## report if checkpoint failed
             f.write('if [ $cpfail -ne 0 ]; then echo $s')
@@ -1816,7 +1845,8 @@ and requires less than 100MB of memory'''
 
         parser.add_argument('--arguments', '--args')
 
-        parser.add_argument('--path_java', '--java', required=True, type=self.is_file)
+        parser.add_argument(
+            '--path_java', '--java', required=True, type=self.is_file)
 
         ##
         ## CommandLineGATK arguments
@@ -1869,7 +1899,8 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--an_SNP', nargs='+',
             choices=[
-                'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
+                'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum',
+                'InbreedingCoeff'],
             default=[
                 'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum'],
                 )
@@ -1877,7 +1908,8 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--an_indel', nargs='+',
             choices=[
-                'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum', 'InbreedingCoeff'],
+                'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum',
+                'InbreedingCoeff'],
             default=[
                 'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum'],
                 )
@@ -1988,7 +2020,7 @@ and requires less than 100MB of memory'''
 
         self.bams = self.parse_bams(self.path_bams)
         if self.path_bams_exclusion:
-            self.bams = list(set(self.bams)-set(
+            self.bams = list(set(self.bams) - set(
                 self.parse_bams(self.path_bams_exclusion)))
 
         return
