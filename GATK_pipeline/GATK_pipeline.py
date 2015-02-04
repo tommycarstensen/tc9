@@ -496,6 +496,22 @@ class main():
 
         return
 
+    def assert_identical_headers(self, l_vcfs):
+
+        ## Assert that all headers are identical.
+        for i, vcf in enumerate(l_vcfs):
+            with gzip.open(source, 'rt') as fd_source:
+                for line_VCF in fd_source:
+                    if line_VCF[:2] == '##':
+                        continue
+                    if i == 0:
+                        l = line.rstrip().split()
+                    else:
+                        assert l == line.rstrip().split()
+                    break
+
+        return
+
     def VariantRecalibrator(self):
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html
@@ -526,6 +542,8 @@ class main():
             T_prev, ['{}'.format(vcf) for vcf in l_vcfs_in],
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
+
+        self.assert_identical_headers(l_vcfs_in)
 
         d_resources = {
             'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
@@ -594,12 +612,8 @@ class main():
             lines += [
                 ' {} \\'.format(line.strip()) for line in lines_resources]
 
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--TStranche
-            l_TStranches = []
-    ##        l_TStranches += [99.70 + i/20. for i in range(6, 0, -1,)]
-            l_TStranches += [99 + i / 10. for i in range(10, 0, -1,)]
-            l_TStranches += [90 + i / 2. for i in range(18, -1, -1,)]
-##            l_TStranches += [70 + i for i in range(19, -1, -1,)]
+            ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantrecalibration_VariantRecalibrator.php#--TStranche
+            l_TStranches = [100, 99.9, 99.8, 99.5, 99.0, 98.0, 95.0, 90.0]
             s_TStranches = ''
             for TStranche in l_TStranches:
                 s_TStranches += '--TStranche {:.1f} '.format(TStranche)
@@ -796,17 +810,7 @@ and requires less than 100MB of memory'''
             sys.exit()
         os.makedirs(os.path.dirname(out), exist_ok=True)
 
-        ## Assert that all headers are identical.
-        for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
-            with gzip.open(source, 'rt') as fd_source:
-                for line_VCF in fd_source:
-                    if line_VCF[:2] == '##':
-                        continue
-                    if i == 0:
-                        l = line.rstrip().split()
-                    else:
-                        assert l == line.rstrip().split()
-                    break
+        self.assert_identical_headers(self.args.AR_input)
 
         ## Open input files and output file.
         with gzip.open(
