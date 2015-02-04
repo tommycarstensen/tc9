@@ -30,6 +30,8 @@ class main():
 
     def main(self):
 
+        print('main')
+
         if self.args.AR_input:
             self.run_ApplyRecalibration()
 
@@ -91,6 +93,8 @@ class main():
         else:
             memMB = min(255900, 47900 + 2250 * nt)
 
+        nct = 1; nt = 32; memMB = 127900
+
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
 
@@ -111,7 +115,16 @@ class main():
 
         ## touch/lock
         if self.touch(analysis_type):
-            return
+            ## Start retrying failed jobs, once all stderr files are generated.
+            for chrom in self.chroms:
+                cstart = d_chrom_ranges[chrom][0]
+                cstop = d_chrom_ranges[chrom][1]
+                for i in range(
+                    1, 1 + math.ceil((cstop - cstart) / size_bp)):
+                    affix = '{}/{}/{}'.format(T, chrom, i)
+                    # Return if not all jobs started or completed.
+                    if not os.path.isfile('LSF/{}.err'.format(affix)):
+                        return
 
         ## write shell script
         self.shell_UG(T, memMB, nct, nt)
@@ -1340,14 +1353,15 @@ and requires less than 100MB of memory'''
 
         return bool_exit
 
-    def touch(self, analysis_type):
+    def touch(self, analysis_type, delta=60*60*24*365):
 
         bool_return = False
         fn_touch = 'touch/{}.touch'.format(analysis_type)
         if os.path.isfile(fn_touch):
-            if self.verbose == True:
-                print('in progress or completed:{}'.format(analysis_type))
-            bool_return = True
+            if time.time() - os.path.getmtime(fn_touch) > delta:
+                if self.verbose == True:
+                    print('in progress or completed:{}'.format(analysis_type))
+                bool_return = True
         else:
             if not os.path.isdir(os.path.dirname(fn_touch)):
                 os.mkdir(os.path.dirname(fn_touch))
@@ -1981,10 +1995,11 @@ and requires less than 100MB of memory'''
                 stop_take_care_of_symlinks
 
         for bam in list_bams:
+##            print('checking for existence of', bam)
             if not os.path.isfile(bam):
                 print('bam does not exist', bam)
                 sys.exit()
-
+                
         return list_bams
 
     def parse_arguments(self):
