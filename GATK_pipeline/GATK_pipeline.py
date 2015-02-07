@@ -19,6 +19,8 @@ import Bio
 from Bio.bgzf import BgzfWriter
 import urllib
 import datetime
+import pysam
+import urllib.parse
 
 
 ## README
@@ -106,16 +108,9 @@ class main():
 ##                line = line.decode('utf-8')
 ##                pos1, pos2 = [int(x) for x in line.split()[1:]]
 
-        ## Write bam lists for
-        ## all (autosomes, PAR), male (Y) and female (nonPAR X) samples.
-        self.write_bam_and_XL_lists(d_chrom_ranges)
-
-        ## Create folders.
-        if not os.path.isdir('tmp'):
-            os.mkdir('tmp')
-
         ## touch/lock
         if self.touch(analysis_type):
+            print('touch file exists')
             ## Start retrying failed jobs, once all stderr files are generated.
             for chrom in self.chroms:
                 cstart = d_chrom_ranges[chrom][0]
@@ -127,20 +122,37 @@ class main():
                     if not os.path.isfile('LSF/{}.err'.format(affix)):
                         return
 
+        ## Write bam lists for
+        ## all (autosomes, PAR), male (Y) and female (nonPAR X) samples.
+        self.write_bam_and_XL_lists(d_chrom_ranges)
+
+        ## Create folders.
+        os.makedirs('tmp', exist_ok=True)
+
         ## write shell script
         self.shell_UG(T, memMB, nct, nt)
 
         ## execute shell script
         ## loop over chroms
         s_out = ''
+        if self.sample_genders:
+            do_ploidy = True
+        else:
+            do_ploidy = False
         for chrom in self.chroms:
+
+            print('UG', chrom)
+
+            if chrom == 'MT':
+                nct = 1; nt = 1
 
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
             ## Memory consumption seems to explode for UG,
             ## when doing haploidy for Y and nonPAR X.
             ## Therefore do diploidy.
-            d_sex2bamlist = {'': 'lists/bams.list'}
-            XL = None
+            if not do_ploidy:
+                d_sex2bamlist = {'': 'lists/bams.list'}
+                XL = None
 
             ## Look up chromosome ranges.
             cstart = d_chrom_ranges[chrom][0]
@@ -149,19 +161,29 @@ class main():
             for sex in d_sex2bamlist.keys():
 
                 if not os.path.isfile(d_sex2bamlist[sex]):
+                    stop1
                     continue
                 if not os.path.getsize(d_sex2bamlist[sex]):
+                    stop2
                     continue
 
                 ## See comment above about memory and haploidy.
-##                sample_ploidy = self.get_ploidy(chrom, sex)
-                sample_ploidy = 2
+                sample_ploidy = self.get_ploidy(chrom, sex)
+                if not do_ploidy:
+                    sample_ploidy = 2
 
                 for i in range(
-                    1, 1 + math.ceil((cstop - cstart) / size_bp)):
+                    cstart // size_bp + 1,
+                    cstart // size_bp + 1 + math.ceil((cstop - cstart) / size_bp)):
 
-                    pos1 = 1 + cstart // size_bp + (i - 1) * size_bp
-                    pos2 = min(cstop, (pos1 - 1) + size_bp)
+##                    pos1 = 1 + cstart // size_bp + (i - 1) * size_bp
+##                    pos2 = min(cstop, (pos1 - 1) + size_bp)
+
+##                    pos1 = max(cstart, cstart - cstart % size_bp + (i - 1) * size_bp)
+                    pos1 = max(cstart, (i - 1) * size_bp + 1)
+                    pos2 = min(cstop, i * size_bp)
+##                    if chrom in [str(i) for i in range(1,23)]:
+##                        continue  # tmp!!!
 
                     affix = '{}/{}/{}'.format(T, chrom, i)
                     if sex and chrom == 'X':
@@ -179,6 +201,7 @@ class main():
                     if os.path.isfile('LSF/{}.err'.format(affix)):
                         if time.time() - os.path.getmtime(
                             'LSF/{}.err'.format(affix)) < 300:
+                            print('err recently modified', affix)
                             continue
                         ## Otherwise delete prior to run.
                         if os.path.isfile('LSF/{}.out'.format(affix)):
@@ -555,7 +578,7 @@ class main():
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
-        self.assert_identical_headers(l_vcfs_in)
+##        self.assert_identical_headers(l_vcfs_in)
 
         d_resources = {
             'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
@@ -564,6 +587,8 @@ class main():
             os.mkdir('LSF/{}'.format(T))
 
         d_arguments = {'nt': num_threads, 'nct': 1}
+
+        bool_exit = False
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
         for mode in ('SNP', 'INDEL'):
@@ -653,6 +678,11 @@ class main():
                 LSF_affix='{}/{}'.format(T, mode),
                 LSF_n=num_threads, LSF_memMB=memMB, arguments=arguments)
             self.execmd(cmd)
+
+            bool_exit = True
+
+        if bool_exit:
+            sys.exit()
 
         return
 
@@ -766,6 +796,7 @@ class main():
                 d_chrom2sources[chrom] = [source_SNP]
             assert min_mtime > os.path.getmtime(source_SNP)
         for chrom in self.sort_nicely(list(d_chrom2sources.keys())):
+            print('AR', chrom)
             assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
             dirname_LSF = 'LSF/ApplyRecalibration'
             if not os.path.isdir(dirname_LSF):
@@ -777,8 +808,6 @@ class main():
             s += ' -J AR{}'.format(chrom)
             self.args.AR_input = ' '.join(d_chrom2sources[chrom])
             s += self.args_rerun()
-            print(s)
-            stop
             subprocess.call(s, shell=True)
 
         sys.exit()
@@ -817,19 +846,21 @@ and requires less than 100MB of memory'''
 
         ## todo20150112: tc9: use heapq.merge() on SNP+INDEL line generators
 
-        d_minVQSLod = self.parse_minVQSLods()
-
 ##        chrom = os.path.basename(self.args.AR_input).split('.')[0]
         chrom = chrom_VCF = os.path.basename(os.path.dirname(
             self.args.AR_input[0]))
         assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
 ##        index = int(os.path.basename(self.args.AR_input).split('.')[0])
 
-        pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
         out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
+        ## Don't overwrite existing files!
         if os.path.isfile(out):
             sys.exit()
         os.makedirs(os.path.dirname(out), exist_ok=True)
+
+        d_minVQSLod = self.parse_minVQSLods()
+
+        pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
 
         self.assert_identical_headers(self.args.AR_input)
 
@@ -1354,7 +1385,7 @@ and requires less than 100MB of memory'''
                     len(set(l_fp_in) - set(l_fp_out)) - 1,))
                 print('dirname', dirname)
                 print(
-                    '{} has not run to completion. Exiting.'.format(
+                    '{} has not run to completion. Goodbye.'.format(
                         analysis_type))
                 bool_exit = True
 #                print(inspect.stack()[1])
@@ -1563,27 +1594,7 @@ and requires less than 100MB of memory'''
 
     def write_bam_and_XL_lists(self, d_chrom_ranges):
 
-        if not os.path.isdir('lists'):
-            os.mkdir('lists')
-        with open('lists/bams.list', 'w') as f:
-            for bam in self.bams:
-                f.write('{}\n'.format(bam))
-        if self.sex:
-            with open(self.sex) as f:
-                d_sample2sex = {
-                    line.split()[0]: line.split()[1].lower()[0] for line in f}
-            d_sex2bam = {'m': [], 'f': []}
-            for bam in self.bams:
-                sample = os.path.splitext(os.path.basename(bam))[0]
-                try:
-                    sex = d_sample2sex[sample]
-                except KeyError:
-                    continue
-                d_sex2bam[sex].append(bam)
-            for sex in ('m', 'f'):
-                with open('lists/bams.{}.list'.format(sex), 'w') as f:
-                    for bam in d_sex2bam[sex]:
-                        f.write('{}\n'.format(bam))
+        os.makedirs('lists', exist_ok=True)
 
         ## Create region lists. One of them empty.
         ## http://gatkforums.broadinstitute.org/discussion/1204/what-input-files-does-the-gatk-accept-require
@@ -1591,6 +1602,43 @@ and requires less than 100MB of memory'''
             for region in ('PAR1', 'PAR2'):
                 f.write('X:{:d}-{:d}\n'.format(
                     d_chrom_ranges[region][0], d_chrom_ranges[region][1]))
+
+        ## write bam lists
+        with open('lists/bams.list', 'w') as f:
+            for bam in self.bams:
+                f.write('{}\n'.format(bam))
+
+        ## write gender bam lists
+        d_sample2sex = {}
+        for uri in self.sample_genders:
+            print(urllib.parse.urlparse(uri).scheme)
+            if urllib.parse.urlparse(uri).scheme == 'ftp':
+                if not os.path.isfile(os.path.basename(uri)):
+                    urllib.request.urlretrieve(
+                        uri, filename=os.path.basename(uri))
+                uri = os.path.basename(uri)
+            with open(uri) as f:
+                for line in f:
+                    d_sample2sex[re.split(
+                        '[, \t]', line)[0]] = re.split(
+                            '[, \t]', line)[-1].lower()[0]
+            ## sex2bam
+            d_sex2bam = {'m': [], 'f': []}
+            for bam in self.bams:
+                sample = os.path.splitext(os.path.basename(bam))[0]
+##                sample = pysam.Samfile(bam).header['RG'][0]['SM']  # slow
+                sample = os.path.basename(bam).split('.')[0]  # fast
+                try:
+                    sex = d_sample2sex[sample]
+                except KeyError:
+                    print('sex missing', bam, sample)
+                    sys.exit()
+                d_sex2bam[sex].append(bam)
+            ## bam lists for males and females
+            for sex in ('m', 'f'):
+                with open('lists/bams.{}.list'.format(sex), 'w') as f:
+                    for bam in d_sex2bam[sex]:
+                        f.write('{}\n'.format(bam))
 
         return
 
@@ -1840,6 +1888,13 @@ and requires less than 100MB of memory'''
             raise argparse.ArgumentTypeError(msg)
         return str_
 
+    def is_file_or_ftp(self, str_):
+        if not os.path.isfile(str_) and not os.path.islink(str_):
+            if not re.match('^ftp://', str_):
+                msg = '{} not found'.format(str_)
+                raise argparse.ArgumentTypeError(msg)
+        return str_
+
     def is_file_or_dir(self, str_):
         print(str_)
         if not any([
@@ -1862,7 +1917,9 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--build', required=True, type=int, choices=[37, 38])
 
-        parser.add_argument('--sex', required=False, type=self.is_file)
+        parser.add_argument(
+            '--sample_genders', '--sex', required=False, default=[],
+            type=self.is_file_or_ftp, nargs='*')
 
         parser.add_argument(
             '--jar_GATK', '--path_GATK', '--GATK', '--gatk', required=True,
