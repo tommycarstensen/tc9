@@ -456,7 +456,6 @@ class main():
                 fd_out.write('{}\n'.format(vcf))
             fd_out.close()
 
-            os.makedirs('LSF/{}'.format(T), exist_ok=True)
             for i in range(len(glob.glob(
                 'lists/{}.{}.*.list'.format(T, chrom)))):
                 ## skip if job initiated
@@ -486,7 +485,6 @@ class main():
 
         ## write shell script
         self.shell_GenotypeGVCFs(T, memMB)
-        os.makedirs('LSF/{}'.format(T), exist_ok=True)
 
         bool_exit = False
         for chrom in self.chroms:
@@ -1055,12 +1053,12 @@ and requires less than 100MB of memory'''
             self.write_shell('shell/beagle.sh', lines,)
         if self.checkpoint:
             self.write_brestart()
-        if not os.path.isdir('LSF/beagle'):
-            os.mkdir('LSF/beagle')
 
-        pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
+        ## Parse actual chromosome ranges after filtering.
         d_pos_max = {}
-        for mode in ('SNP', 'INDEL'):
+        pattern = re.compile(r'.*VQSLOD=([-\d\.\w]+);')
+        for mode in ('INDEL', 'SNP'):
+            print('mode', mode)
             with gzip.open('out_VariantRecalibrator/{}.recal.gz'.format(
                 mode), 'rt') as f:
                 for chrom, pos, VQSLod in self.parse_recal(f, pattern):
@@ -1068,6 +1066,7 @@ and requires less than 100MB of memory'''
                         d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
                     except KeyError:
                         d_pos_max[chrom] = int(pos)
+                        print(mode, chrom)
 
         ##
         ## execute shell script
@@ -1088,7 +1087,6 @@ and requires less than 100MB of memory'''
                 chrom = l[0]
                 pos = int(l[1])
                 cnt += 1
-                print(cnt, window, pos, pos_max)
                 if cnt == 1 or pos_prev == None:
                     pos1 = pos
                 elif cnt % window == 0 or pos == pos_max:
@@ -1178,7 +1176,7 @@ and requires less than 100MB of memory'''
         print(chrom, index)
 
         LSB_JOBNAME = '{}.{}.{}'.format('beagle', chrom, index,)
-        LSF_affix = '{}/{}.{}'.format('beagle', chrom, index)
+        LSF_affix = '{}/{}/{}'.format('beagle', chrom, index)
         cmd_beagle = self.bsub_cmd(
             'beagle', LSB_JOBNAME, LSF_memMB=memMB, LSF_affix=LSF_affix,
             LSF_queue=queue, LSF_n=nthreads, arguments=arguments)
@@ -1212,6 +1210,10 @@ and requires less than 100MB of memory'''
 
         if not LSF_affix:
             LSF_affix = shell_affix
+
+        os.makedirs(
+            os.path.dirname('LSF/{}.out'.format(LSF_affix)),
+            exist_ok=True)
 
         cmd = 'bsub -J"{}" -q {}'.format(LSB_JOBNAME, LSF_queue)
         cmd += ' -G {}'.format(self.project)
@@ -2025,7 +2027,7 @@ and requires less than 100MB of memory'''
             )
 
         parser.add_argument(
-            '--beagle4_excludesamples', required=False, default='NA12878')
+            '--beagle4_excludesamples', required=False, type=self.is_file)
 
         ##
         ## optional arguments
