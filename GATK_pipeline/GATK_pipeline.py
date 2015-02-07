@@ -93,7 +93,8 @@ class main():
         else:
             memMB = min(255900, 47900 + 2250 * nt)
 
-        nct = 1; nt = 32; memMB = 127900
+        nct = 3; nt = 8; memMB = 127900
+        memMB = 191900
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
@@ -513,14 +514,14 @@ class main():
 
         ## Assert that all headers are identical.
         for i, vcf in enumerate(l_vcfs):
-            with gzip.open(source, 'rt') as fd_source:
-                for line_VCF in fd_source:
-                    if line_VCF[:2] == '##':
+            with gzip.open(vcf, 'rt') as fd_source:
+                for line_vcf in fd_source:
+                    if line_vcf[:2] == '##':
                         continue
                     if i == 0:
-                        l = line.rstrip().split()
+                        l = line_vcf.rstrip().split()
                     else:
-                        assert l == line.rstrip().split()
+                        assert l == line_vcf.rstrip().split()
                     break
 
         return
@@ -531,10 +532,8 @@ class main():
 
         T = analysis_type = 'VariantRecalibrator'
         num_threads = 4
-        memMB = 19900
         queue = 'yesterday'
         num_threads = 4
-        memMB = 127900  # tmp!!! check if it can be lowered...
         num_threads = 24
         queue = 'normal'
 
@@ -569,7 +568,7 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--mode
         for mode in ('SNP', 'INDEL'):
 
-            memMB = {'SNP': 20900, 'INDEL': 8900}[mode]
+            memMB = {'SNP': 191900, 'INDEL': 127900}[mode]
 
             ## 2) touch / check output
             bool_continue = self.touch('{}.{}'.format(T, mode))
@@ -579,6 +578,8 @@ class main():
             ## Define file paths.
             tranches = 'out_{}/{}.tranches'.format(T, mode)
             recal = 'out_{}/{}.recal.gz'.format(T, mode)
+            if os.path.isfile(tranches) or os.path.isfile(recal):
+                continue
 
             lines = []
 
@@ -712,8 +713,12 @@ class main():
                 for line in f:
                     if line.split('=')[0] != '##GATKCommandLine':
                         continue
-                    sources = re.findall(
-                        r'\([^\[\]()]*\[\([^\[\]()]+source=([\w./]+)', line)
+                    pattern = '''##GATKCommandLine=<.*?,'''
+                    pattern += '''CommandLineOptions=".*?'''
+                    pattern += ''' input=\[\(RodBindingCollection'''
+                    pattern += ''' \[(.*?)(?=])'''
+                    RodBindings = re.match(pattern, line).group(1)
+                    sources = re.findall('source=([\w\.\/]+)', RodBindings)
                     d_sources[mode] = sources
                     break
 
@@ -751,7 +756,7 @@ class main():
         min_mtime = min([
             os.path.getmtime(
                 'out_VariantRecalibrator/{}.{}'.format(mode, suffix))
-            for suffix in ('recal', 'tranches')
+            for suffix in ('recal.gz', 'tranches')
             for mode in ('SNP', 'INDEL')])
         for source_SNP in self.parse_sources()['SNP']:
             chrom = os.path.basename(os.path.dirname(source_SNP))
@@ -772,6 +777,8 @@ class main():
             s += ' -J AR{}'.format(chrom)
             self.args.AR_input = ' '.join(d_chrom2sources[chrom])
             s += self.args_rerun()
+            print(s)
+            stop
             subprocess.call(s, shell=True)
 
         sys.exit()
@@ -801,6 +808,7 @@ and requires less than 100MB of memory'''
         if self.touch(T):
             return
 
+        fn_touch = 'touch/{}.touch'.format(analysis_type)
         self.bsub_ApplyRecalibration()
 
         return
@@ -1045,6 +1053,7 @@ and requires less than 100MB of memory'''
                 chrom = l[0]
                 pos = int(l[1])
                 cnt += 1
+                print(cnt, window, pos, pos_max)
                 if cnt == 1 or pos_prev == None:
                     pos1 = pos
                 elif cnt % window == 0 or pos == pos_max:
@@ -1358,7 +1367,7 @@ and requires less than 100MB of memory'''
         bool_return = False
         fn_touch = 'touch/{}.touch'.format(analysis_type)
         if os.path.isfile(fn_touch):
-            if time.time() - os.path.getmtime(fn_touch) > delta:
+##            if time.time() - os.path.getmtime(fn_touch) < delta:
                 if self.verbose == True:
                     print('in progress or completed:{}'.format(analysis_type))
                 bool_return = True
