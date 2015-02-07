@@ -21,6 +21,7 @@ import urllib
 import datetime
 import pysam
 import urllib.parse
+import operator
 
 
 ## README
@@ -995,19 +996,98 @@ and requires less than 100MB of memory'''
             queue = 'long'
             nthreads = 4
             nthreads = 12
+            queue = 'normal'
+            nthreads = 24
 
-        ## 1) check input existence
         T_prev = 'ApplyRecalibration'
-        if self.check_in(
-            T_prev, [
-                'out_{}/{}.vcf.gz'.format(
-                    T_prev, chrom) for chrom in self.chroms],
-            'touch/{}.touch'.format(T_prev)):
-            sys.exit()
 
-        ## 2) check that process didn't start or end
-        if self.touch('beagle'):
-            return
+        ## write shell script
+        if not os.path.isfile('shell/beagle.sh'):
+            self.write_beagle_wrapper_script(memMB, nthreads, window)
+        if self.checkpoint:
+            self.write_brestart()
+
+        ## Parse actual chromosome ranges after filtering.
+        ## Execute shell script.
+        d_pos_max = {}
+        d_arguments = {'nthreads':nthreads}
+        for chrom in self.chroms:
+            ## 1) Check input existence
+            if self.check_in(
+                T_prev, ['out_{}/{}.vcf.gz'.format(T_prev, chrom)],
+                'touch/{}.touch'.format(T_prev)):
+                continue
+            ## 2) Check that process didn't start or end
+            if self.touch('beagle.{}'.format(chrom)):
+                continue
+            ## Parse chromosome range.
+            for mode in ('INDEL', 'SNP'):
+                print(chrom, mode)
+                tbx = pysam.TabixFile(
+                    'out_VariantRecalibrator/{}.recal.gz'.format(mode))
+                for pos in [
+                    int(line.split()[1]) for line in tbx.fetch(chrom)]:
+                    try:
+                        d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
+                    except KeyError:
+                        d_pos_max[chrom] = int(pos)
+                        print(mode, chrom)
+            ## Execute shell script.
+            print('beagle chrom', chrom)
+            with gzip.open(
+                'out_{}/{}.vcf.gz'.format(T_prev, chrom), 'rt') as fd_vcf:
+                cnt = 0
+                pos_prev = None
+                pos_max = d_pos_max[chrom]
+                for line in fd_vcf:
+                    if line[0] == '#':
+                        continue
+                    l = line.split('\t', 2)
+                    chrom = l[0]
+                    pos = int(l[1])
+                    cnt += 1
+                    if cnt == 1 or pos_prev == None:
+                        pos1 = pos
+                    elif cnt % window == 0 or pos == pos_max:
+                        pos2 = pos
+                        index = cnt // window
+                        d_arguments['out'] = 'out_beagle/{}/{}'.format(
+                            chrom, index)
+                        d_arguments['chrom'] = chrom
+                        d_arguments['pos1'] = pos1
+                        d_arguments['pos2'] = pos2
+                        arguments = self.args_dict2str(d_arguments)
+                        ## Generate optional output with Beagle window ranges.
+                        with open('lists/beagle.coords', 'a') as f:
+                            f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
+                        self.bsub_beagle(
+                            chrom, pos1, pos2, index, memMB, queue, nthreads,
+                            arguments=arguments)
+                        print(chrom, ':', pos1, '-', pos2, index, cnt)
+                        pos = pos_prev = None
+                    else:
+                        pass
+                    pos_prev = pos
+                    continue
+
+##            pos2 = pos
+##            index = (cnt // window) + 1
+##
+##            d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
+##            d_arguments['chrom'] = chrom
+##            d_arguments['pos1'] = pos1
+##            d_arguments['pos2'] = pos2
+##            arguments = self.args_dict2str(d_arguments)
+##
+##            with open('lists/beagle.coords', 'a') as f:
+##                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
+##            self.bsub_beagle(
+##                LSF_memMB=memMB, LSF_queue=queue, LSF_n=nthreads,
+##                variables=variables)
+
+        return
+
+    def write_beagle_wrapper_script(self, memMB, nthreads, window):
 
         ## initiate shell script
         lines = ['#!/bin/bash\n']
@@ -1048,83 +1128,8 @@ and requires less than 100MB of memory'''
         ## term cmd
         lines += self.term_cmd(
             'beagle', ['$out.vcf.gz'], extra='tabix -p vcf $out.vcf.gz')
-        ## write shell script
-        if not os.path.isfile('shell/beagle.sh'):
-            self.write_shell('shell/beagle.sh', lines,)
-        if self.checkpoint:
-            self.write_brestart()
 
-        ## Parse actual chromosome ranges after filtering.
-        d_pos_max = {}
-        pattern = re.compile(r'.*VQSLOD=([-\d\.\w]+);')
-        for mode in ('INDEL', 'SNP'):
-            print('mode', mode)
-            with gzip.open('out_VariantRecalibrator/{}.recal.gz'.format(
-                mode), 'rt') as f:
-                for chrom, pos, VQSLod in self.parse_recal(f, pattern):
-                    try:
-                        d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
-                    except KeyError:
-                        d_pos_max[chrom] = int(pos)
-                        print(mode, chrom)
-
-        ##
-        ## execute shell script
-        ##
-        d_arguments = {}
-##        for chrom in self.chroms:
-        for chrom in d_pos_max.keys():
-            print('beagle chrom', chrom)
-            fd_vcf = gzip.open(
-                'out_{}/{}.vcf.gz'.format(T_prev, chrom), 'rt')
-            cnt = 0
-            pos_prev = None
-            pos_max = d_pos_max[chrom]
-            for line in fd_vcf:
-                if line[0] == '#':
-                    continue
-                l = line.split('\t', 2)
-                chrom = l[0]
-                pos = int(l[1])
-                cnt += 1
-                if cnt == 1 or pos_prev == None:
-                    pos1 = pos
-                elif cnt % window == 0 or pos == pos_max:
-                    pos2 = pos
-                    index = cnt // window
-                    d_arguments['out'] = 'out_beagle/{}/{}'.format(
-                        chrom, index)
-                    d_arguments['chrom'] = chrom
-                    d_arguments['pos1'] = pos1
-                    d_arguments['pos2'] = pos2
-                    arguments = self.args_dict2str(d_arguments)
-                    ## Generate optional output with Beagle window ranges.
-                    with open('lists/beagle.coords', 'a') as f:
-                        f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
-                    self.bsub_beagle(
-                        chrom, pos1, pos2, index, memMB, queue, nthreads,
-                        arguments=arguments)
-                    print(chrom, ':', pos1, '-', pos2, index, cnt)
-                    pos = pos_prev = None
-                else:
-                    pass
-                pos_prev = pos
-                continue
-
-##            pos2 = pos
-##            index = (cnt // window) + 1
-##
-##            d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
-##            d_arguments['chrom'] = chrom
-##            d_arguments['pos1'] = pos1
-##            d_arguments['pos2'] = pos2
-##            arguments = self.args_dict2str(d_arguments)
-##
-##            with open('lists/beagle.coords', 'a') as f:
-##                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
-##            self.bsub_beagle(
-##                LSF_memMB=memMB, LSF_queue=queue, LSF_n=nthreads,
-##                variables=variables)
+        self.write_shell('shell/beagle.sh', lines,)
 
         return
 
@@ -1149,7 +1154,12 @@ and requires less than 100MB of memory'''
                 with open(fn) as f:
                     line = f.readlines()[-1]
                     print(line)
-                    if 'mean edges' in line or 'iterations' in line:
+                    ## Return if running.
+                    if any([
+                        'trios' in line,
+                        'target markers' in line,]):
+                        'iterations' in line,  # Starting burn-in iterations
+                        'mean edges' in line,  # mean edges/node
                         return
             else:
                 stop
@@ -2027,7 +2037,8 @@ and requires less than 100MB of memory'''
             )
 
         parser.add_argument(
-            '--beagle4_excludesamples', required=False, type=self.is_file)
+            '--beagle4_excludesamples', '--excludesamples',
+            required=False, type=self.is_file)
 
         ##
         ## optional arguments
