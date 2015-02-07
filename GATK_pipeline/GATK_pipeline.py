@@ -729,7 +729,11 @@ class main():
             l = line.rstrip().split('\t')
             chrom = l[0]
             pos = l[1]
-            VQSLod = float(re.match(pattern, l[7]).group(1))
+            VQSLod = re.match(pattern, l[7]).group(1)
+            if VQSLod == 'Infinity':
+                VQSLod = float('inf')
+            else:
+                VQSLod = float(VQSLod)
 
             yield chrom, pos, VQSLod
 
@@ -860,7 +864,7 @@ and requires less than 100MB of memory'''
 
         d_minVQSLod = self.parse_minVQSLods()
 
-        pattern = re.compile(r'.*VQSLOD=([-\d.]*)')
+        pattern = re.compile(r'.*VQSLOD=([-\d\.\w]+);')
 
         self.assert_identical_headers(self.args.AR_input)
 
