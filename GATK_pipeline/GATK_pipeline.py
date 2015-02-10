@@ -22,6 +22,7 @@ import datetime
 import pysam
 import urllib.parse
 import operator
+import socket
 
 
 ## README
@@ -98,6 +99,7 @@ class main():
 
         nct = 3; nt = 8; memMB = 127900
         memMB = 191900
+        nct = 1; nt = 1; memMB = 63900; queue = 'normal'
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
@@ -111,21 +113,23 @@ class main():
 
         ## touch/lock
         if self.touch(analysis_type):
-            print('touch file exists')
-            ## Start retrying failed jobs, once all stderr files are generated.
-            for chrom in self.chroms:
-                cstart = d_chrom_ranges[chrom][0]
-                cstop = d_chrom_ranges[chrom][1]
-                for i in range(
-                    1, 1 + math.ceil((cstop - cstart) / size_bp)):
-                    affix = '{}/{}/{}'.format(T, chrom, i)
-                    # Return if not all jobs started or completed.
-                    if not os.path.isfile('LSF/{}.err'.format(affix)):
-                        return
+            return
+##            print('touch file exists')
+##            ## Start retrying failed jobs, once all stderr files are generated.
+##            for chrom in self.chroms:
+##                cstart = d_chrom_ranges[chrom][0]
+##                cstop = d_chrom_ranges[chrom][1]
+##                for i in range(
+##                    1, 1 + math.ceil((cstop - cstart) / size_bp)):
+##                    affix = '{}/{}/{}'.format(T, chrom, i)
+##                    # Return if not all jobs started or completed.
+##                    if not os.path.isfile('LSF/{}.err'.format(affix)):
+##                        return
 
         ## Write bam lists for
         ## all (autosomes, PAR), male (Y) and female (nonPAR X) samples.
-        self.write_bam_and_XL_lists(d_chrom_ranges)
+        if self.sample_genders:
+            self.write_bam_and_XL_lists(d_chrom_ranges)
 
         ## Create folders.
         os.makedirs('tmp', exist_ok=True)
@@ -136,22 +140,18 @@ class main():
         ## execute shell script
         ## loop over chroms
         s_out = ''
-        if self.sample_genders:
-            do_ploidy = True
-        else:
-            do_ploidy = False
         for chrom in self.chroms:
 
             print('UG', chrom)
 
-            if chrom == 'MT':
-                nct = 1; nt = 1
+            if chrom in ('MT', 'X', 'Y', 'PAR1', 'PAR2') and self.sample_genders:
+                nct = 1; nt = 1; queue = 'long'
 
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
             ## Memory consumption seems to explode for UG,
             ## when doing haploidy for Y and nonPAR X.
             ## Therefore do diploidy.
-            if not do_ploidy:
+            if not self.sample_genders:
                 d_sex2bamlist = {'': 'lists/bams.list'}
                 XL = None
 
@@ -170,7 +170,7 @@ class main():
 
                 ## See comment above about memory and haploidy.
                 sample_ploidy = self.get_ploidy(chrom, sex)
-                if not do_ploidy:
+                if not self.sample_genders:
                     sample_ploidy = 2
 
                 for i in range(
@@ -848,6 +848,7 @@ and requires less than 100MB of memory'''
     def run_ApplyRecalibration(self):
 
         ## todo20150112: tc9: use heapq.merge() on SNP+INDEL line generators
+        ## todo20150208: tc9: write VQSLOD to INFO field
 
 ##        chrom = os.path.basename(self.args.AR_input).split('.')[0]
         chrom = chrom_VCF = os.path.basename(os.path.dirname(
@@ -895,7 +896,7 @@ and requires less than 100MB of memory'''
                 with gzip.open(source, 'rt') as fd_source:
                     ## todo: 2015jan28: do heapq.merge() on SNPs and INDELs
                     ## when Python3.5 is released
-                    ## Skip metainformation lines and header lines
+                    ## Skip metainformation lines and header line
                     ## and write it to the output from the first input file.
                     for line_VCF in fd_source:
                         if line_VCF[:2] == '##':
@@ -985,19 +986,16 @@ and requires less than 100MB of memory'''
 
         ## http://faculty.washington.edu/browning/beagle
 
-        memMB = 12900  # todo: move to argparse
+        memMB = 15900  # todo: move to argparse
         window = 50000  # todo: move to argparse
         if self.checkpoint:
             queue = 'normal'  # todo: move to argparse
-            nthreads = 1
+            nthreads = 12
         else:
             queue = 'basement'
             nthreads = 1
             queue = 'long'
-            nthreads = 4
-            nthreads = 12
-            queue = 'normal'
-            nthreads = 24
+            nthreads = 12  # Beagle4 does not seem to scale well beyond 10.
 
         T_prev = 'ApplyRecalibration'
 
@@ -1040,8 +1038,12 @@ and requires less than 100MB of memory'''
                 pos_prev = None
                 pos_max = d_pos_max[chrom]
                 for line in fd_vcf:
-                    if line[0] == '#':
+                    ## Skip metainformation lines and header line.
+                    if line[:2] == '##':
                         continue
+                    ## Break after reading header line.
+                    break
+                for line in fd_vcf:
                     l = line.split('\t', 2)
                     chrom = l[0]
                     pos = int(l[1])
@@ -1056,6 +1058,7 @@ and requires less than 100MB of memory'''
                         d_arguments['chrom'] = chrom
                         d_arguments['pos1'] = pos1
                         d_arguments['pos2'] = pos2
+                        d_arguments['nthreads'] = nthreads
                         arguments = self.args_dict2str(d_arguments)
                         ## Generate optional output with Beagle window ranges.
                         with open('lists/beagle.coords', 'a') as f:
@@ -1092,7 +1095,8 @@ and requires less than 100MB of memory'''
         ## initiate shell script
         lines = ['#!/bin/bash\n']
         ## Parse arguments from command line.
-        lines += [self.args2getopts(('chrom', 'pos1', 'pos2', 'out'))]
+        lines += [self.args2getopts((
+            'chrom', 'pos1', 'pos2', 'out', 'nthreads'))]
         ## Make parent directories of output.
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
@@ -1110,7 +1114,7 @@ and requires less than 100MB of memory'''
 ##        lines += [' excludemarkers={} \\'.format(excludemarkers)]
         lines += [' chrom=$chrom:$pos1-$pos2 \\']
         ## Other arguments
-        lines += [' nthreads={:d} \\'.format(nthreads)]
+        lines += [' nthreads=$nthreads \\']
         lines += [' window={} \\'.format(window)]  # default 50000 as of r1274
         lines += [' overlap=3000 \\']  # default 3000
         lines += [' gprobs=true \\']
@@ -1158,7 +1162,9 @@ and requires less than 100MB of memory'''
                     if any([
                         'trios' in line,
                         'target markers' in line,]):
-                        'iterations' in line,  # Starting burn-in iterations
+                        ## Starting burn-in iterations
+                        ## Starting phasing iterations
+                        'iterations' in line,
                         'mean edges' in line,  # mean edges/node
                         return
             else:
@@ -1226,7 +1232,13 @@ and requires less than 100MB of memory'''
             exist_ok=True)
 
         cmd = 'bsub -J"{}" -q {}'.format(LSB_JOBNAME, LSF_queue)
-        cmd += ' -G {}'.format(self.project)
+        ## Do not add -G if run on hgs4.
+        if all([
+            any([
+                'bc' in socket.gethostname(),
+                'farm3' in socket.gethostname()]),
+            'hgs4' not in socket.gethostname()]):
+            cmd += ' -G {}'.format(self.project)
         cmd += " -M{:d} -R'select[mem>{:d}] rusage[mem={:d}]'".format(
             LSF_memMB, LSF_memMB, LSF_memMB)
         cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
@@ -1351,9 +1363,9 @@ and requires less than 100MB of memory'''
         l.sort(key=self.alphanum_key)
         return l
 
-    def init_java(self, jar, memMB, java='java'):
+    def init_java(self, jar, memMB):
 
-        s = '{} -Djava.io.tmpdir={}'.format(java, 'tmp')
+        s = '{} -Djava.io.tmpdir={}'.format(self.path_java, 'tmp')
         ## set maximum heap size
         s += ' -Xmx{}m'.format(memMB)
         if self.checkpoint:
@@ -1624,7 +1636,9 @@ and requires less than 100MB of memory'''
             for bam in self.bams:
                 f.write('{}\n'.format(bam))
 
-        ## write gender bam lists
+        ## Write gender bam lists.
+
+        ## Convert samples to sex.
         d_sample2sex = {}
         for uri in self.sample_genders:
             print(urllib.parse.urlparse(uri).scheme)
@@ -1638,23 +1652,24 @@ and requires less than 100MB of memory'''
                     d_sample2sex[re.split(
                         '[, \t]', line)[0]] = re.split(
                             '[, \t]', line)[-1].lower()[0]
-            ## sex2bam
-            d_sex2bam = {'m': [], 'f': []}
-            for bam in self.bams:
-                sample = os.path.splitext(os.path.basename(bam))[0]
+
+        ## Convert sex to list of bams.
+        d_sex2bams = {'m': [], 'f': []}
+        for bam in self.bams:
+            sample = os.path.splitext(os.path.basename(bam))[0]
 ##                sample = pysam.Samfile(bam).header['RG'][0]['SM']  # slow
-                sample = os.path.basename(bam).split('.')[0]  # fast
-                try:
-                    sex = d_sample2sex[sample]
-                except KeyError:
-                    print('sex missing', bam, sample)
-                    sys.exit()
-                d_sex2bam[sex].append(bam)
-            ## bam lists for males and females
-            for sex in ('m', 'f'):
-                with open('lists/bams.{}.list'.format(sex), 'w') as f:
-                    for bam in d_sex2bam[sex]:
-                        f.write('{}\n'.format(bam))
+            sample = os.path.basename(bam).split('.')[0]  # fast
+            try:
+                sex = d_sample2sex[sample]
+            except KeyError:
+                print('sex missing', bam, sample)
+                sys.exit()
+            d_sex2bams[sex].append(bam)
+        ## bam lists for males and females
+        for sex in ('m', 'f'):
+            with open('lists/bams.{}.list'.format(sex), 'w') as f:
+                for bam in d_sex2bams[sex]:
+                    f.write('{}\n'.format(bam))
 
         return
 
@@ -1810,7 +1825,7 @@ and requires less than 100MB of memory'''
         lines += ['touch $out']
 
         s = ''
-        s_java = self.init_java(self.jar_GATK, memMB, java=self.path_java)
+        s_java = self.init_java(self.jar_GATK, memMB)
         s += ' cmd="{} \\'.format(s_java)
         lines += ['\n{}'.format(s)]
 
