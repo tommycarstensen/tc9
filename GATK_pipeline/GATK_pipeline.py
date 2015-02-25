@@ -52,20 +52,6 @@ class main():
 
         self.ApplyRecalibration()
 
-##        ## phased imputation reference panels not available for chrY
-##        try:
-##            self.chroms.remove('Y')
-##        except ValueError:
-##            pass
-
-##        ## Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: -2
-##        self.chroms.remove('X')
-##
-##        X chromosome: At present, version 4 requires haploid male X-chromosome genotypes to
-##        be coded as homozygous diploid genotypes. In the current version, the only parent-offspring
-##        relationships with a male offspring that can be included in a pedigree file are motheroffspring
-##        duos having a male offspring.
-
         self.beagle4()
 
         return
@@ -577,10 +563,26 @@ class main():
             'touch/{}.touch'.format(T_prev)):
             sys.exit(0)
 
+        assert len(l_vcfs_in) > 0
+        for file in l_vcfs_in:
+            if file[-7:] != '.vcf.gz':
+                print(file, 'has wrong extension')
+                sys.exit()
+
 ##        self.assert_identical_headers(l_vcfs_in)
 
         d_resources = {
             'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
+
+        ## Check that resources are present.
+        for mode in ('SNP', 'INDEL'):
+            with open(d_resources[mode]) as f:
+                for line in f:
+                    resource = line.split()[-1]
+                    print(mode, resource)
+                    if not os.path.isfile(resource):
+                        print(resource, 'not found')
+                        sys.exit(0)
 
         if not os.path.isdir('LSF/{}'.format(T)):
             os.mkdir('LSF/{}'.format(T))
@@ -791,8 +793,11 @@ class main():
                 'out_VariantRecalibrator/{}.{}'.format(mode, suffix))
             for suffix in ('recal.gz', 'tranches')
             for mode in ('SNP', 'INDEL')])
-        for source_SNP in self.parse_sources()['SNP']:
-            chrom = os.path.basename(os.path.dirname(source_SNP))
+        for source_SNP in d_sources['SNP']:
+            if self.caller == 'UG':
+                chrom = os.path.basename(os.path.dirname(source_SNP))
+            else:
+                chrom = os.path.basename(source_SNP).split('.')[0]
             try:
                 d_chrom2sources[chrom] += [source_SNP]
             except KeyError:
@@ -853,7 +858,11 @@ and requires less than 100MB of memory'''
 ##        chrom = os.path.basename(self.args.AR_input).split('.')[0]
         chrom = chrom_VCF = os.path.basename(os.path.dirname(
             self.args.AR_input[0]))
+        if not chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']:
+            chrom = chrom_VCF = os.path.basename(
+                self.args.AR_input[0]).split('.')[0]
         assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
+
 ##        index = int(os.path.basename(self.args.AR_input).split('.')[0])
 
         out = 'out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
@@ -973,7 +982,7 @@ and requires less than 100MB of memory'''
             pass
 
         ## index bgz output
-        subprocess.call('tabix -p vcf {}'.format(out), shell=True)
+        subprocess.call('{} -p vcf {}'.format(self.path_tabix, out), shell=True)
         ## confirm process has run to completion by writing to file
         with open('touch/ApplyRecalibration.touch', 'a') as f:
             f.write('{}\n'.format(out))
@@ -986,7 +995,8 @@ and requires less than 100MB of memory'''
 
         ## http://faculty.washington.edu/browning/beagle
 
-        memMB = 15900  # todo: move to argparse
+        memMB = 16900  # todo: move to argparse
+        memMB = 30900
         window = 50000  # todo: move to argparse
         if self.checkpoint:
             queue = 'normal'  # todo: move to argparse
@@ -1009,6 +1019,8 @@ and requires less than 100MB of memory'''
         ## Execute shell script.
         d_pos_max = {}
         d_arguments = {'nthreads':nthreads}
+        pattern = re.compile(r'.*VQSLOD=([-\d\.\w]+);')
+        d_minVQSLod = self.parse_minVQSLods()
         for chrom in self.chroms:
             ## 1) Check input existence
             if self.check_in(
@@ -1023,19 +1035,29 @@ and requires less than 100MB of memory'''
                 print(chrom, mode)
                 tbx = pysam.TabixFile(
                     'out_VariantRecalibrator/{}.recal.gz'.format(mode))
-                for pos in [
-                    int(line.split()[1]) for line in tbx.fetch(chrom)]:
+                for line in tbx.fetch(chrom):
+                    l = line.rstrip().split('\t')
+                    VQSLod = re.match(pattern, l[7]).group(1)
+                    if VQSLod == 'Infinity':
+                        VQSLod = float('inf')
+                    else:
+                        VQSLod = float(VQSLod)
+                    if VQSLod < d_minVQSLod[mode]:
+                        continue
+                    pos = int(l[1])
                     try:
                         d_pos_max[chrom] = max(int(pos), d_pos_max[chrom])
                     except KeyError:
                         d_pos_max[chrom] = int(pos)
                         print(mode, chrom)
+
             ## Execute shell script.
             print('beagle chrom', chrom)
             with gzip.open(
                 'out_{}/{}.vcf.gz'.format(T_prev, chrom), 'rt') as fd_vcf:
                 cnt = 0
-                pos_prev = None
+                pos2 = 0
+                ## Previous position in current fragment.
                 pos_max = d_pos_max[chrom]
                 for line in fd_vcf:
                     ## Skip metainformation lines and header line.
@@ -1047,18 +1069,24 @@ and requires less than 100MB of memory'''
                     l = line.split('\t', 2)
                     chrom = l[0]
                     pos = int(l[1])
+                    ## Skip if position already covered by previous fragment.
+                    if cnt == 0 and pos == pos2:
+                        continue
                     cnt += 1
-                    if cnt == 1 or pos_prev == None:
+                    if cnt == 1:
                         pos1 = pos
-                    elif cnt % window == 0 or pos == pos_max:
+                    if cnt % window == 0 or pos == pos_max:
                         pos2 = pos
                         index = cnt // window
+                        if pos == pos_max and cnt % window > 0:
+                            index += 1
                         d_arguments['out'] = 'out_beagle/{}/{}'.format(
                             chrom, index)
                         d_arguments['chrom'] = chrom
                         d_arguments['pos1'] = pos1
                         d_arguments['pos2'] = pos2
                         d_arguments['nthreads'] = nthreads
+                        d_arguments['memMB'] = nthreads
                         arguments = self.args_dict2str(d_arguments)
                         ## Generate optional output with Beagle window ranges.
                         with open('lists/beagle.coords', 'a') as f:
@@ -1067,11 +1095,7 @@ and requires less than 100MB of memory'''
                             chrom, pos1, pos2, index, memMB, queue, nthreads,
                             arguments=arguments)
                         print(chrom, ':', pos1, '-', pos2, index, cnt)
-                        pos = pos_prev = None
-                    else:
-                        pass
-                    pos_prev = pos
-                    continue
+                        cnt = 0
 
 ##            pos2 = pos
 ##            index = (cnt // window) + 1
@@ -1131,7 +1155,8 @@ and requires less than 100MB of memory'''
         lines += [' buildwindow=1200 \\']  # default 1200 as of r1274
         ## term cmd
         lines += self.term_cmd(
-            'beagle', ['$out.vcf.gz'], extra='tabix -p vcf $out.vcf.gz')
+            'beagle', ['$out.vcf.gz'],
+            extra='{} -p vcf $out.vcf.gz'.format(self.path_tabix))
 
         self.write_shell('shell/beagle.sh', lines,)
 
@@ -1141,12 +1166,33 @@ and requires less than 100MB of memory'''
         self, chrom, pos1, pos2, index, memMB, queue, nthreads,
         arguments=''):
 
-        fn_out = 'out_beagle/{}/{}.vcf.gz'.format(
-            chrom, index)
-
-        ## finished?
-        if os.path.isfile('{}.tbi'.format(fn_out)):
+        ## Finished? Output tabix indexed.
+        if os.path.isfile('out_beagle/{}/{}.vcf.gz.tbi'.format(chrom, index)):
             return
+
+        ## Stalled? Log file exists.
+        if os.path.isfile('out_beagle/{}/{}.log'.format(chrom, index)):
+            ## Log file not updated for 24 hours.
+            if time.time() - os.path.getmtime(
+                'out_beagle/{}/{}.log'.format(chrom, index)) > 60*60*24:
+##            if (time.time() - os.path.getmtime(
+##                'out_beagle/{}/{}.log'.format(chrom, index)) > 60*60*24 or not
+##                os.path.isfile('LSF/beagle/{}/{}.out'.format(chrom, index))):
+                ## Output exists.
+                if os.path.isfile(
+                    'out_beagle/{}/{}.vcf.gz'.format(chrom, index)):
+                    ## Output is empty.
+                    if not os.path.getsize(
+                        'out_beagle/{}/{}.vcf.gz'.format(chrom, index)):
+                        print('Deleting vcf, log and LSF.out')
+                        os.remove(
+                            'out_beagle/{}/{}.vcf.gz'.format(chrom, index))
+                        os.remove(
+                            'out_beagle/{}/{}.log'.format(chrom, index))
+                        if os.path.isfile(
+                            'LSF/beagle/{}/{}.out'.format(chrom, index)):
+                            os.remove(
+                                'LSF/beagle/{}/{}.out'.format(chrom, index))
 
         ## started and running?
         fn = 'LSF/beagle/{}.{}.out'.format(chrom, index)
@@ -1161,11 +1207,12 @@ and requires less than 100MB of memory'''
                     ## Return if running.
                     if any([
                         'trios' in line,
-                        'target markers' in line,]):
+                        'target markers' in line,
                         ## Starting burn-in iterations
                         ## Starting phasing iterations
                         'iterations' in line,
                         'mean edges' in line,  # mean edges/node
+                        ]):
                         return
             else:
                 stop
@@ -1399,6 +1446,13 @@ and requires less than 100MB of memory'''
                 ## append files in main dir
                 elif os.path.isfile(path2):
                     d_l_fp_out[dirname] += [path1]
+                ## symlink to die
+                elif os.path.islink(path2):
+                    l = os.listdir(path2)
+                    print(l)
+                    stop
+                    for fn in l:
+                        d_l_fp_out[dirname] += [os.path.join(path1, fn)]                    
                 else:
                     print(path2)
                     print(os.path.realpath(path2))
@@ -1963,6 +2017,9 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--path_java', '--java', required=True, type=self.is_file)
 
+        parser.add_argument(
+            '--path_tabix', '--tabix', required=True, type=self.is_file)
+
         ##
         ## CommandLineGATK arguments
         ##
@@ -2016,8 +2073,7 @@ and requires less than 100MB of memory'''
             choices=[
                 'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum',
                 'InbreedingCoeff'],
-            default=[
-                'DP', 'QD', 'FS', 'SOR', 'MQ', 'MQRankSum', 'ReadPosRankSum'],
+            default='DP QD FS SOR MQ MQRankSum ReadPosRankSum'.split(),
                 )
 
         parser.add_argument(
@@ -2025,8 +2081,7 @@ and requires less than 100MB of memory'''
             choices=[
                 'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum',
                 'InbreedingCoeff'],
-            default=[
-                'DP', 'QD', 'FS', 'SOR', 'MQRankSum', 'ReadPosRankSum'],
+            default='DP QD FS SOR MQRankSum ReadPosRankSum'.split(),
                 )
 
         ##
