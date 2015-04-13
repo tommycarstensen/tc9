@@ -23,12 +23,6 @@ def main():
 
     l_fam_sampleIDs = parse_fam(args.bfile + '.fam')
 
-    if args.keep:
-        l_keep_sampleIDs = parse_keep(args.keep, l_fam_sampleIDs)
-        l_keep_index = index_keep(l_keep_sampleIDs, l_fam_sampleIDs)
-    else:
-        l_keep_index = list(range(len(l_fam_sampleIDs)))
-
     ## Get count of samples.
     n_samples = len(l_fam_sampleIDs)
     ## Get count of SNPs. Only needed to keep track of completion percent.
@@ -92,59 +86,6 @@ def convert(
     return
 
 
-def parse_bed(bed, l_keep_index, REF, A2, n_bytes_per_SNP, l_GT):
-
-    '''http://pngu.mgh.harvard.edu/~purcell/plink/binary.shtml'''
-
-    bytesSNP = bed.read(n_bytes_per_SNP)
-    ## Convert to integer from bytes.
-##    int_bytesSNP = int.from_bytes(bytesSNP, 'big')
-    int_bytesSNP2 = int.from_bytes(bytesSNP, 'little')
-    cnt_allele_A1 = 0
-    cnt_allele_nonmissing = 0
-    for i, i_keep in enumerate(l_keep_index):
-        ## Calculate size of bit shift for sample.
-        shift2 = 2*i_keep
-        ## Query status of bit with bit masking
-        bits = int_bytesSNP2 >> shift2 & 0b11
-        ## query status of bit
-        if bits == 0:
-            ## hom
-            s2b = '00'
-            cnt_allele_A1 += 2
-            cnt_allele_nonmissing += 2
-            if REF == A2:
-                GT = '1/1'
-            else:
-                GT = '0/0'
-        elif bits == 2:
-            ## het
-            s2b = '10'
-            cnt_allele_A1 += 1
-            cnt_allele_nonmissing += 2
-            GT = '0/1'
-        elif bits == 3:
-            ## hom
-            s2b = '11'
-            cnt_allele_nonmissing += 2
-            if REF == A2:
-                GT = '0/0'
-            else:
-                GT = '1/1'
-        elif bits == 1:
-            ## missing
-            s2b = '01'
-            GT = './.'
-        else:
-            print(s2, x)
-            stop2
-        l_GT[i] = GT
-
-    genotype_fields = '\t'.join(l_GT)
-
-    return cnt_allele_nonmissing, cnt_allele_A1, genotype_fields
-
-
 def read_fai(path_fai):
 
     assert os.path.isfile(path_fai)
@@ -179,31 +120,8 @@ def parse_ref(d_fai, fd_ref, CHROM, POS, size=1):
     return read
 
 
-def index_keep(l_keep_sampleIDs,l_fam_sampleIDs):
-
-    if not l_keep_sampleIDs:
-        l_keep_sampleIDs = l_fam_sampleIDs
-
-    if len(set(l_keep_sampleIDs)-set(l_fam_sampleIDs)) > 0:
-        print('keep is not a subset of fam')
-        sys.exit()
-
-##    l_keep_index = []
-##    for i in range(len(l_fam_sampleIDs)):
-##        sampleID = l_fam_sampleIDs[i]
-##        if not sampleID in l_keep_sampleIDs:
-##            continue
-##        l_keep_index += [i]
-    l_keep_index = list(sorted(
-        [l_fam_sampleIDs.index(sampleID) for sampleID in l_keep_sampleIDs]))
-
-    return l_keep_index
-    
-
 def parse_fam(fp_fam,):
     
-    l_keep_index = []
-
     with open(fp_fam, 'r') as fam:
         l_sampleIDs = [line.rstrip().split()[0] for line in fam]
     with open(fp_fam, 'r') as fam:
@@ -220,48 +138,6 @@ def parse_fam(fp_fam,):
     return l_sampleIDs
 
 
-def shorten_sampleIDs(l_sampleIDs_long):
-
-##    if fp_update_ids:
-##        with open(fp_update_ids) as f:
-##            d_update = {
-##                line.strip().split()[0]:line.strip().split()[2] for line in f}
-##    else:
-##        d_update = {sampleID:sampleID for sampleID in l_sampleIDs_long}
-
-    keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(.+\d\d\d\d\d\d\d)')
-
-    l_sampleIDs_short = []
-
-    for sampleID_long in l_sampleIDs_long:
-##        sampleID_long = d_update[sampleID_long]
-        match = result = keyword.search(sampleID_long)
-        if match:
-            sampleID_short = match.group(2)
-        else:
-            sampleID_short = sampleID_long
-        l_sampleIDs_short += [sampleID_short]
-
-    return l_sampleIDs_short
-
-
-def parse_keep(fp_keep,l_fam_sampleIDs):
-
-    if fp_keep:
-        with open(fp_keep) as keep:
-            l_keep_sampleIDs_unsorted = [line.rstrip().split()[0] for line in keep]
-##        for sampleID in l_fam_sampleIDs:
-##            if not sampleID in l_keep_sampleIDs_unsorted:
-##                continue
-        l_keep_sampleIDs = [
-            sampleID for sampleID in l_fam_sampleIDs
-            if sampleID in l_keep_sampleIDs_unsorted]
-    else:
-        l_keep_sampleIDs = l_fam_sampleIDs
-
-    return l_keep_sampleIDs
-
-
 def argparser():
 
     parser = argparse.ArgumentParser()
@@ -275,9 +151,6 @@ def argparser():
         help=s_help,
         )
 
-    ## Optional. Good to have instead of creating intermediate bed files.
-    parser.add_argument('--keep', required = False, default=None)
-##    parser.add_argument('--update-ids', required = False, default=None)
     parser.add_argument('--chrom', required = False)
 
     args = namespace_args = parser.parse_args()
