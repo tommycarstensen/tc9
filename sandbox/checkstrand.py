@@ -5,16 +5,8 @@
 
 import argparse
 import os
-import math
-import re
 import datetime
 import sys
-import gzip
-import Bio
-from Bio.bgzf import BgzfWriter
-
-
-bpb = n_bits_per_byte = 8
 
 
 def main():
@@ -42,8 +34,6 @@ def main():
 def convert(
     args, bim, ref, d_fai,
     n_samples, n_SNPs):
-
-    n_bytes_per_SNP = math.ceil(n_samples/4)
 
     ## data lines
     for i_SNP, line_bim in enumerate(bim):
