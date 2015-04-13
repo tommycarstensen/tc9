@@ -11,6 +11,8 @@ import sys
 
 def main():
 
+    '''Checks correct strand flipping for non A/T and C/G alleles.'''
+
     args = argparser()
 
     l_fam_sampleIDs = parse_fam(args.bfile + '.fam')
@@ -31,9 +33,8 @@ def main():
 
     return
 
-def convert(
-    args, bim, ref, d_fai,
-    n_samples, n_SNPs):
+
+def convert(args, bim, ref, d_fai, n_samples, n_SNPs):
 
     ## data lines
     for i_SNP, line_bim in enumerate(bim):
@@ -51,7 +52,6 @@ def convert(
         REF = parse_ref(d_fai, ref, CHROM, int(POS))
 
         ## ALT = major
-        ## Convert MAF to allele frequency for the ALT allele.
         if REF == A1:
             ALT = A2
         ## ALT = minor
@@ -100,7 +100,7 @@ def parse_ref(d_fai, fd_ref, CHROM, POS, size=1):
 
 
 def parse_fam(fp_fam,):
-    
+
     with open(fp_fam, 'r') as fam:
         l_sampleIDs = [line.rstrip().split()[0] for line in fam]
     with open(fp_fam, 'r') as fam:
@@ -122,22 +122,22 @@ def argparser():
     parser = argparse.ArgumentParser()
 
     ## Required.
-    parser.add_argument('--bfile', '--in', required = True)
+    parser.add_argument('--bfile', '--in', required=True)
     s_help = 'The A2 allele is saved as the reference by PLINK2, '
     s_help = 'but a reference sequence is needed to determine REF and ALT.'
     parser.add_argument(
-        '--ref', required = True, default=None,
+        '--ref', required=True, default=None,
         help=s_help,
         )
 
-    parser.add_argument('--chrom', required = False)
+    parser.add_argument('--chrom', required=False)
 
     args = namespace_args = parser.parse_args()
 
     ## Assert that input exists.
     assert all([
         os.path.isfile('{}.{}'.format(args.bfile, suffix))
-        for suffix in ('bed','bim','fam')])
+        for suffix in ('bed', 'bim', 'fam')])
     assert os.path.isfile(args.ref)
 
     ## Do not allow compressed reference sequence for now.
