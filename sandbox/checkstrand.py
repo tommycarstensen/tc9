@@ -57,21 +57,10 @@ def convert(
         ## ALT = minor
         elif REF == A2:
             ALT = A1
-        elif A1 == '0':
-            ## 
-            if not AF_A1 == 0:
-                print('WARNING: REF={} CHROM={} POS={} ID={} A1={} A2={} AF={:.4f}'.format(
-                    REF, CHROM, POS, ID, A1, A2, AF_A1), file=sys.stderr)
-                ALT = A2
-                continue
-            ## monomorphic
-            else:
-                ALT = '.'
         ## Neither A1 nor A2 is identical to the reference allele.
         ## Should not happen. Print an error and continue.
         else:
-            print(REF, A1, A2, CHROM, POS)
-##            stop
+            print(REF, A1, A2, CHROM, POS, ID)
 
     return
 
