@@ -1,6 +1,6 @@
 #!/bin/python3
 
-## Tommy Carstensen, Wellcome Trust Sanger Institute, October 2013
+## Tommy Carstensen, Wellcome Trust Sanger Institute, Oct2013, Apr2015
 
 ## THIS SCRIPT IS JUST PLAIN UGLY!!! FIX IT WHEN TIME!!!
 
@@ -11,7 +11,7 @@
 ## todo: give the user an option to submit a file that links chromosomes and
 ## IMPUTE2 output files --- files should then be sorted by chromosome
 
-## gen,bed,bgl,vcf vs gen,bed,bgl,vcf
+## gen,bed,bgl,vcf,hap vs gen,bed,bgl,vcf,hap
 ##
 
 import argparse
@@ -28,11 +28,11 @@ def main():
 
     d_args = argparser()
 
-    d_samples,d_indexes = index_samples(d_args)
+    d_samples, d_indexes = index_samples(d_args)
 
     with contextlib.ExitStack() as stack:
 
-        d = open_files(stack,d_args)
+        d = open_files(stack, d_args)
 
         if d_args['extract']:
             f_extract = stack.enter_context(open(d_args['extract']))
@@ -51,17 +51,17 @@ def main():
     return
 
 
-def open_files(stack,d_args):
+def open_files(stack, d_args):
 
     ## tidy up this function and delete duplicate code!!!
 
     ## http://docs.python.org/3/tutorial/controlflow.html
     d = {}
 
-    for i in 1,2:
+    for i in 1, 2:
         files = d_args['files%i' %(i)]
         d['format%i' %(i)] = d_args['format%i' %(i)]
-#        markers = [markers1,markers2,][i-1]
+#        markers = [markers1, markers2,][i-1]
 
         if d_args['format%i' %(i)] == 'bed':
             if len(files) != 1:
@@ -70,7 +70,7 @@ def open_files(stack,d_args):
             f_bed = stack.enter_context(open('%s.bed' %(files[0]),'rb'))
             f_bim = stack.enter_context(open('%s.bim' %(files[0])))
             ## skip magic number and mode (and check that they are correct)
-            magic_number = [108,27]
+            magic_number = [108, 27]
             mode = [1]
             for j in range(len(magic_number)+len(mode)):
                 byte = f_bed.read(1)
@@ -82,13 +82,13 @@ def open_files(stack,d_args):
         ## Oxford/IMPUTE2
         elif d_args['format%i' %(i)] == 'gen':
             d['fileinput%i' %(i)] = fileinput.FileInput(
-                files=files,openhook=hook_compressed_text)
+                files=files, openhook=hook_compressed_text)
             d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
 
         ## Beagle3
         elif d_args['format%i' %(i)] == 'bgl':
             d['fileinput%i' %(i)] = fileinput.FileInput(
-                files=files,openhook=hook_compressed_text)
+                files=files, openhook=hook_compressed_text)
             d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
 ##            ## skip header (not really necessary as this is done in parse_bgl)
 ##            for line in d['file%i' %(i)]:
@@ -101,7 +101,7 @@ def open_files(stack,d_args):
         ## VCF
         elif d_args['format%i' %(i)] == 'vcf':
             d['fileinput%i' %(i)] = fileinput.FileInput(
-                files=files,openhook=hook_compressed_text)
+                files=files, openhook=hook_compressed_text)
             d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
 ##            ## skip header
 ##            for line in d['file%i' %(i)]:
@@ -176,7 +176,7 @@ def loop_main(
 
 ##    d = {'00':'1 0 0','01':'0 1 0','11':'0 0 1','10':'0.3333 0.3333 0.3333'}
     d_correl = {'xx':{},'xy':{},'yy':{},'x':{},'y':{},'n':{},'r2':{},'cnt':{}}
-    for MAF in range(0,51):
+    for MAF in range(0, 51):
         for k in d_correl.keys():
             d_correl[k][MAF] = 0
 
@@ -205,38 +205,37 @@ def loop_sub(
     while True:
 
         if chrom1 < chrom2:
-            print('a',format1,format2,chrom1,chrom2,pos1,pos2,)
+            print('a', format1, format2, chrom1, chrom2, pos1, pos2,)
             try:
-                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif chrom2 < chrom1:
-##            print('b',format1,format2,chrom1,chrom2,pos1,pos2)
+            print('b', format1, format2, chrom1, chrom2, pos1, pos2)
             try:
-                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
+                chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
         elif pos1 < pos2:
             try:
-                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif pos2 < pos1:
-##            print(4,gen_pos,bim_pos) ## tmp!!!
             try:
-                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
+                chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
         elif pos1 == pos2:
             pass
         else:
-            print('bim',bim_chrom,bim_pos)
-            print('extract',extract_chrom,extract_pos)
-            print('gen',gen_chrom,gen_pos)
+            print('bim', bim_chrom, bim_pos)
+            print('extract', extract_chrom, extract_pos)
+            print('gen', gen_chrom, gen_pos)
             stop
 
         if f_extract:
@@ -244,16 +243,18 @@ def loop_sub(
                 bool_continue = False
                 bool_break = False
                 if extract_chrom < chrom1:
-                    print('c',format1,format2,chrom1,extract_chrom)
+                    print('c', format1, format2, chrom1, extract_chrom)
                     try:
-                        extract_chrom,extract_pos = next(parse_extract(f_extract))
+                        extract_chrom, extract_pos = next(
+                            parse_extract(f_extract))
                     except StopIteration:
                         break
                     continue
                 elif chrom1 < extract_chrom:
-##                    print('d',format1,format2,chrom1,extract_chrom)
+                    print('d', format1, format2, chrom1, extract_chrom)
                     try:
-                        chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                        chrom1, pos1, A1, B1, genotypes1 = next(
+                            func1(**kwargs1))
                     except StopIteration:
                         break
                     bool_continue = True
@@ -261,14 +262,16 @@ def loop_sub(
                 ## SNP to be extracted not in bed file
                 elif extract_pos < pos1:
                     try:
-                        extract_chrom,extract_pos = next(parse_extract(f_extract))
+                        extract_chrom, extract_pos = next(
+                            parse_extract(f_extract))
                     except StopIteration:
                         break
                     continue
                 ## SNP in bed file not to be extracted
                 elif pos1 < extract_pos:
                     try:
-                        chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                        chrom1, pos1, A1, B1, genotypes1 = next(
+                            func1(**kwargs1))
                     except StopIteration:
                         bool_break = True
                         break
@@ -277,7 +280,8 @@ def loop_sub(
                 ## pos1 == extract_pos
                 else:
                     if bool_continue != False or bool_break != False:
-                        print(pos1,pos2,extract_pos,bool_continue,bool_break)
+                        print(
+                            pos1, pos2, extract_pos, bool_continue, bool_break)
                         stop
                     break
             if bool_continue == True:
@@ -289,13 +293,13 @@ def loop_sub(
         ## skip insertion or deletion
         if len(B1) > 1 or len(A1) > 1:
             try:
-                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif len(B2) > 1 or len(A2) > 1:
             try:
-                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
+                chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
@@ -305,8 +309,8 @@ def loop_sub(
             bool_reverse = True
         else:
             try:
-                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
-                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
+                chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
+                chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
@@ -348,7 +352,7 @@ def loop_sub(
                 r1 = 1
             else:
                 r2 = None
-                if round(nom,13) == 0:
+                if round(nom, 13) == 0:
                     pass
                 ## monomorphic
                 elif l_x == len(l_x)*[x] or l_y == len(l_y)*[y]:
@@ -360,10 +364,10 @@ def loop_sub(
                 else:
                     print('x',l_x)
                     print('y',l_y)
-                    print(pos1,A1,A2,B1,B2)
+                    print(pos1, A1, A2, B1, B2)
 
-                    print(sum_x,sum_y,sum_xy)
-                    print(nom,round(nom,13),13)
+                    print(sum_x, sum_y, sum_xy)
+                    print(nom, round(nom, 13), 13)
                     for x2 in l_x:
                         if x != x2:
                             print('x',x2)
@@ -379,72 +383,11 @@ def loop_sub(
 ##            stop2
         else:
             r2 = nom**2/abs(den_sq)
-            fd_out.write('%s %s %s %s\n' %(chrom1,pos1,MAF,r2))
-##            print(r2,MAF)
+            fd_out.write('%s %s %s %s\n' %(chrom1, pos1, MAF, r2))
             d_correl['r2'][MAF] += r2
             d_correl['cnt'][MAF] += 1
 
-##            print(bim_chrom,bim_pos,MAF,r2)
-##            print(chrom1,chrom2,pos1,pos2,MAF,r2)
-##            import numpy
-##            xxx = numpy.corrcoef(l_x,l_y)
-##            print(xxx[0][1]**2)
-
-##            print(r2,format1,format2)
-##            print(l_x)
-##            print(l_y)
             pass
-
-##        if pos1 == 836924:
-##            print()
-##            print(r2)
-##            print(l_x)
-##            print(l_y)
-####            print(d_samples[1])
-##            print(d_samples[2][::10])
-##            print(len(d_samples[1]), len(d_samples[2]))
-####            print(d_indexes[1])
-####            print(d_indexes[2])
-##            print(len(d_indexes[1]))
-##            print(len(d_indexes[2]))
-##            print(A1,B1,A2,B2, MAF)
-##            print(format1, format2)
-##            print('\n')
-##            sys.exit() ## tmp!!!
-
-##        print(r2,pos1,pos2)
-##        if r2 < 0.6:
-##            print(l_x)
-##            print(l_y)
-##            print(genotypes1)
-##            print(genotypes2)
-##            print(d_indexes[1])
-##            print(d_indexes[2])
-##            print(len(genotypes1))
-##            print(len(genotypes2))
-##            print(len(d_indexes[1]))
-##            print(len(d_indexes[2]))
-##            print(sum_x,sum_y,sum_xx,sum_yy)
-##            print(genotypes2[1411],index2)
-##            stop
-
-##        if pos1 == 4111189: ## tmp!!!
-##            print(r2)
-##            for i in range(len(l_x)):
-####                if 'APP5117710' != d_samples[1][i] and 'EGAN00001069140' != d_samples[1][i] and abs(l_x[i]-l_y[i]) < 0.1: continue
-##                print('%s\t%s\t%s' %(l_x[i],l_y[i],d_samples[1][i]))
-##            stop
-
-##        print(r2,format1,format2)
-
-##        fd_out.write('%s %s %s %s\n' %(chrom1,pos1,MAF,cnt_concordance/100))
-
-##        if pos1 == 846338:
-##            print(l_x)
-##            print(l_y)
-##            print(r2)
-##            print(n,len(l_x),len(l_y))
-##            stop
 
         try:
             chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
@@ -461,9 +404,12 @@ def loop_sub(
 
     fd_out.close()
 
-    with open('%s.r2' %(affix),'w') as fd_out:
+    with open('{}.r2'.format(affix), 'w') as fd_out:
         for MAF in range(0,51):
-##            nom = (d_correl['xy'][MAF]-d_correl['x'][MAF]*d_correl['y'][MAF]/d_correl['n'][MAF])
+##            nom = (
+##                d_correl['xy'][MAF] - (
+##                    d_correl['x'][MAF]*d_correl['y'][MAF] /
+##                    d_correl['n'][MAF]))
 ##            f1 = d_correl['xx'][MAF]-d_correl['x'][MAF]**2/d_correl['n'][MAF]
 ##            f2 = d_correl['yy'][MAF]-d_correl['y'][MAF]**2/d_correl['n'][MAF]
 ##            den_sq = abs(f1*f2)
@@ -473,7 +419,7 @@ def loop_sub(
                 continue
             r2 = d_correl['r2'][MAF]/d_correl['cnt'][MAF]
 ##            print('\b',r2)
-            fd_out.write('%s %s\n' %(MAF,r2))
+            fd_out.write('%s %s\n' %(MAF, r2))
 
     return
 
@@ -483,6 +429,8 @@ def calc_sums_and_sum_of_squares(
     func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
     f_discordant):
 
+    ## This is the slowest function followed by functions for parsing GTs.
+
     n = 0
     sum_x = 0
     sum_y = 0
@@ -491,7 +439,7 @@ def calc_sums_and_sum_of_squares(
     sum_yy = 0
 ##    l_x = [] ## tmp!!!
 ##    l_y = [] ## tmp!!!
-    cnt_concordance = 0
+##    cnt_concordance = 0
     for index1, index2 in zip(d_indexes[1], d_indexes[2]):
 ##        for i_byte in range(n_bytes):
 ##                byte = bed.read(1)
@@ -516,7 +464,8 @@ def calc_sums_and_sum_of_squares(
         sum_xy += x*y
         sum_yy += y*y
         n += 1
-        if x == y: cnt_concordance += 1
+##        if x == y:
+##            cnt_concordance += 1
         ## continue loop over samples
         continue
 
@@ -555,10 +504,10 @@ def parse_hap(**kwargs):
             os.path.basename(file.filename()).split('.')[0])  # tmp!!!
 ##        chrom = int(l_legend[0].split(':')[0])
 
-    yield chrom,pos,alleleA,alleleB,l
+    yield chrom, pos, alleleA, alleleB, l
 
 
-def parse_dosage_hap(l_hap,i_sample):
+def parse_dosage_hap(l_hap, i_sample):
 
     if l_hap[2*i_sample] == '0' and l_hap[2*i_sample+1] == '0':
         dosage = 0
@@ -584,7 +533,8 @@ def parse_dosage_vcf(l_vcf, i_sample):
     ## alternatively use re.split()
     ## re.split('\| |, /,str)
 
-##    dosage = sum(int(GT) for GT in l_vcf[i_sample+9].split(':')[0].split('|'))
+##    dosage = sum(
+##        int(GT) for GT in l_vcf[i_sample+9].split(':')[0].split('|'))
 
 ##    dosage = sum(i*float(GP) for i,GP in enumerate(
 ##        l_vcf[i_sample+9].split(':')[2].split(',')))
@@ -609,7 +559,7 @@ def parse_dosage_vcf(l_vcf, i_sample):
     ##                for log10likelihood in PL))
             ## calculate probabilities once
             l_probs = [
-                pow(10,-int(log10likelihood)/10) for log10likelihood in PL]
+                pow(10, -int(log10likelihood)/10) for log10likelihood in PL]
             ## evaluate sum once
             sum_prob = sum(l_probs)
             dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
@@ -619,7 +569,7 @@ def parse_dosage_vcf(l_vcf, i_sample):
     return dosage
 
 
-def parse_dosage_gen(l_gen,i_sample):
+def parse_dosage_gen(l_gen, i_sample):
 
     dosage = 0
     dosage += float(l_gen[6+3*i_sample])
@@ -637,7 +587,7 @@ def parse_dosage_bgl(l_bgl, i_sample):
     return dosage
 
 
-def parse_dosage_bed(bytesSNP,i_sample):
+def parse_dosage_bed(bytesSNP, i_sample):
 
     d_dosage = {'00': 0., '01': 1., '11': 2.}
 
