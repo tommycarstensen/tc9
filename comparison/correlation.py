@@ -159,7 +159,7 @@ def loop_main(
     func_dosage1 = d_func_dosage[format1]
     func_dosage2 = d_func_dosage[format2]
 
-    n_samples_intersection = len(d_indexes[1])
+    assert len(d_indexes[1]) == len(d_indexes[2])
 
     ## how many bed bytes to be read for each bim line?
     n_bytes1 = math.ceil(len(d_samples[1])/4)
@@ -180,54 +180,54 @@ def loop_main(
         for k in d_correl.keys():
             d_correl[k][MAF] = 0
 
-    if f_extract:
-        extract_chrom, extract_pos = next(parse_extract(f_extract))
-
-    fd_out = open('%s.tmp' %(affix),'w')
-
-    print(kwargs1)
-    stop
-
-    loop_sub(dict(kwargs1), dict(kwargs2), fd_out)
+    with open('%s.tmp' %(affix),'w') as fd_out:
+        loop_sub(
+            kwargs1, kwargs2, fd_out, func1, func2, f_extract,
+            d_indexes,
+            func_dosage1, func_dosage2, f_discordant, d_correl)
 
     return
 
 
-def loop_sub(kwargs1, kwargs2):
+def loop_sub(
+    kwargs1, kwargs2, fd_out, func1, func2, f_extract,
+    d_indexes,
+    func_dosage1, func_dosage2, f_discordant, d_correl):
 
-    print(kwargs1)
-    stop
+    ## parse first line to be extracted
+    if f_extract:
+        extract_chrom, extract_pos = next(parse_extract(f_extract))
 
     ## parse first line
-    chrom1, pos1, alleleA1, alleleB1, genotypes1 = next(func1(**kwargs1))
-    chrom2, pos2, alleleA2, alleleB2, genotypes2 = next(func2(**kwargs2))
+    chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
+    chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
 
     while True:
 
         if chrom1 < chrom2:
             print('a',format1,format2,chrom1,chrom2,pos1,pos2,)
             try:
-                chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
+                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif chrom2 < chrom1:
 ##            print('b',format1,format2,chrom1,chrom2,pos1,pos2)
             try:
-                chrom2,pos2,alleleA2,alleleB2,genotypes2 = next(func2(**kwargs2))
+                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
         elif pos1 < pos2:
             try:
-                chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
+                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif pos2 < pos1:
 ##            print(4,gen_pos,bim_pos) ## tmp!!!
             try:
-                chrom2,pos2,alleleA2,alleleB2,genotypes2 = next(func2(**kwargs2))
+                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
@@ -253,7 +253,7 @@ def loop_sub(kwargs1, kwargs2):
                 elif chrom1 < extract_chrom:
 ##                    print('d',format1,format2,chrom1,extract_chrom)
                     try:
-                        chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
+                        chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
                     except StopIteration:
                         break
                     bool_continue = True
@@ -268,7 +268,7 @@ def loop_sub(kwargs1, kwargs2):
                 ## SNP in bed file not to be extracted
                 elif pos1 < extract_pos:
                     try:
-                        chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
+                        chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
                     except StopIteration:
                         bool_break = True
                         break
@@ -287,31 +287,34 @@ def loop_sub(kwargs1, kwargs2):
                 
         bool_continue = False
         ## skip insertion or deletion
-        if len(alleleB1) > 1 or len(alleleA1) > 1:
+        if len(B1) > 1 or len(A1) > 1:
             try:
-                chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
+                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
-        elif len(alleleB2) > 1 or len(alleleA2) > 1:
+        elif len(B2) > 1 or len(A2) > 1:
             try:
-                chrom2,pos2,alleleA2,alleleB2,genotypes2 = next(func2(**kwargs2))
+                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
-        elif (alleleA1 == alleleA2 or alleleA1 == '0' or alleleA2 == '0') and alleleB1 == alleleB2:
+        elif (A1 == A2 or A1 == '0' or A2 == '0') and B1 == B2:
             bool_reverse = False
-        elif (alleleA1 == alleleB2 or alleleA1 == '0' or alleleB2 == '0') and alleleB1 == alleleA2:
+        elif (A1 == B2 or A1 == '0' or B2 == '0') and B1 == A2:
             bool_reverse = True
         else:
             try:
-                chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
-                chrom2,pos2,alleleA2,alleleB2,genotypes2 = next(func2(**kwargs2))
+                chrom1,pos1,A1,B1,genotypes1 = next(func1(**kwargs1))
+                chrom2,pos2,A2,B2,genotypes2 = next(func2(**kwargs2))
             except StopIteration:
                 break
             continue
 
-        sum_x, sum_y, sum_xx, sum_yy = calc_sums_and_sum_of_squares()
+        n, sum_x, sum_y, sum_xx, sum_yy, sum_xy = calc_sums_and_sum_of_squares(
+            d_indexes,
+            func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
+            f_discordant)
 
         ## calculate MAF
         try:
@@ -357,7 +360,7 @@ def loop_sub(kwargs1, kwargs2):
                 else:
                     print('x',l_x)
                     print('y',l_y)
-                    print(pos1,alleleA1,alleleA2,alleleB1,alleleB2)
+                    print(pos1,A1,A2,B1,B2)
 
                     print(sum_x,sum_y,sum_xy)
                     print(nom,round(nom,13),13)
@@ -404,7 +407,7 @@ def loop_sub(kwargs1, kwargs2):
 ####            print(d_indexes[2])
 ##            print(len(d_indexes[1]))
 ##            print(len(d_indexes[2]))
-##            print(alleleA1,alleleB1,alleleA2,alleleB2, MAF)
+##            print(A1,B1,A2,B2, MAF)
 ##            print(format1, format2)
 ##            print('\n')
 ##            sys.exit() ## tmp!!!
@@ -444,10 +447,10 @@ def loop_sub(kwargs1, kwargs2):
 ##            stop
 
         try:
-            chrom1,pos1,alleleA1,alleleB1,genotypes1 = next(func1(**kwargs1))
-            chrom2,pos2,alleleA2,alleleB2,genotypes2 = next(func2(**kwargs2))
+            chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
+            chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             if f_extract:
-                extract_chrom,extract_pos = next(parse_extract(f_extract))
+                extract_chrom, extract_pos = next(parse_extract(f_extract))
         except StopIteration:
             break
 
@@ -475,7 +478,10 @@ def loop_sub(kwargs1, kwargs2):
     return
 
 
-def calc_sums_and_sum_of_squares():
+def calc_sums_and_sum_of_squares(
+    d_indexes,
+    func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
+    f_discordant):
 
     n = 0
     sum_x = 0
@@ -483,29 +489,27 @@ def calc_sums_and_sum_of_squares():
     sum_xx = 0
     sum_xy = 0
     sum_yy = 0
-    l_x = [] ## tmp!!!
-    l_y = [] ## tmp!!!
+##    l_x = [] ## tmp!!!
+##    l_y = [] ## tmp!!!
     cnt_concordance = 0
-    for index in range(n_samples_intersection):
-        index1 = d_indexes[1][index]
-        index2 = d_indexes[2][index]
+    for index1, index2 in zip(d_indexes[1], d_indexes[2]):
 ##        for i_byte in range(n_bytes):
 ##                byte = bed.read(1)
-        x = func_dosage1(genotypes1,index1)
-        y = func_dosage2(genotypes2,index2)
+        x = func_dosage1(genotypes1, index1)
+        y = func_dosage2(genotypes2, index2)
         if x == None or y == None:
             continue
         if bool_reverse:
             x = 2-x
         if f_discordant and x != y:
             print(
-                chrom1, pos1, alleleA1, alleleB1,
-                chrom2, pos2, alleleA2, alleleB2,
+                chrom1, pos1, A1, B1,
+                chrom2, pos2, A2, B2,
                 '{0:5.3f}'.format(x), '{0:5.3f}'.format(y),
                 d_samples[1][index1], d_samples[2][index2],
                 file=f_discordant, flush=True, sep='\t')
-        l_x += [x] ## tmp!!!
-        l_y += [y] ## tmp!!!
+##        l_x += [x] ## tmp!!!
+##        l_y += [y] ## tmp!!!
         sum_x += x
         sum_y += y
         sum_xx += x*x
@@ -516,7 +520,7 @@ def calc_sums_and_sum_of_squares():
         ## continue loop over samples
         continue
 
-    return sum_x, sum_y, sum_xx, sum_yy
+    return n, sum_x, sum_y, sum_xx, sum_yy, sum_xy
 
 
 def parse_hap(**kwargs):
@@ -624,7 +628,7 @@ def parse_dosage_gen(l_gen,i_sample):
     return dosage
 
 
-def parse_dosage_bgl(l_bgl,i_sample):
+def parse_dosage_bgl(l_bgl, i_sample):
 
     dosage = 0
     dosage += float(l_bgl[4+3*i_sample])
@@ -635,7 +639,7 @@ def parse_dosage_bgl(l_bgl,i_sample):
 
 def parse_dosage_bed(bytesSNP,i_sample):
 
-    d_dosage = {'00':0.,'01':1.,'11':2.}
+    d_dosage = {'00': 0., '01': 1., '11': 2.}
 
     i_byte = int(i_sample/4)
     byte = bytesSNP[i_byte]
@@ -645,7 +649,7 @@ def parse_dosage_bed(bytesSNP,i_sample):
     i = 3-i_sample%4
     s2 = s8[2*i+1]+s8[2*i]
     if s2 == '10':
-        dosage = None ## ask Deepti whether 10 should be 1 or N/A!!!
+        dosage = None  # ask Deepti whether missing should be het or N/A!!!
     else:
         dosage = d_dosage[s2]
 
@@ -658,7 +662,7 @@ def index_samples(d_args):
 
     d_samples = {}
     d_cnt = {}
-    for i in 1,2:
+    for i in 1, 2:
         fileformat = d_args['format{}'.format(i)]
         files = d_args['files%i' %(i)]
         if fileformat == 'bed':
@@ -668,7 +672,7 @@ def index_samples(d_args):
                 print('size 0', files[0])
                 sys.exit()
             if files[-1][-3:] == '.gz':
-                with gzip.open(files[-1],'rt') as f:
+                with gzip.open(files[-1], 'rt') as f:
                     n_fam = int((len(f.readline().rstrip().split())-5)/3)
             else:
                 with open(files[-1]) as f:
@@ -688,7 +692,7 @@ def index_samples(d_args):
                 l_samples = None
         elif fileformat == 'bgl':
             if files[0][-3:] == '.gz':
-                with gzip.open(files[0],'rt') as f:
+                with gzip.open(files[0], 'rt') as f:
                     l_samples = f.readline().rstrip().split()[3:-1:3]
             else:
                 with open(files[0]) as f:
@@ -697,13 +701,13 @@ def index_samples(d_args):
             l_samples = vcf2samples(files[0])
         elif fileformat == 'hap':
             if d_args['sample%i' %(i)]:
-                with open(d_args['sample%i' %(i)]) as f:
+                with open(d_args['sample{}'.format(i)]) as f:
                     l_samples = [
                         line.split()[0] for line in f.readlines()[2:]]
             else:
                 l_samples = None
         else:
-            print(fileformat,files)
+            print(fileformat, files)
             stop_unknown_format
         d_samples[i] = l_samples
         if l_samples:
@@ -711,14 +715,15 @@ def index_samples(d_args):
         else:
             d_cnt[i] = n_fam
 
-    d_indexes = {1:[],2:[]}
+    d_indexes = {1: [], 2: []}
     if d_args['sampledic']:
         with open(d_args['sampledic']) as lines:
             d_sampledic = {
-                line.split()[0]:line.rstrip().split()[1] for line in lines}
+                line.split()[0]: line.rstrip().split()[1] for line in lines}
     else:
         if d_samples[1] and d_samples[2]:
-            d_sampledic = {sample:sample for sample in set(d_samples[1])&set(d_samples[2])}
+            d_sampledic = {sample: sample for sample in set(
+                set(d_samples[1]) & set(d_samples[2]))}
         elif d_cnt[1] == d_cnt[2]:
             if not d_samples[1]:
                 d_samples[1] = d_samples[2]
