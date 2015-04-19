@@ -67,7 +67,7 @@ def open_files(stack, d_args):
             if len(files) != 1:
                 print(files)
                 stoptmp
-            f_bed = stack.enter_context(open('%s.bed' %(files[0]),'rb'))
+            f_bed = stack.enter_context(open('%s.bed' %(files[0]), 'rb'))
             f_bim = stack.enter_context(open('%s.bim' %(files[0])))
             ## skip magic number and mode (and check that they are correct)
             magic_number = [108, 27]
@@ -90,9 +90,6 @@ def open_files(stack, d_args):
             d['fileinput%i' %(i)] = fileinput.FileInput(
                 files=files, openhook=hook_compressed_text)
             d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
-##            ## skip header (not really necessary as this is done in parse_bgl)
-##            for line in d['file%i' %(i)]:
-##                break
             if d_args['markers%i' %(i)]:
                 d['markers%i' %(i)] = fileinput.FileInput(files=markers)
             else:
@@ -148,14 +145,15 @@ def loop_main(
     ## todo: split this loooooong function into sub-processes
 
     d_func = {
-        'gen':parse_gen, 'bgl':parse_bgl, 'bed':parse_bed, 'vcf':parse_vcf,
-        'hap':parse_hap,}
+        'gen': parse_gen, 'bgl': parse_bgl, 'bed': parse_bed,
+        'vcf': parse_vcf,
+        'hap': parse_hap}
     func1 = d_func[format1]
     func2 = d_func[format2]
     d_func_dosage = {
-        'gen':parse_dosage_gen, 'bgl':parse_dosage_bgl,
-        'bed':parse_dosage_bed, 'vcf':parse_dosage_vcf,
-        'hap':parse_dosage_hap,}
+        'gen': parse_dosage_gen, 'bgl': parse_dosage_bgl,
+        'bed': parse_dosage_bed, 'vcf': parse_dosage_vcf,
+        'hap': parse_dosage_hap}
     func_dosage1 = d_func_dosage[format1]
     func_dosage2 = d_func_dosage[format2]
 
@@ -166,21 +164,23 @@ def loop_main(
     n_bytes2 = math.ceil(len(d_samples[2])/4)
 
     kwargs1 = {
-        'file':file1,'fileinput':fileinput1,
-        'bim':bim1,'n_bytes':n_bytes1,'markers':markers1,
-        'legend':legend1, 'chrom':chrom}
+        'file': file1, 'fileinput': fileinput1,
+        'bim': bim1, 'n_bytes': n_bytes1, 'markers': markers1,
+        'legend': legend1, 'chrom': chrom}
     kwargs2 = {
-        'file':file2,'fileinput':fileinput2,
-        'bim':bim2,'n_bytes':n_bytes2,'markers':markers2,
-        'legend':legend2, 'chrom':chrom}
+        'file': file2, 'fileinput': fileinput2,
+        'bim': bim2, 'n_bytes': n_bytes2, 'markers': markers2,
+        'legend': legend2, 'chrom': chrom}
 
 ##    d = {'00':'1 0 0','01':'0 1 0','11':'0 0 1','10':'0.3333 0.3333 0.3333'}
-    d_correl = {'xx':{},'xy':{},'yy':{},'x':{},'y':{},'n':{},'r2':{},'cnt':{}}
+    d_correl = {
+        'xx': {}, 'xy': {}, 'yy': {}, 'x': {}, 'y': {},
+        'n': {}, 'r2': {}, 'cnt': {}}
     for MAF in range(0, 51):
         for k in d_correl.keys():
             d_correl[k][MAF] = 0
 
-    with open('%s.tmp' %(affix),'w') as fd_out:
+    with open('%s.tmp' %(affix), 'w') as fd_out:
         loop_sub(
             kwargs1, kwargs2, fd_out, func1, func2, f_extract,
             d_indexes,
@@ -288,7 +288,7 @@ def loop_sub(
                 continue
             if bool_break == True:
                 break
-                
+
         bool_continue = False
         ## skip insertion or deletion
         if len(B1) > 1 or len(A1) > 1:
@@ -347,7 +347,9 @@ def loop_sub(
         ## if calculating overall r2 with new method
         ## instead of simple average
         if den_sq == 0:
-##            if nom == 0 and sum_x ==0 and sum_y == 0 and sum_xx == 0 and sum_yy == 0 and sum_xy == 0:
+##            if (
+##                nom == 0 and sum_x ==0 and sum_y == 0
+##                and sum_xx == 0 and sum_yy == 0 and sum_xy == 0:
             if False:
                 r1 = 1
             else:
@@ -362,18 +364,18 @@ def loop_sub(
                 elif (sum_x == 0 or sum_y == 0):
                     stop
                 else:
-                    print('x',l_x)
-                    print('y',l_y)
+                    print('x', l_x)
+                    print('y', l_y)
                     print(pos1, A1, A2, B1, B2)
 
                     print(sum_x, sum_y, sum_xy)
                     print(nom, round(nom, 13), 13)
                     for x2 in l_x:
                         if x != x2:
-                            print('x',x2)
+                            print('x', x2)
                     for y2 in l_y:
                         if y != y2:
-                            print('y',y2)
+                            print('y', y2)
                     stop
 ##        elif nom == 0:
 ##            print(nom,den_sq)
@@ -397,7 +399,9 @@ def loop_sub(
         except StopIteration:
             break
 
-        if pos1 % 10000 == 0: print(chrom1, pos1)  # tmp!!!
+        ## How far have we come?
+        if pos1 % 10000 == 0:
+            print(chrom1, pos1)  # tmp!!!
 
         ## continue loop over SNPs
         continue
@@ -405,7 +409,7 @@ def loop_sub(
     fd_out.close()
 
     with open('{}.r2'.format(affix), 'w') as fd_out:
-        for MAF in range(0,51):
+        for MAF in range(0, 51):
 ##            nom = (
 ##                d_correl['xy'][MAF] - (
 ##                    d_correl['x'][MAF]*d_correl['y'][MAF] /
