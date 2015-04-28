@@ -1,7 +1,7 @@
 #!/bin/python3
 
 ## Tommy Carstensen, Wellcome Trust Sanger Institute
-## February-March 2013, October-November 2014
+## February-March 2013, October-November 2014, April 2015
 
 import argparse
 import fileinput
@@ -14,10 +14,11 @@ import operator
 import heapq
 
 ## Global dictionary for converting chromosomes to sortable integers.
-d_chroms = {str(i):i-1 for i in range(1, 23)}
-d_chroms['X'] = 22
-d_chroms['Y'] = 23
-d_chroms['MT'] = 24
+for prefix in '','chr':
+    d_chroms = {'{}{}'.format(prefix, str(i)):i-1 for i in range(1, 23)}
+    d_chroms['{}X'.format(prefix)] = 22
+    d_chroms['{}Y'.format(prefix)] = 23
+    d_chroms['{}MT'.format(prefix)] = 24
 
 def main():
 
