@@ -159,7 +159,8 @@ def initiate_loop_lines(
     else:
         stop
 
-    d_bed = {'chrom_str':chrom_bed, 'pos1':pos1_bed, 'pos2':pos2_bed}
+    if file_bed:
+        d_bed = {'chrom_str':chrom_bed, 'pos1':pos1_bed, 'pos2':pos2_bed}
 
     ## Also print these to file.
     d_type_errors = {'fp':[], 'tp':[], 'fn':0}
