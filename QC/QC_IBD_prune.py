@@ -2,7 +2,9 @@
 
 ## Tommy Carstensen, Wellcome Trust Sanger Institute, 2012 and November 2013
 
-import os, sys
+import os
+import sys
+import gzip
 
 def main():
 
@@ -10,16 +12,19 @@ def main():
     ## but which one is removed is random
     ## i.e. the first occurence among sorted samples is removed
 
-    d_IID2IIDs = parse_genome()
+    d_ID2IDs = parse_genome()
 
-    d_count2IIDs = count_relations(d_IID2IIDs)
+    d_count2IDs = count_relations(d_ID2IDs)
 
-    d_imiss = parse_imiss()
+    if '--imiss' in sys.argv:
+        d_imiss = parse_imiss()
+    else:
+        d_imiss = {ID: 0 for ID in d_ID2IDs.keys()}
 
     l_twins = parse_twins()
 
     l_exclude = generate_exclusion(
-        d_IID2IIDs,d_count2IIDs,d_imiss=d_imiss,l_twins=l_twins)
+        d_ID2IDs,d_count2IDs,d_imiss=d_imiss,l_twins=l_twins)
 
     write_exclusion_list(l_exclude)
 
@@ -53,9 +58,9 @@ def parse_imiss():
     ## loop lines
     for line in fd:
         l = line.split()
-        IID = l[1]
+        ID = l[0]+l[1]
         F_MISS = float(l[5])
-        d_imiss[IID] = F_MISS
+        d_imiss[ID] = F_MISS
     fd.close()
 
     return d_imiss
@@ -66,8 +71,8 @@ def write_exclusion_list(l_exclude,):
     pi_hat_max = float(sys.argv[sys.argv.index('--pi_hat_max')+1])
     out = sys.argv[sys.argv.index('--out')+1]
 
-##    s = '\n'.join(['%s %s' %(IIDa,IIDa,) for IIDa in l_exclude])+'\n'
-    l = ['%s %s\n' %(IIDa,IIDa,) for IIDa in l_exclude]
+##    s = '\n'.join(['%s %s' %(IDa,IDa,) for IDa in l_exclude])+'\n'
+    l = ['%s %s\n' %(IDa,IDa,) for IDa in l_exclude]
 
     fd = open('%s.genome.%.2f.samples' %(out,pi_hat_max,),'w')
     fd.writelines(l)
@@ -77,60 +82,60 @@ def write_exclusion_list(l_exclude,):
 
 
 def generate_exclusion(
-    d_IID2IIDs,d_count2IIDs,d_imiss=None,verbose=False,l_twins=[],
+    d_ID2IDs,d_count2IDs,d_imiss=None,verbose=False,l_twins=[],
     ):
 
     l_exclude = []
-    while d_count2IIDs != {}:
-        count_max = max(d_count2IIDs.keys())
+    while d_count2IDs != {}:
+        count_max = max(d_count2IDs.keys())
         if count_max == 0:
             stop
             break
-        l_IIDas = list(d_count2IIDs[count_max])
-        ## sort so IID with largest F_MISS is deleted first
+        l_IDas = list(d_count2IDs[count_max])
+        ## sort so ID with largest F_MISS is deleted first
         if d_imiss:
-            l = [(d_imiss[IIDa],IIDa,) for IIDa in l_IIDas]
+            l = [(d_imiss[IDa],IDa,) for IDa in l_IDas]
             l.sort()
             l.reverse()
-            l_IIDas = [t[1] for t in l]
+            l_IDas = [t[1] for t in l]
         else:
             ## sort so first occurence(s) are deleted first
-            l_IIDas.sort()
-        for IIDa in l_IIDas:
+            l_IDas.sort()
+        for IDa in l_IDas:
             bool_exclude = False
-            l_IIDbs = list(d_IID2IIDs[IIDa])
+            l_IDbs = list(d_ID2IDs[IDa])
             if verbose == True:
-                print(count_max, IIDa, l_IIDbs)
+                print(count_max, IDa, l_IDbs)
                 pass
-            for IIDb in l_IIDbs:
+            for IDb in l_IDbs:
                 if verbose == True:
-                    print(count_max, IIDa,IIDb)
+                    print(count_max, IDa,IDb)
                     pass
                 ## only exclude if not twin
-                if not (IIDa in l_twins and IIDb in l_twins):
+                if not (IDa in l_twins and IDb in l_twins):
                     bool_exclude = True
-                count = len(d_IID2IIDs[IIDb])
-                d_IID2IIDs[IIDa].remove(IIDb)
-                d_IID2IIDs[IIDb].remove(IIDa)
-                d_count2IIDs[count].remove(IIDb)
+                count = len(d_ID2IDs[IDb])
+                d_ID2IDs[IDa].remove(IDb)
+                d_ID2IDs[IDb].remove(IDa)
+                d_count2IDs[count].remove(IDb)
                 if count > 1:
-                    if not count-1 in d_count2IIDs.keys():
-                        d_count2IIDs[count-1] = []
+                    if not count-1 in d_count2IDs.keys():
+                        d_count2IDs[count-1] = []
                         pass
-                    d_count2IIDs[count-1] += [IIDb]
+                    d_count2IDs[count-1] += [IDb]
                     pass
-                if d_count2IIDs[count] == []:
-                    del d_count2IIDs[count]
+                if d_count2IDs[count] == []:
+                    del d_count2IDs[count]
                     pass
                 continue
-            d_count2IIDs[count_max].remove(IIDa)
-            del d_IID2IIDs[IIDa]
+            d_count2IDs[count_max].remove(IDa)
+            del d_ID2IDs[IDa]
             ## only exclude if not twin
             if bool_exclude:
-                l_exclude += [IIDa]
+                l_exclude += [IDa]
             break
-        if d_count2IIDs[count_max] == []:
-            del d_count2IIDs[count_max]
+        if d_count2IDs[count_max] == []:
+            del d_count2IDs[count_max]
             pass
         continue
 
@@ -140,17 +145,17 @@ def generate_exclusion(
     return l_exclude
 
 
-def count_relations(d_IID2IIDs):
+def count_relations(d_ID2IDs):
 
-    d_count2IIDs = {}
-    for IID,l_IIDs in d_IID2IIDs.items():
-        count = len(l_IIDs)
-        if not count in d_count2IIDs.keys():
-            d_count2IIDs[count] = []
+    d_count2IDs = {}
+    for ID,l_IDs in d_ID2IDs.items():
+        count = len(l_IDs)
+        if not count in d_count2IDs.keys():
+            d_count2IDs[count] = []
             pass
-        d_count2IIDs[count] += [IID]
+        d_count2IDs[count] += [ID]
 
-    return d_count2IIDs
+    return d_count2IDs
 
 
 def parse_genome():
@@ -158,38 +163,42 @@ def parse_genome():
     genome = sys.argv[sys.argv.index('--genome')+1]
     pi_hat_max = float(sys.argv[sys.argv.index('--pi_hat_max')+1])
 
-    fp_genome = '%s.genome' %(genome)
-    fd = open(fp_genome,'r')
-    d_IID2IIDs = {}
+    if os.path.isfile('{}.genome'.format(genome)):
+        fd = open('{}.genome'.format(genome),'r')
+    elif os.path.splitext(genome)[1] == '.gz':
+        fd = gzip.open(genome, 'rt')
+    else:
+        fd = open(genome)
+    d_ID2IDs = {}
     ## skip header
     for line in fd: break
     ## loop lines
     for line in fd:
         l = line.split()
-        IID1 = l[1]
-        IID2 = l[3]
+        ID1 = l[0]+l[1]
+        ID2 = l[2]+l[3]
         PI_HAT = float(l[9])
 ##        if PI_HAT < pi_hat_max:
         if PI_HAT <= pi_hat_max:
             continue
-        for IIDa,IIDb in [
-            [IID1,IID2,],
-            [IID2,IID1,],
+        for IDa,IDb in [
+            [ID1,ID2,],
+            [ID2,ID1,],
             ]:
-            if not IIDa in d_IID2IIDs.keys():
-                d_IID2IIDs[IIDa] = []
+            if not IDa in d_ID2IDs.keys():
+                d_ID2IDs[IDa] = []
                 pass
-            d_IID2IIDs[IIDa] += [IIDb]
+            d_ID2IDs[IDa] += [IDb]
             continue
         continue
     fd.close()
 
-    return d_IID2IIDs
+    return d_ID2IDs
 
 
 def unit_test():
 
-    d_IID2IIDs = {
+    d_ID2IDs = {
         'a':['b','c','d','e','f',],
         'b':['a','d','e','g','h',],
         'c':['a','d','i',],
@@ -206,25 +215,25 @@ def unit_test():
         'n':['m','o',],
         'o':['m','n',],
         }
-    d_count2IIDs = count_relations(d_IID2IIDs)
-    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
+    d_count2IDs = count_relations(d_ID2IDs)
+    l_exclude = generate_exclusion(d_ID2IDs,d_count2IDs,verbose=True,)
     print(l_exclude == ['a', 'b', 'c', 'd', 'e', 'k', 'm', 'n'])
 
-    d_IID2IIDs = {
+    d_ID2IDs = {
         'a':['b',],
         'b':['a',],
         }
-    d_count2IIDs = count_relations(d_IID2IIDs)
-    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
+    d_count2IDs = count_relations(d_ID2IDs)
+    l_exclude = generate_exclusion(d_ID2IDs,d_count2IDs,verbose=True,)
     print(l_exclude == ['a',])
 
-    d_IID2IIDs = {
+    d_ID2IDs = {
         'a':['b','c',],
         'b':['a','c',],
         'c':['a','b',],
         }
-    d_count2IIDs = count_relations(d_IID2IIDs)
-    l_exclude = generate_exclusion(d_IID2IIDs,d_count2IIDs,verbose=True,)
+    d_count2IDs = count_relations(d_ID2IDs)
+    l_exclude = generate_exclusion(d_ID2IDs,d_count2IDs,verbose=True,)
     print(l_exclude == ['a','b',])
 
     return
