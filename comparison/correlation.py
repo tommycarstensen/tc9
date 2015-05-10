@@ -60,6 +60,7 @@ def open_files(stack, d_args):
 
     for i in 1, 2:
         files = d_args['files%i' %(i)]
+        print(files)
         d['format%i' %(i)] = d_args['format%i' %(i)]
 #        markers = [markers1, markers2,][i-1]
 
@@ -166,11 +167,11 @@ def loop_main(
     kwargs1 = {
         'file': file1, 'fileinput': fileinput1,
         'bim': bim1, 'n_bytes': n_bytes1, 'markers': markers1,
-        'legend': legend1, 'chrom': chrom}
+        'legend': legend1, 'chrom': chrom, 'format': format1}
     kwargs2 = {
         'file': file2, 'fileinput': fileinput2,
         'bim': bim2, 'n_bytes': n_bytes2, 'markers': markers2,
-        'legend': legend2, 'chrom': chrom}
+        'legend': legend2, 'chrom': chrom, 'format': format2}
 
 ##    d = {'00':'1 0 0','01':'0 1 0','11':'0 0 1','10':'0.3333 0.3333 0.3333'}
     d_correl = {
@@ -181,10 +182,35 @@ def loop_main(
             d_correl[k][MAF] = 0
 
     with open('%s.tmp' %(affix), 'w') as fd_out:
-        loop_sub(
+        d_correl, d_stats = loop_sub(
             kwargs1, kwargs2, fd_out, func1, func2, f_extract,
             d_indexes,
             func_dosage1, func_dosage2, f_discordant, d_correl)
+
+    with open('{}.r2.txt'.format(affix), 'w') as fd_out:
+        for MAF in range(0, 51):
+##            nom = (
+##                d_correl['xy'][MAF] - (
+##                    d_correl['x'][MAF]*d_correl['y'][MAF] /
+##                    d_correl['n'][MAF]))
+##            f1 = d_correl['xx'][MAF]-d_correl['x'][MAF]**2/d_correl['n'][MAF]
+##            f2 = d_correl['yy'][MAF]-d_correl['y'][MAF]**2/d_correl['n'][MAF]
+##            den_sq = abs(f1*f2)
+##            r2 = nom**2/den_sq
+##            print(MAF)
+            if d_correl['cnt'][MAF] == 0:
+                continue
+            r2 = d_correl['r2'][MAF]/d_correl['cnt'][MAF]
+##            print('\b',r2)
+            fd_out.write('%s %s\n' %(MAF, r2))
+
+    with open('{}.per_sample.r2.txt'.format(affix), 'w') as fd_out:
+        for i, d in d_stats.items():
+            nom = (d['sumxy']-d['sumx']*d['sumy']/d['n'])
+            den_sq = (d['sumxx']-d['sumx']**2/d['n'])*(d['sumyy']-d['sumy']**2/d['n'])          
+            r2 = nom**2/abs(den_sq)
+            fd_out.write('{} {} {}\n'.format(
+                d_samples[1][d_indexes[1][i]], d_samples[2][d_indexes[2][i]], r2))
 
     return
 
@@ -202,17 +228,21 @@ def loop_sub(
     chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
     chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
 
+    d_stats = {
+        k: {'sumx': 0, 'sumy': 0, 'sumxx': 0, 'sumxy': 0, 'sumyy': 0, 'n': 0} for k in range(len(
+            d_indexes[1]))}
+
     while True:
 
         if chrom1 < chrom2:
-            print('a', format1, format2, chrom1, chrom2, pos1, pos2,)
+            print('a', kwargs1['format'], kwargs2['format'], chrom1, chrom2, pos1, pos2,)
             try:
                 chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
             except StopIteration:
                 break
             continue
         elif chrom2 < chrom1:
-            print('b', format1, format2, chrom1, chrom2, pos1, pos2)
+#            print('b', kwargs1['format'], kwargs2['format'], chrom1, chrom2, pos1, pos2)
             try:
                 chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
             except StopIteration:
@@ -318,7 +348,7 @@ def loop_sub(
         n, sum_x, sum_y, sum_xx, sum_yy, sum_xy = calc_sums_and_sum_of_squares(
             d_indexes,
             func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
-            f_discordant)
+            f_discordant, d_stats)
 
         ## calculate MAF
         try:
@@ -357,8 +387,8 @@ def loop_sub(
                 if round(nom, 13) == 0:
                     pass
                 ## monomorphic
-                elif l_x == len(l_x)*[x] or l_y == len(l_y)*[y]:
-                    pass
+#                elif l_x == len(l_x)*[x] or l_y == len(l_y)*[y]:
+#                    pass
                 elif sum_x == 2*n or sum_y == 2*n:
                     pass
                 elif (sum_x == 0 or sum_y == 0):
@@ -406,32 +436,13 @@ def loop_sub(
         ## continue loop over SNPs
         continue
 
-    fd_out.close()
-
-    with open('{}.r2'.format(affix), 'w') as fd_out:
-        for MAF in range(0, 51):
-##            nom = (
-##                d_correl['xy'][MAF] - (
-##                    d_correl['x'][MAF]*d_correl['y'][MAF] /
-##                    d_correl['n'][MAF]))
-##            f1 = d_correl['xx'][MAF]-d_correl['x'][MAF]**2/d_correl['n'][MAF]
-##            f2 = d_correl['yy'][MAF]-d_correl['y'][MAF]**2/d_correl['n'][MAF]
-##            den_sq = abs(f1*f2)
-##            r2 = nom**2/den_sq
-##            print(MAF)
-            if d_correl['cnt'][MAF] == 0:
-                continue
-            r2 = d_correl['r2'][MAF]/d_correl['cnt'][MAF]
-##            print('\b',r2)
-            fd_out.write('%s %s\n' %(MAF, r2))
-
-    return
+    return d_correl, d_stats
 
 
 def calc_sums_and_sum_of_squares(
     d_indexes,
     func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
-    f_discordant):
+    f_discordant, d_stats):
 
     ## This is the slowest function followed by functions for parsing GTs.
 
@@ -444,7 +455,7 @@ def calc_sums_and_sum_of_squares(
 ##    l_x = [] ## tmp!!!
 ##    l_y = [] ## tmp!!!
 ##    cnt_concordance = 0
-    for index1, index2 in zip(d_indexes[1], d_indexes[2]):
+    for i, (index1, index2) in enumerate(zip(d_indexes[1], d_indexes[2])):
 ##        for i_byte in range(n_bytes):
 ##                byte = bed.read(1)
         x = func_dosage1(genotypes1, index1)
@@ -462,12 +473,22 @@ def calc_sums_and_sum_of_squares(
                 file=f_discordant, flush=True, sep='\t')
 ##        l_x += [x] ## tmp!!!
 ##        l_y += [y] ## tmp!!!
+        xx = x**2
+        xy = x*y
+        yy = y**2
         sum_x += x
         sum_y += y
-        sum_xx += x*x
-        sum_xy += x*y
-        sum_yy += y*y
+        sum_xx += xx
+        sum_xy += xy
+        sum_yy += yy
         n += 1
+        d_stats[i]['sumx'] += x
+        d_stats[i]['sumy'] += y
+        d_stats[i]['sumxx'] += xx
+        d_stats[i]['sumxy'] += xy
+        d_stats[i]['sumyy'] += yy
+        d_stats[i]['n'] += 1
+
 ##        if x == y:
 ##            cnt_concordance += 1
         ## continue loop over samples
@@ -483,11 +504,12 @@ def parse_hap(**kwargs):
     legend = kwargs['legend']
     line_hap = file.readline()
     line_legend = legend.readline()
-    ## skip header
-    if line_legend == 'id position a0 a1\n':
-        line_legend = legend.readline()
+    ## EOF
     if line_legend == '':
         return
+    ## skip header
+    if line_legend.split(' ', 1)[0] == 'id':
+        line_legend = legend.readline()
     l_legend = line_legend.rstrip().split()
 ##    chrom, pos = l_legend[0].split(':')
 ##    chrom = int(chrom)
@@ -513,16 +535,18 @@ def parse_hap(**kwargs):
 
 def parse_dosage_hap(l_hap, i_sample):
 
-    if l_hap[2*i_sample] == '0' and l_hap[2*i_sample+1] == '0':
+    gt1 = l_hap[2*i_sample]
+    gt2 = l_hap[2*i_sample+1]
+    if gt1 == '0' and gt2 == '0':
         dosage = 0
-    elif l_hap[2*i_sample] == '0' and l_hap[2*i_sample+1] == '1':
+    elif gt1 == '0' and gt2 == '1':
         dosage = 1
-    elif l_hap[2*i_sample] == '1' and l_hap[2*i_sample+1] == '1':
+    elif gt1 == '1' and gt2 == '1':
         dosage = 2
-    elif l_hap[2*i_sample] == '1' and l_hap[2*i_sample+1] == '0':
+    elif gt1 == '1' and gt2 == '0':
         dosage = 1
     else:
-        print(l_hap[2*i_sample], l_hap[2*i_sample+1])
+        print(gt1, gt2)
         print(i_sample)
         print(len(l_hap))
         stop
@@ -717,9 +741,11 @@ def index_samples(d_args):
         sys.exit()
 
     print(
-        len(d_indexes[1]), len(d_indexes[2]),
-        len(d_samples[1]), len(d_samples[2]),
-        'samples')
+        'indexes', len(d_indexes[1]), len(d_indexes[2]),
+        'samples', len(d_samples[1]), len(d_samples[2]),
+        '\n', d_samples[1][d_indexes[1][0]], d_samples[1][d_indexes[1][-1]],
+        '\n', d_samples[2][d_indexes[2][0]], d_samples[2][d_indexes[2][-1]],
+        )
 
     return d_samples, d_indexes
 
