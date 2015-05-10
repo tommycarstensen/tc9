@@ -61,13 +61,17 @@ class main():
         T = analysis_type = 'UnifiedGenotyper'
         ## fragment sizes determines runtime determines queue
         queue = 'normal'
+        ##  (max 132mins run time, 161364s CPU time with 500kbp,nct=3, nt=8)
         size_bp = 5 * 10 ** 5  # normal
-        queue = 'long'
-        size_bp = 2 * 10 ** 6  # long
+#        queue = 'long'
+#        size_bp = 2 * 10 ** 6  # long
         ## http://gatkforums.broadinstitute.org/discussion/1975/how-can-i-use-parallelism-to-make-gatk-tools-run-faster
         nct = 3
         nt = 8
         queue = 'normal'
+        nct = 1
+        nt = 1
+        queue = 'long'
         ## Each data thread needs to be given the full amount of memory
         ## you’d normally give a single run. So if you’re running a tool
         ## that normally requires 2 Gb of memory to run, if you use -nt 4,
@@ -83,9 +87,9 @@ class main():
         else:
             memMB = min(255900, 47900 + 2250 * nt)
 
-        nct = 3; nt = 8; memMB = 127900
-        memMB = 191900
-        nct = 1; nt = 1; memMB = 63900; queue = 'normal'
+#        nct = 3; nt = 8; memMB = 127900
+#        memMB = 191900
+#        nct = 1; nt = 1; memMB = 63900; queue = 'normal'
 
         ## Parse chromosome ranges.
         d_chrom_ranges = self.parse_chrom_ranges()
@@ -114,8 +118,7 @@ class main():
 
         ## Write bam lists for
         ## all (autosomes, PAR), male (Y) and female (nonPAR X) samples.
-        if self.sample_genders:
-            self.write_bam_and_XL_lists(d_chrom_ranges)
+        self.write_bam_and_XL_lists(d_chrom_ranges)
 
         ## Create folders.
         os.makedirs('tmp', exist_ok=True)
@@ -233,6 +236,7 @@ class main():
                         arguments=arguments)
                     self.execmd(cmd)
 
+        os.makedirs('lists', exist_ok=True)
         with open('lists/{}.list'.format(T), 'w') as f:
             f.write(s_out)
 
@@ -1055,28 +1059,32 @@ and requires less than 100MB of memory'''
             print('beagle chrom', chrom)
             with gzip.open(
                 'out_{}/{}.vcf.gz'.format(T_prev, chrom), 'rt') as fd_vcf:
-                cnt = 0
-                pos2 = 0
                 ## Previous position in current fragment.
-                pos_max = d_pos_max[chrom]
                 for line in fd_vcf:
                     ## Skip metainformation lines and header line.
                     if line[:2] == '##':
                         continue
                     ## Break after reading header line.
+                    assert line[:1] == '#'
                     break
+                cnt = 0
+                pos2 = 0
+                pos_max = d_pos_max[chrom]
                 for line in fd_vcf:
                     l = line.split('\t', 2)
                     chrom = l[0]
                     pos = int(l[1])
                     ## Skip if position already covered by previous fragment.
-                    if cnt == 0 and pos == pos2:
+                    if pos == pos2:
+                        print('pos', pos, 'pos2', pos2)
                         continue
                     cnt += 1
-                    if cnt == 1:
+                    if cnt % window == 1:
                         pos1 = pos
+                        print('pos1', pos1, 'cnt', cnt)
                     if cnt % window == 0 or pos == pos_max:
                         pos2 = pos
+                        print('pos2', pos2, 'cnt', cnt)
                         index = cnt // window
                         if pos == pos_max and cnt % window > 0:
                             index += 1
@@ -1095,7 +1103,7 @@ and requires less than 100MB of memory'''
                             chrom, pos1, pos2, index, memMB, queue, nthreads,
                             arguments=arguments)
                         print(chrom, ':', pos1, '-', pos2, index, cnt)
-                        cnt = 0
+#                        cnt = 0
 
 ##            pos2 = pos
 ##            index = (cnt // window) + 1
@@ -1364,6 +1372,9 @@ and requires less than 100MB of memory'''
         lines += [' -A VariantType \\']
         lines += [' --standard_min_confidence_threshold_for_calling 30 \\']
         lines += [' --standard_min_confidence_threshold_for_emitting 30 \\']
+
+        if self.dbsnp:
+            lines += [' --dbsnp {} \\'.format(self.dbsnp)]
 
         lines += ['"\n\neval $cmd']
 
@@ -1690,40 +1701,42 @@ and requires less than 100MB of memory'''
             for bam in self.bams:
                 f.write('{}\n'.format(bam))
 
-        ## Write gender bam lists.
+        if self.sample_genders:
 
-        ## Convert samples to sex.
-        d_sample2sex = {}
-        for uri in self.sample_genders:
-            print(urllib.parse.urlparse(uri).scheme)
-            if urllib.parse.urlparse(uri).scheme == 'ftp':
-                if not os.path.isfile(os.path.basename(uri)):
-                    urllib.request.urlretrieve(
-                        uri, filename=os.path.basename(uri))
-                uri = os.path.basename(uri)
-            with open(uri) as f:
-                for line in f:
-                    d_sample2sex[re.split(
-                        '[, \t]', line)[0]] = re.split(
-                            '[, \t]', line)[-1].lower()[0]
+            ## Write gender bam lists.
 
-        ## Convert sex to list of bams.
-        d_sex2bams = {'m': [], 'f': []}
-        for bam in self.bams:
-            sample = os.path.splitext(os.path.basename(bam))[0]
+            ## Convert samples to sex.
+            d_sample2sex = {}
+            for uri in self.sample_genders:
+                print(urllib.parse.urlparse(uri).scheme)
+                if urllib.parse.urlparse(uri).scheme == 'ftp':
+                    if not os.path.isfile(os.path.basename(uri)):
+                        urllib.request.urlretrieve(
+                            uri, filename=os.path.basename(uri))
+                    uri = os.path.basename(uri)
+                with open(uri) as f:
+                    for line in f:
+                        d_sample2sex[re.split(
+                            '[, \t]', line)[0]] = re.split(
+                                '[, \t]', line)[-1].lower()[0]
+
+            ## Convert sex to list of bams.
+            d_sex2bams = {'m': [], 'f': []}
+            for bam in self.bams:
+                sample = os.path.splitext(os.path.basename(bam))[0]
 ##                sample = pysam.Samfile(bam).header['RG'][0]['SM']  # slow
-            sample = os.path.basename(bam).split('.')[0]  # fast
-            try:
-                sex = d_sample2sex[sample]
-            except KeyError:
-                print('sex missing', bam, sample)
-                sys.exit()
-            d_sex2bams[sex].append(bam)
-        ## bam lists for males and females
-        for sex in ('m', 'f'):
-            with open('lists/bams.{}.list'.format(sex), 'w') as f:
-                for bam in d_sex2bams[sex]:
-                    f.write('{}\n'.format(bam))
+                sample = os.path.basename(bam).split('.')[0]  # fast
+                try:
+                    sex = d_sample2sex[sample]
+                except KeyError:
+                    print('sex missing', bam, sample)
+                    sys.exit()
+                d_sex2bams[sex].append(bam)
+           ## bam lists for males and females
+            for sex in ('m', 'f'):
+                with open('lists/bams.{}.list'.format(sex), 'w') as f:
+                    for bam in d_sex2bams[sex]:
+                        f.write('{}\n'.format(bam))
 
         return
 
