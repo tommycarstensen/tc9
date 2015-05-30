@@ -25,7 +25,7 @@ def main():
     l_vcf_sampleIDs = shorten_sampleIDs(l_fam_sampleIDs)
 
     if args.keep:
-        l_keep_sampleIDs = parse_keep(path_keep, l_fam_sampleIDs)
+        l_keep_sampleIDs = parse_keep(args.keep, l_fam_sampleIDs)
         l_keep_index = index_keep(l_keep_sampleIDs, l_fam_sampleIDs)
     else:
         l_keep_index = list(range(len(l_fam_sampleIDs)))
@@ -62,7 +62,7 @@ def convert(
     l_GT = [None]*len(l_keep_index)
 
     write_metadata(args, vcf)
-    write_header(vcf, l_vcf_sampleIDs)
+    write_header(vcf, l_vcf_sampleIDs, l_keep_index)
 
     ## Write first 3 bytes of bed file.
     magic_number = bytearray([108,27])
@@ -74,7 +74,7 @@ def convert(
     FORMAT = 'GT'
 
     ## data lines
-    for i_SNP, line_bim in enumerate(line_bim):
+    for i_SNP, line_bim in enumerate(bim):
         i_SNP += 1
         ## By default, the minor allele is coded A1
         ## and the major allele is coded A2
@@ -205,11 +205,12 @@ def write_metadata(args, vcf):
 
     return
 
-def write_header(vcf, l_vcf_sampleIDs):
+def write_header(vcf, l_vcf_sampleIDs, l_keep_index):
 
     ## header line
     vcf.write('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT')
-    for sampleID in l_vcf_sampleIDs:
+    for i_keep in l_keep_index:
+        sampleID = l_vcf_sampleIDs[i_keep]
         vcf.write('\t{}'.format(sampleID))
     vcf.write('\n')
 
