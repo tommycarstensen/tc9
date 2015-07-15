@@ -39,14 +39,18 @@ class main():
         if self.args.AR_input:
             self.run_ApplyRecalibration()
 
-        if self.coverage >= 15:
+        if not self.caller:
+            if self.coverage >= 15:
+                self.caller = 'HC'
+            elif self.coverage < 15:
+                self.caller = 'UG'
+
+        if self.caller == 'HC':
             self.HaplotypeCaller()
             self.CombineGVCFs()
             self.GenotypeGVCFs()
-            self.caller = 'HC'
-        elif self.coverage < 15:
+        else:
             self.UnifiedGenotyper()
-            self.caller = 'UG'
 
         self.VariantRecalibrator()
 
@@ -139,7 +143,7 @@ class main():
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
             ## Memory consumption seems to explode for UG,
             ## when doing haploidy for Y and nonPAR X.
-            ## Therefore do diploidy.
+            ## Therefore do diploidy when sex list not provided.
             if not self.sample_genders:
                 d_sex2bamlist = {'': 'lists/bams.list'}
                 XL = None
@@ -213,21 +217,21 @@ class main():
                     os.makedirs(os.path.dirname(
                         'out_{}'.format(affix)), exist_ok=True)
 
-                    d_arguments = {}
+                    d_args = {}
                     if chrom in ('PAR1', 'PAR2'):
-                        d_arguments['chrom'] = 'X'
+                        d_args['chrom'] = 'X'
                     else:
-                        d_arguments['chrom'] = chrom
-                    d_arguments['pos1'] = pos1
-                    d_arguments['pos2'] = pos2
+                        d_args['chrom'] = chrom
+                    d_args['pos1'] = pos1
+                    d_args['pos2'] = pos2
                     if XL:
-                        d_arguments['XL'] = XL
-                    d_arguments['out'] = out
-                    d_arguments['input_file'] = d_sex2bamlist[sex]
-                    d_arguments['nct'] = nct
-                    d_arguments['nt'] = nt
-                    d_arguments['sample_ploidy'] = sample_ploidy
-                    arguments = self.args_dict2str(d_arguments)
+                        d_args['XL'] = XL
+                    d_args['out'] = out
+                    d_args['input_file'] = d_sex2bamlist[sex]
+                    d_args['nct'] = nct
+                    d_args['nt'] = nt
+                    d_args['sample_ploidy'] = sample_ploidy
+                    arguments = self.args_dict2str(d_args)
 
                     LSB_JOBNAME = '{}.{}.{} {}'.format('UG', chrom, i, sex)
                     cmd = self.bsub_cmd(
@@ -250,6 +254,8 @@ class main():
 #        queue = 'basement'  # >4x split per sample
         queue = 'normal'  # 4x split per chromosome
         nct = 4
+        nct = 1
+        nt = 1
 
         ## Create folders.
         os.makedirs('tmp', exist_ok=True)
@@ -285,13 +291,15 @@ class main():
                     if not bam in list_bams:
                         continue
 
-                    affix = '{}/{}/{}'.format(T, chrom, i)
+                    affix = '{}/{}/{}'.format(T, chrom, basename)
                     if sex:
                         affix += '.{}'.format(sex)
 
+                    out = 'out_{}.g.vcf.gz'.format(affix)
+
                     ## Skip bam and chromosome if output was generated.
                     if os.path.isfile(
-                        'out_{}/{}/{}.vcf.gz.tbi'.format(T, chrom, basename)):
+                        '{}.tbi'.format(out)):
                         continue
 
                     ## Skip bam and chromosome if output is being generated.
@@ -310,24 +318,25 @@ class main():
                     os.makedirs(os.path.dirname(
                         'out_{}'.format(affix)), exist_ok=True)
 
+                    d_args = {}
                     if chrom in ('PAR1', 'PAR2'):
-                        variables += ['chrom=X']
+                        d_args['chrom'] = 'X'
                     else:
-                        variables += ['chrom={}'.format(chrom)]
-                    variables += ['input_file={}'.format(bam)]
+                        d_args['chrom'] = chrom
+                    d_args['input_file'] = bam
                     if XL:
-                        variables += ['XL={}'.format(XL)]
-                    variables += ['out=out_{}.vcf.gz'.format(affix)]
-                    variables += ['nct={}'.format(nct)]
-                    variables += ['nt={}'.format(nt)]
-                    variables += ['sample_ploidy={}'.format(sample_ploidy)]
-                    variables = ' '.join(variables)
+                        d_args['XL'] = XL
+                    d_args['out'] = out
+                    d_args['nct'] = nct
+                    d_args['nt'] = nt
+                    d_args['sample_ploidy'] = sample_ploidy
+                    arguments = self.args_dict2str(d_args)
 
-                    J = '{} {}'.format('HC', basename)
+                    LSB_JOBNAME = '{} {}'.format('HC', basename)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
-                        memMB=memMB, queue=queue, num_threads=nct,
-                        variables=variables)
+                        LSF_memMB = memMB, LSF_queue = queue, LSF_n=nt * nct,
+                        arguments=arguments)
                     self.execmd(cmd)
 
         return
@@ -342,7 +351,9 @@ class main():
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
         ## initiate GATK command
-        lines += self.init_GATK_cmd(T, memMB)
+        lines += self.init_GATK_cmd(
+            T, memMB, (
+                'out', 'chrom', 'input_file', 'nct', 'nt', 'sample_ploidy', 'XL'))
 
         ## append GATK command options
         lines += self.body_HaplotypeCaller()
@@ -354,6 +365,118 @@ class main():
         self.write_shell('shell/{}.sh'.format(T), lines,)
 
         return
+
+
+    def body_HaplotypeCaller(self,):
+
+        '''Write walker specific command line arguments.'''
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html
+
+        lines = []
+
+        ##
+        ## Inherited arguments
+        ##
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
+        lines += [' --input_file $input_file \\']
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
+##        lines += [' --intervals $chrom:$pos1-$pos2 \\']
+        lines += [' --intervals $chrom \\']
+        ## Exclude (non-)PAR intervals.
+        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
+        s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
+        lines += [s]
+        if self.intervals:
+            lines += [' --intervals {} \\'.format(self.intervals)]
+            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
+            lines += [' --interval_set_rule INTERSECTION \\']
+            pass
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
+        ## http://gatkforums.broadinstitute.org/discussion/3893/calling-variants-on-cohorts-of-samples-using-the-haplotypecaller-in-gvcf-mode
+        lines += [' --variant_index_parameter 128000 \\']
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_type
+        lines += [' --variant_index_type LINEAR \\']
+
+        ##
+        ## Optional Inputs
+        ##
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
+        if self.alleles:
+            lines += [' --alleles {} \\'.format(self.alleles)]
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
+        if self.dbsnp:
+            lines += [' --dbsnp {} \\'.format(self.dbsnp)]
+
+        ##
+        ## Optional Outputs
+        ##
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
+        lines += [' --out $out \\']
+
+        ##
+        ## Optional Parameters
+        ##
+
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
+        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
+        if self.coverage > 10:
+            lines += [' -stand_call_conf 30 \\']
+            lines += [' -stand_emit_conf 30 \\']
+        elif len(self.bams) > 100:
+            lines += [' -stand_call_conf 10 \\']
+            lines += [' -stand_emit_conf 10 \\']
+        else:
+            print(self.project)
+            stop
+            lines += [' -stand_call_conf 4 \\']
+            lines += [' -stand_emit_conf 4 \\']
+
+        ##
+        ## Advanced Parameters
+        ##
+
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--annotation
+        s_annotation = ''
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
+        s_annotation += ' -A Coverage'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
+        s_annotation += ' -A FisherStrand'
+        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_annotator_StrandOddsRatio.php
+        s_annotation += ' -A StrandOddsRatio'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
+        s_annotation += ' -A MappingQualityRankSumTest'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
+        s_annotation += ' -A QualByDepth'
+        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
+        s_annotation += ' -A RMSMappingQuality'
+        s_annotation += ' -A ReadPosRankSumTest'
+        lines += [' {} \\'.format(s_annotation)]
+
+        lines += [' --sample_ploidy $sample_ploidy \\']
+
+        lines += [' --emitRefConfidence GVCF \\']
+
+        ## http://gatkforums.broadinstitute.org/discussion/5581/unifiedgenotyper-genotype-calling-oddity
+        ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minPruning
+        ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minDanglingBranchLength
+        lines += [' --minPruning 2 \\']
+        lines += [' --minDanglingBranchLength 4 \\']
+
+        lines += ['"\n\neval $cmd']
+
+        return lines
+
 
     def parse_chrom_ranges(self):
 
@@ -414,7 +537,7 @@ class main():
 
             ## 1) check input existence / check that previous jobs finished
             l_vcfs_in = [
-                'out_HaplotypeCaller/{}/{}.vcf.gz'.format(
+                'out_HaplotypeCaller/{}/{}.g.vcf.gz'.format(
                     chrom, os.path.splitext(os.path.basename(bam))[0])
                 for bam in sorted(self.bams)]
             if self.check_in(
@@ -450,12 +573,12 @@ class main():
             for i in range(len(glob.glob(
                 'lists/{}.{}.*.list'.format(T, chrom)))):
                 ## skip if job initiated
-                if os.path.isfile(
-                    'out_{}/{}/{}.vcf.gz'.format(T, chrom, i)):
+                out = 'out_{}/{}/{}.g.vcf.gz'.format(T, chrom, i)
+                if os.path.isfile(out):
                     continue
                 cmd = self.bsub_cmd(
                     T, 'CgVCFs.{}.{}'.format(chrom, i),
-                    memMB=memMB, queue=queue,
+                    LSF_memMB = memMB, LSF_queue=queue,
                     LSF_affix='{}/{}.{}'.format(T, chrom, i)
                     )
                 cmd += ' {}.{}'.format(chrom, i)
@@ -481,8 +604,11 @@ class main():
         for chrom in self.chroms:
 
             ## 1) check input existence / check that previous jobs finished
+            if not os.path.isfile('touch/CombineGVCFs.touch'):
+                bool_exit = True
+                continue
             l_vcfs_in = [
-                'out_CombineGVCFs/{}/{}.vcf.gz'.format(chrom, i)
+                'out_CombineGVCFs/{}/{}.g.vcf.gz'.format(chrom, i)
                 for i in range(len(glob.glob(
                     'lists/CombineGVCFs.{}.*.list'.format(chrom))))]
             if self.check_in(
@@ -512,7 +638,7 @@ class main():
                 cmd += ' {}'.format(chrom)
                 self.execmd(cmd)
 
-                s_out += 'out_{}/{}.vcf.gz\n'.format(T, chrom)
+                s_out += 'out_{}/{}.g.vcf.gz\n'.format(T, chrom)
 
         with open('lists/{}.list'.format(T), 'w') as f:
             f.write(s_out)
@@ -591,7 +717,7 @@ class main():
         if not os.path.isdir('LSF/{}'.format(T)):
             os.mkdir('LSF/{}'.format(T))
 
-        d_arguments = {'nt': num_threads, 'nct': 1}
+        d_args = {'nt': num_threads, 'nct': 1}
 
         bool_exit = False
 
@@ -613,16 +739,16 @@ class main():
 
             lines = []
 
-            d_arguments['out'] = tranches
-            arguments = self.args_dict2str(d_arguments)
+            d_args['out'] = tranches
+            arguments = self.args_dict2str(d_args)
 
             ## Initiate GATK walker.
             lines += self.init_GATK_cmd(
-                analysis_type, memMB, d_arguments.keys())
+                analysis_type, memMB, d_args.keys())
 
             ## required, in
 ##            lines += [' --input {} \\'.format(vcf) for vcf in l_vcfs_in]
-            lines += [' --input lists/{}.list'.format(T_prev)]
+            lines += [' --input lists/{}.list \\'.format(T_prev)]
             ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_variantrecalibration_VariantRecalibrator.html#--use_annotation
             ## http://gatkforums.broadinstitute.org/discussion/2805/howto-recalibrate-variant-quality-scores-run-vqsr
             if mode == 'SNP':
@@ -1022,7 +1148,7 @@ and requires less than 100MB of memory'''
         ## Parse actual chromosome ranges after filtering.
         ## Execute shell script.
         d_pos_max = {}
-        d_arguments = {'nthreads':nthreads}
+        d_args = {'nthreads':nthreads}
         pattern = re.compile(r'.*VQSLOD=([-\d\.\w]+);')
         d_minVQSLod = self.parse_minVQSLods()
         for chrom in self.chroms:
@@ -1088,14 +1214,14 @@ and requires less than 100MB of memory'''
                         index = cnt // window
                         if pos == pos_max and cnt % window > 0:
                             index += 1
-                        d_arguments['out'] = 'out_beagle/{}/{}'.format(
+                        d_args['out'] = 'out_beagle/{}/{}'.format(
                             chrom, index)
-                        d_arguments['chrom'] = chrom
-                        d_arguments['pos1'] = pos1
-                        d_arguments['pos2'] = pos2
-                        d_arguments['nthreads'] = nthreads
-                        d_arguments['memMB'] = nthreads
-                        arguments = self.args_dict2str(d_arguments)
+                        d_args['chrom'] = chrom
+                        d_args['pos1'] = pos1
+                        d_args['pos2'] = pos2
+                        d_args['nthreads'] = nthreads
+                        d_args['memMB'] = nthreads
+                        arguments = self.args_dict2str(d_args)
                         ## Generate optional output with Beagle window ranges.
                         with open('lists/beagle.coords', 'a') as f:
                             f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
@@ -1108,11 +1234,11 @@ and requires less than 100MB of memory'''
 ##            pos2 = pos
 ##            index = (cnt // window) + 1
 ##
-##            d_arguments['out'] = 'out_beagle/{}/{}'.format(chrom, index)
-##            d_arguments['chrom'] = chrom
-##            d_arguments['pos1'] = pos1
-##            d_arguments['pos2'] = pos2
-##            arguments = self.args_dict2str(d_arguments)
+##            d_args['out'] = 'out_beagle/{}/{}'.format(chrom, index)
+##            d_args['chrom'] = chrom
+##            d_args['pos1'] = pos1
+##            d_args['pos2'] = pos2
+##            arguments = self.args_dict2str(d_args)
 ##
 ##            with open('lists/beagle.coords', 'a') as f:
 ##                f.write('{}\t{}\t{}\n'.format(chrom, pos1, pos2))
@@ -1324,13 +1450,11 @@ and requires less than 100MB of memory'''
     def shell_CombineGVCFs(self, T, memMB):
 
         lines = ['#!/bin/bash\n']
-        lines += ['chrom=$1']
-        lines += ['i=$2']
         lines += ['out=out_{}/$chrom/$i.vcf.gz'.format(T)]
         lines += ['## exit if job started']
         lines += ['if [ -s $out ]; then exit; fi\n']
 
-        lines += self.init_GATK_cmd(T, memMB, tuple_args)
+        lines += self.init_GATK_cmd(T, memMB, ('chrom','i'))
         lines += [' -L $chrom \\']
         lines += [' -V lists/{}.$chrom.$i.list \\'.format(T)]
         lines += [' -o $out \\']
@@ -1355,7 +1479,7 @@ and requires less than 100MB of memory'''
         lines += ['## exit if job finished']
         lines += ['if [ -s $out.tbi ]; then exit; fi\n']
 
-        lines += self.init_GATK_cmd(T, memMB, tuple_args)
+        lines += self.init_GATK_cmd(T, memMB, ('chrom'))
         lines += [' -L $chrom \\']
         lines += [' -V lists/{}.$chrom.list \\'.format(T)]
         lines += [' -o out_{}/$chrom.vcf.gz \\'.format(T)]
@@ -1722,17 +1846,28 @@ and requires less than 100MB of memory'''
 
             ## Convert sex to list of bams.
             d_sex2bams = {'m': [], 'f': []}
+            bool_miss = False
             for bam in self.bams:
-                sample = os.path.splitext(os.path.basename(bam))[0]
-##                sample = pysam.Samfile(bam).header['RG'][0]['SM']  # slow
-                sample = os.path.basename(bam).split('.')[0]  # fast
-                try:
-                    sex = d_sample2sex[sample]
-                except KeyError:
+                for sample in (
+                    os.path.splitext(os.path.basename(bam))[0],
+                    os.path.basename(bam).split('.')[0],  # fast (risky)
+                    'pysam',  # slow (safe)
+                    ):
+                    if sample == 'pysam':
+                        sample = pysam.Samfile(bam).header['RG'][0]['SM']
+                    try:
+                        sex = d_sample2sex[sample]
+                        break
+                    except KeyError:
+                        continue
+                else:
                     print('sex missing', bam, sample)
-                    sys.exit()
+##                    sys.exit()
+                    bool_miss = True
                 d_sex2bams[sex].append(bam)
-           ## bam lists for males and females
+            if bool_miss:
+                sys.exit()
+            ## bam lists for males and females
             for sex in ('m', 'f'):
                 with open('lists/bams.{}.list'.format(sex), 'w') as f:
                     for bam in d_sex2bams[sex]:
@@ -1740,107 +1875,6 @@ and requires less than 100MB of memory'''
 
         return
 
-    def body_HaplotypeCaller(self,):
-
-        '''Write walker specific command line arguments.'''
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html
-
-        lines = []
-
-        ##
-        ## Inherited arguments
-        ##
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-        lines += [' --input_file $input_file \\']
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
-        lines += [' --intervals $chrom:$pos1-$pos2 \\']
-        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
-        s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
-        lines += [s]
-        if self.intervals:
-            lines += [' --intervals {} \\'.format(self.intervals)]
-            ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--interval_set_rule
-            lines += [' --interval_set_rule INTERSECTION \\']
-            pass
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
-        ## http://gatkforums.broadinstitute.org/discussion/3893/calling-variants-on-cohorts-of-samples-using-the-haplotypecaller-in-gvcf-mode
-        lines += [' --variant_index_parameter 128000 \\']
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_type
-        lines += [' --variant_index_type LINEAR \\']
-
-        ##
-        ## Optional Inputs
-        ##
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
-        if self.alleles:
-            lines += [' --alleles {} \\'.format(self.alleles)]
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
-        if self.dbsnp:
-            lines += [' --dbsnp {} \\'.format(self.dbsnp)]
-
-        ##
-        ## Optional Outputs
-        ##
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
-        lines += [' --out $out \\']
-
-        ##
-        ## Optional Parameters
-        ##
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
-        if self.coverage > 10:
-            lines += [' -stand_call_conf 30 \\']
-            lines += [' -stand_emit_conf 30 \\']
-        elif len(self.bams) > 100:
-            lines += [' -stand_call_conf 10 \\']
-            lines += [' -stand_emit_conf 10 \\']
-        else:
-            print(self.project)
-            stop
-            lines += [' -stand_call_conf 4 \\']
-            lines += [' -stand_emit_conf 4 \\']
-
-        ##
-        ## Advanced Parameters
-        ##
-
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--annotation
-        s_annotation = ''
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_Coverage.html
-        s_annotation += ' -A Coverage'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_FisherStrand.html
-        s_annotation += ' -A FisherStrand'
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_annotator_StrandOddsRatio.php
-        s_annotation += ' -A StrandOddsRatio'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_MappingQualityRankSumTest.html
-        s_annotation += ' -A MappingQualityRankSumTest'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_QualByDepth.html
-        s_annotation += ' -A QualByDepth'
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_annotator_RMSMappingQuality.html
-        s_annotation += ' -A RMSMappingQuality'
-        s_annotation += ' -A ReadPosRankSumTest'
-        lines += [' {} \\'.format(s_annotation)]
-
-        lines += [' --sample_ploidy $sample_ploidy \\']
-
-        lines += [' --emitRefConfidence GVCF \\']
-
-        lines += ['"\n\neval $cmd']
-
-        return lines
 
     def get_ploidy(self, chrom, sex):
 
@@ -2001,7 +2035,7 @@ and requires less than 100MB of memory'''
             raise argparse.ArgumentTypeError(msg)
         return str_
 
-    def add_arguments(self, parser):
+    def add_args(self, parser):
 
         ## required arguments
 
@@ -2014,6 +2048,9 @@ and requires less than 100MB of memory'''
 
         parser.add_argument(
             '--build', required=True, type=int, choices=[37, 38])
+
+        parser.add_argument(
+            '--caller', required=False, type=str, choices=['UG', 'HC'])
 
         parser.add_argument(
             '--sample_genders', '--sex', required=False, default=[],
@@ -2172,7 +2209,7 @@ and requires less than 100MB of memory'''
 
         parser = argparse.ArgumentParser()
 
-        parser = self.add_arguments(parser)
+        parser = self.add_args(parser)
 
         ## parse arguments to argparse NameSpace
         self.args = namespace_args = parser.parse_args()
