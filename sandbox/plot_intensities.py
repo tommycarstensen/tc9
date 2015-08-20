@@ -2,6 +2,9 @@
 
 #Tommy Carstensen, Wellcome Trust Sanger Institute, January 2015
 
+import matplotlib
+# Force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import gzip
@@ -14,26 +17,31 @@ def main():
 
     args = parse_arguments()
     print('looping intensities')
-    with gzip.open(args.intensities, 'rt') as f:
+    with open_file(args.intensities) as f:
         for line in f:
+            # uganda_gwas
             l_samples_int = [s[:-1] for s in line.split()[3:-1:2]]
+#            # vaccgene
+#            l_samples_int = [s[:-2] for s in line.split()[3:-1:2]]
             break
         for i, line in enumerate(f):
             l = line.split()
             rsID = l[0]
+#            print(rsID, l[1], l[2], l[3])
 #            print(rsID, args.rsID[0], len(args.rsID))
             if rsID in args.rsID:
                 print('found', rsID, 'on line', i)
                 if os.path.isfile(
-                    os.path.join(args.out, '{}.png'.format(rsID))):
+                    os.path.join('{}.png'.format(rsID))):
                     print('already plotted')
-                    continue
-                if args.prob:
-                    prob = args.prob[args.rsID.index(rsID)]
-                    del args.prob[args.rsID.index(rsID)]
+                    pass
                 else:
-                    prob = None
-                plot_rsID(args, l, l_samples_int, prob)
+                    if args.prob:
+                        prob = args.prob[args.rsID.index(rsID)]
+                        del args.prob[args.rsID.index(rsID)]
+                    else:
+                        prob = None
+                    plot_rsID(args, l, l_samples_int, prob)
                 args.rsID.remove(rsID)
                 if len(args.rsID) == 0:
                     break
@@ -41,15 +49,27 @@ def main():
     return
 
 
+def open_file(path):
+
+    if os.path.splitext(path)[1] == '.gz':
+        f = gzip.open(path, 'rt')
+    else:
+        f = open(path)
+
+    return f
+
+
 def plot_rsID(args, l, l_samples_int, prob):
 
     rsID = l[0]
     x, y = zip(*[[float(l[i]), float(l[i + 1])] for i in range(3, len(l), 2)])
     alleles = l[2]
-    l_colors, chrom, pos = parse_bfiles(args, l_samples_int, alleles, rsID)
+    l_colors, chrom, pos, MAF = parse_bfiles(
+        args, l_samples_int, alleles, rsID)
     if not l_colors:
         return
     fig, ax = plt.subplots()
+    plt.rcParams.update({'axes.titlesize': 'small'})
     d_labels = {
         args.colors[0]: '{}{}'.format(alleles[0], alleles[0]),
         args.colors[1]: '{}{}'.format(alleles[0], alleles[1]),
@@ -59,7 +79,6 @@ def plot_rsID(args, l, l_samples_int, prob):
         }
     n = 0
     for color in args.colors:
-        print(color)
         xj = []
         yj = []
         cj = []
@@ -71,6 +90,10 @@ def plot_rsID(args, l, l_samples_int, prob):
             cj += [ci]
             n += 1
         ax.scatter(xj, yj, c=color, alpha=0.5, label=d_labels[color])
+    print(len(x), len(y), len(l_colors))
+    while '#ffffff' in l_colors:
+        l_colors.remove('#ffffff')
+    print(len(x), len(y), len(l_colors))
     lim_max = math.ceil(max(1, max(x), max(y)))
     ax.set_xlim((0, lim_max))
     ax.set_ylim((0, lim_max))
@@ -80,12 +103,15 @@ def plot_rsID(args, l, l_samples_int, prob):
     plt.xlabel('Intensity {}'.format(alleles[0]))
     plt.ylabel('Intensity {}'.format(alleles[1]))
     plt.legend(loc='upper right', shadow=True)
-    title = '{}\n, chrom={}, pos={}, n={}'.format(rsID, chrom, pos, n)
+    title = '{}\nchrom={}, pos={}, n={}, MAF={:.3f}'.format(
+        rsID, chrom, pos, n, MAF)
     if prob:
         title += ', p={}'.format(prob)
+    if args.text:
+        title += '\n{}'.format(args.text.replace('\t',' '))
     plt.title(title)
     plt.grid(b=True, which='major', linestyle='--')
-    plt.savefig(os.path.join(args.out, '{}.png'.format(rsID)), dpi=150)
+    plt.savefig(os.path.join('{}.png'.format(rsID)), dpi=150)
     plt.close()
     plt.clf()
 
@@ -103,8 +129,16 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
         return None, None, None
 
     with open('{}.fam'.format(args.bfile)) as fam:
-        set_samples_fam = set([line.split()[0] for line in fam.readlines()])
-        n_samples = len(set_samples_fam)
+        if False:
+            set_samples_fam = set([line.split()[0] for line in fam.readlines()])
+        else:
+            set_samples_fam = set([line.split()[0][9:] for line in fam.readlines()])
+    with open('{}.fam'.format(args.bfile)) as fam:
+        l_samples_fam = [line.split()[0][9:] for line in fam.readlines()]
+    n_samples = len(set_samples_fam)
+    if args.keep:
+        with open('{}'.format(args.keep)) as fam:
+            set_samples_fam -= set([line.split()[0][9:] for line in fam.readlines()])
     n_bytes_per_SNP = math.ceil(n_samples / 4)
 
     # https://www.cog-genomics.org/plink2/formats
@@ -114,8 +148,6 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
         bed.seek(len(magic_number) + len(mode) + i * n_bytes_per_SNP)
         bytesSNP = bed.read(n_bytes_per_SNP)
     int_bytesSNP2 = int.from_bytes(bytesSNP, 'little')
-    l_colors = []
-    i = -1
     if any([
         A1 == alleles[0] and A2 == alleles[1],
         A1 == d_flip[alleles[0]] and A2 == d_flip[alleles[1]], 
@@ -123,11 +155,29 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
         bool_reverse = False
     else:
         bool_reverse = True
+
+    l_colors, MAF = parse_genotypes(
+        args, bool_reverse, l_samples_int, set_samples_fam, l_samples_fam,
+        int_bytesSNP2)
+
+    return l_colors, chrom, pos, MAF
+
+
+def parse_genotypes(
+    args, bool_reverse, l_samples_int, set_samples_fam, l_samples_fam,
+    int_bytesSNP2):
+
+    l_colors = []
+
+    ## Number of allele observations
+    cnt1 = 0
+    cnt2 = 0
     for sample in l_samples_int:
         if not sample in set_samples_fam:
-            l_colors += ['#ffffff']
+##            l_colors += ['#ffffff']
+            l_colors += [None]
             continue
-        i += 1
+        i = l_samples_fam.index(sample)
         shift2 = 2 * i
         bits = int_bytesSNP2 >> shift2 & 0b11
         ## hom00
@@ -136,22 +186,29 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
                 l_colors += [args.colors[0]]
             else:
                 l_colors += [args.colors[2]]
+            cnt1 += 2
+            cnt2 += 2
         ## het
         elif bits == 2:
             l_colors += [args.colors[1]]
+            cnt1 += 2
+            cnt2 += 1
         ## hom11
         elif bits == 3:
             if not bool_reverse:
                 l_colors += [args.colors[2]]
             else:
                 l_colors += [args.colors[0]]
+            cnt1 += 2
         ## miss
         elif bits == 1:
             l_colors += [args.colors[3]]
         else:
             stop
 
-    return l_colors, chrom, pos
+    MAF = min(cnt2/cnt1, 1-cnt2/cnt1)
+
+    return l_colors, MAF
 
 
 def parse_bim_line(args, rsID):
@@ -177,17 +234,25 @@ def parse_arguments():
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--position', type=int)
     group.add_argument('--rsID', nargs='+')
-    parser.add_argument('--prob', nargs='*')
+    parser.add_argument('--prob', nargs='*', required=False)
     parser.add_argument('--bfile')
-    parser.add_argument('--out', required=True)
+    parser.add_argument('--keep')
+#    parser.add_argument('--out', required=True)
     parser.add_argument(
         '--colors', nargs='+',
         default=['#ff0000', '#00ff00', '#0000ff', '#000000'])
+    parser.add_argument('--text', required=False)
     args = parser.parse_args()
 
-    assert len(args.rsID) == len(args.prob) or len(args.prob) == 0
+    if args.prob:
+        assert len(args.rsID) == len(args.prob)
+
+    assert os.path.isfile(args.bfile+'.bed')
+    assert os.path.isfile(args.bfile+'.bim')
+    assert os.path.isfile(args.bfile+'.fam')
 
     return args
+
 
 if __name__ == '__main__':
     main()
