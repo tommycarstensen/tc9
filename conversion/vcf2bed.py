@@ -9,6 +9,10 @@ import os
 import collections
 import re
 
+## This script is still useful, because PLINK
+## 1) doesn't operate on multiple input files and/or stdin
+## 2) doesn't handle multiallelic sites
+## 3) assigns multiple identical IDs ".", if ID is "." in VCF
 
 def main():
 
@@ -27,6 +31,10 @@ def main():
     if d_args['remove']:
         with open(d_args['remove']) as f:
             set_samples_remove = set(f.read().splitlines())
+    else:
+        set_samples_remove = set()
+
+    prog = re.compile(r'[|/]')
 
     with contextlib.ExitStack() as stack:
         bed = stack.enter_context(open('{}.bed'.format(d_args['bed']), 'wb'))
@@ -43,6 +51,8 @@ def main():
             chrom_e, pos_e, ref_e, alt_e, ID_e = next(parse_extract(extract))
         ## Loop over sorted VCF files.
         for i_vcf, filename_vcf in enumerate(sort_nicely(d_args['vcf'])):
+            if not os.path.isfile('{}.tbi'.format(filename_vcf)):
+                continue
             vcf = stack.enter_context(open_file(filename_vcf))
             ## Determine which columns to parse.
             for line in vcf:
@@ -65,6 +75,13 @@ def main():
             except StopIteration:
                 continue
             while True:
+                if len(alt.split(',')) > 1:
+                    try:
+                        l, chrom, pos, ref, alt = next(parse_vcf(vcf))
+                    ## Skip empty VCF file (e.g. near centromere)
+                    except StopIteration:
+                        break
+                    continue
                 if d_args['extract']:
                     if int(chrom) < int(chrom_e):
                         try:
@@ -147,6 +164,8 @@ def main():
                             continue
                         pass
                     pass
+                else:
+                    ID_e = '{}:{}:{}:{}'.format(chrom, pos, ref, alt)
                 ## write bim
                 bim.write(
                     '{chrom}\t{ID}\t0\t{pos}\t{major}\t{minor}\n'.format(
@@ -156,20 +175,23 @@ def main():
                 barray = bytearray()
                 for column in l_columns:
                     GT = l[column].split(':',1)[0]
+#                    GT = re.split(prog, l[column])
                     ## HOMREF
-                    if GT == '0/0':
+                    if GT == '0/0' or GT == '0|0':
                         b += '00'
                     ## HOMALT
-                    elif GT == '1/1':
+                    elif GT == '1/1' or GT == '1|1':
                         b += '11'
                     ## HET
-                    elif GT == '0/1':
+                    elif GT == '0/1' or GT == '0|1' or GT == '1|0':
                         b += '01'
                     ## unknown
                     elif GT == './.':
                         b += '10'
                     else:
-                        print(chrom, pos, ref, alt, ref_e, alt_e)
+                        print(GT)
+                        print(chrom, pos, ref, alt)
+                        print(ref_e, alt_e)
                         print(l[column])
                         stopGT
                     if len(b) == 8:
@@ -182,8 +204,14 @@ def main():
                 ## write bed
                 bed.write(bytes(barray))
                 ## Read next line of vcf.
-                l, chrom, pos, ref, alt = next(parse_vcf(vcf))
-                chrom_e, pos_e, ref_e, alt_e, ID_e = next(parse_extract(extract))
+                try:
+                    l, chrom, pos, ref, alt = next(parse_vcf(vcf))
+                except StopIteration:
+                    break
+                try:
+                    chrom_e, pos_e, ref_e, alt_e, ID_e = next(parse_extract(extract))
+                except:
+                    pass
                 if pos % 100 == 0:
                     print(chrom, pos)
                 ## Continue while loop.
