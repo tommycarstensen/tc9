@@ -21,6 +21,12 @@ def main():
     fn_multiple = d_arg['multiple']
     plink = d_arg['plink']
 
+    assert os.path.isfile(fn_strand)
+    assert os.path.isfile('{}.bed'.format(bfile))
+    assert os.path.isfile(fn_miss)
+    assert os.path.isfile(fn_multiple)
+    assert os.path.isfile(plink)
+
     ## sort
     sort(bfile, fn_strand)
     ## 1) rsIDs in strand but not in bim file
@@ -227,8 +233,10 @@ def strand_bim_mismatch_position(bfile,strand,):
     basename = os.path.basename(bfile)
 
     cmd = 'join -1 1 -2 2 -o 0,1.2,2.1,1.3,2.4,1.6,2.5,2.6,1.1,2.2'
-    cmd += ' %s.sorted %s.bim.sorted' %(os.path.basename(strand),basename,)
-    cmd += " | awk '{sub(25,23,$3); chrom_strand=$2; chrom_bim=$3; if("
+    cmd += ' %s.sorted %s.bim.sorted' %(os.path.basename(strand), basename)
+    # change chromosome 25 (XY, PAR) to chromosome 23 (X)
+    cmd += " | awk '{sub(25,23,$3);"
+    cmd += " chrom_strand=$2; chrom_bim=$3; if("
     ## rsID mismatch
     cmd += ' ($9!=$10)'
     ## chromosome/position mismatch
@@ -267,12 +275,17 @@ def PLINK_remove_and_exclude_and_flip(bfile,strand,plink):
     cmd += '--bfile %s \\\n' %(bfile)
     cmd += '--make-bed --out %s_flipped \\\n' %(basename)
     cmd += '--noweb --allow-no-sex --nonfounders \\\n'
-##    ## remove samples without consent
-##    cmd += '--remove cp8_remove.fam \\\n'
     ## exclude SNPs in concatenated SNP exclusion list
     cmd += '--exclude exclude.SNPs \\\n'
     cmd += '--flip flip.SNPs \\\n'
     execmd(cmd)
+
+    ## Change Paternal ID and Maternal ID from -9 to 0.
+    cmd = 'cat %s.bim' %(bfile)
+    cmd += " | awk '{if($3==-9&&$4==-9) {$3=0; $4=0}; print $1,$2,$3,$4,$5,$6}"
+    cmd += ' > %s.bim.tmp' %(bfile)
+
+    os.rename('%s.bim.tmp %s.bim' %(bfile, bfile))
 
     return
 
