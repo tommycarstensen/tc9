@@ -281,11 +281,11 @@ def PLINK_remove_and_exclude_and_flip(bfile,strand,plink):
     execmd(cmd)
 
     ## Change Paternal ID and Maternal ID from -9 to 0.
-    cmd = 'cat %s.bim' %(bfile)
+    cmd = 'cat %s.fam' %(bfile)
     cmd += " | awk '{if($3==-9&&$4==-9) {$3=0; $4=0}; print $1,$2,$3,$4,$5,$6}"
-    cmd += ' > %s.bim.tmp' %(bfile)
+    cmd += ' > %s.fam.tmp' %(bfile)
 
-    os.rename('%s.bim.tmp %s.bim' %(bfile, bfile))
+    os.rename('%s.fam.tmp %s.fam' %(bfile, bfile))
 
     return
 
