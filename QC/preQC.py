@@ -251,7 +251,7 @@ def strand_bim_mismatch_position(bfile,strand,):
     return
 
 
-def PLINK_remove_and_exclude_and_flip(bfile,strand,plink):
+def PLINK_remove_and_exclude_and_flip(bfile, strand, plink):
 
     basename = os.path.basename(bfile)
 
@@ -281,11 +281,12 @@ def PLINK_remove_and_exclude_and_flip(bfile,strand,plink):
     execmd(cmd)
 
     ## Change Paternal ID and Maternal ID from -9 to 0.
-    cmd = 'cat %s.fam' %(bfile)
+    cmd = 'cat %s_flipped.fam' %(basename)
     cmd += " | awk '{if($3==-9&&$4==-9) {$3=0; $4=0}; print $1,$2,$3,$4,$5,$6}"
-    cmd += ' > %s.fam.tmp' %(bfile)
+    cmd += ' > %s_flipped.fam.tmp' %(basename)
+    execmd(cmd)
 
-    os.rename('%s.fam.tmp %s.fam' %(bfile, bfile))
+    os.rename('%s_flipped.fam.tmp' %(basename), '%s_flipped.fam' %(basename))
 
     return
 
