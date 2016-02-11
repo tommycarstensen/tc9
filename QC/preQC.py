@@ -282,7 +282,7 @@ def PLINK_remove_and_exclude_and_flip(bfile, strand, plink):
 
     ## Change Paternal ID and Maternal ID from -9 to 0.
     cmd = 'cat %s_flipped.fam' %(basename)
-    cmd += " | awk '{if($3==-9&&$4==-9) {$3=0; $4=0}; print $1,$2,$3,$4,$5,$6}"
+    cmd += " | awk '{if($3==-9&&$4==-9) {$3=0; $4=0}; print $1,$2,$3,$4,$5,$6}'"
     cmd += ' > %s_flipped.fam.tmp' %(basename)
     execmd(cmd)
 
