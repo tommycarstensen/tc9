@@ -10,6 +10,7 @@ import re
 import gzip
 import sys
 import urllib.request
+import natsort
 
 
 def main():
@@ -18,24 +19,26 @@ def main():
 
     d_samples = parse_samples(args.samples)
 
-    ## Read tabix indexed VCF file.
-    tbx = pysam.TabixFile(args.vcf)
+    for vcf in natsort.natsorted(args.vcf):
 
-    ## Loop metadata lines and header line.
-    for line in tbx.header:
-        pass
-    ## Parse header.
-    header = line.decode().split('\t')
-    ## Get sample indices for each population.
-    for pop in d_samples.keys():
-        ## Remove samples not in VCF file from dict to avoid ValueError.
-        for sampleID in list(d_samples[pop]):
-            if not sampleID in header:
-                d_samples[pop].remove(sampleID)
-        ## Get index for each sample in the population.
-        d_samples[pop] = set([
-            header.index(sampleID) for sampleID in d_samples[pop]])
-        continue
+        ## Read tabix indexed VCF file.
+        tbx = pysam.TabixFile(args.vcf)
+
+        ## Loop metadata lines and header line.
+        for line in tbx.header:
+            pass
+        ## Parse header.
+        header = line.decode().split('\t')
+        ## Get sample indices for each population.
+        for pop in d_samples.keys():
+            ## Remove samples not in VCF file from dict to avoid ValueError.
+            for sampleID in list(d_samples[pop]):
+                if not sampleID in header:
+                    d_samples[pop].remove(sampleID)
+            ## Get index for each sample in the population.
+            d_samples[pop] = set([
+                header.index(sampleID) for sampleID in d_samples[pop]])
+            continue
 
     loop_records(args, d_samples, tbx)
 
@@ -137,7 +140,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--vcf', required=True)
+    parser.add_argument('--vcf', required=True, nargs='+')
     parser.add_argument(
         '--samples', required=True,
         help='columns: 1=sampleID, 2=pop; e.g. ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel')
