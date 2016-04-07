@@ -37,8 +37,8 @@ def main():
         for line in f:
             l = line.rstrip().split()
             sampleID = l[0]
-            sampleIDfather = l[2].replace('NA','0')
-            sampleIDmother = l[4].replace('NA','0')
+            sampleIDfather = l[2].replace('NA', '0')
+            sampleIDmother = l[4].replace('NA', '0')
             d_ped[sampleID] = (sampleIDfather, sampleIDmother)
 
     d_APP2EGAN = {}
@@ -50,12 +50,12 @@ def main():
             if ID_EGAN != 'NA':
                 d_APP2EGAN[ID_APP] = ID_EGAN
                 d_EGAN2APP[ID_EGAN] = ID_APP
-            d_sex[ID_APP] = sex.replace('M','1').replace('F','2')
+            d_sex[ID_APP] = sex.replace('M', '1').replace('F', '2')
             d_sex[ID_EGAN] = d_sex[ID_APP]
     with open('../../../metadata/samples.1000g.tsv') as f:
         for line in f:
             ID, pop, superpop, sex = line.rstrip().split('\t')
-            d_sex[ID] = sex.replace('male','1').replace('female','2')
+            d_sex[ID] = sex.replace('female', '2').replace('male', '1')
 
     url2013 = 'ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/working/20130606_sample_info/20130606_g1k.ped'
     url2011 = 'ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/working/20111108_samples_pedigree/G1K_samples_20111108.ped'
@@ -241,6 +241,7 @@ def rename_add_ped(
 #        d_IID2FID = {}
 #        i_FID = 1
 #        i_FID = max(d_IID2FID.values())+1
+        set_parents = set()
         for line in f:
             t = line.rstrip().split()
             if len(t) == 3:
@@ -284,7 +285,6 @@ def rename_add_ped(
             if ID_APP in d_ped.keys():
 
                 father = d_ped[ID_APP][0]
-
                 mother = d_ped[ID_APP][1]
 
                 try:
@@ -306,6 +306,16 @@ def rename_add_ped(
                 ID_father = father
             if ID_mother == '0' or not ID_mother:
                 ID_mother = mother
+
+            ## Error if parental IDs specified multiple times for siblings and half siblings:
+            ## ERROR: xxx samples are included in several duos/trios
+            if ID_father in set_parents:
+                ID_father = '0'
+            if ID_mother in set_parents:
+                ID_mother = '0'
+
+            set_parents.add(ID_father)
+            set_parents.add(ID_mother)
 
 #            if IDshort != ID_APP:
 #                print(ID_1, ID_2, IDshort, ID_APP, father, mother)
