@@ -206,11 +206,15 @@ def loop_main(
 
     with open('{}.per_sample.r2.txt'.format(affix), 'w') as fd_out:
         for i, d in d_stats.items():
-            nom = (d['sumxy']-d['sumx']*d['sumy']/d['n'])
-            den_sq = (d['sumxx']-d['sumx']**2/d['n'])*(d['sumyy']-d['sumy']**2/d['n'])          
-            r2 = nom**2/abs(den_sq)
-            fd_out.write('{} {} {}\n'.format(
-                d_samples[1][d_indexes[1][i]], d_samples[2][d_indexes[2][i]], r2))
+            nom = (d['sumxy'] - d['sumx'] * d['sumy'] / d['n'])
+            den_sq = (d['sumxx'] - d['sumx']**2 / d['n']) * (d['sumyy'] - d['sumy']**2 / d['n'])
+            r2 = nom**2 / abs(den_sq)
+            nonref_conc1 = d['nonref_conc1']/(d['nonref_conc1']+d['nonref_disc1'])
+            nonref_conc2 = d['nonref_conc2']/(d['nonref_conc2']+d['nonref_disc2'])
+            fd_out.write('{} {} {} {} {}\n'.format(
+                d_samples[1][d_indexes[1][i]], d_samples[2][d_indexes[2][i]], r2,
+                nonref_conc1, nonref_conc2,
+                ))
 
     return
 
@@ -229,10 +233,17 @@ def loop_sub(
     chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
 
     d_stats = {
-        k: {'sumx': 0, 'sumy': 0, 'sumxx': 0, 'sumxy': 0, 'sumyy': 0, 'n': 0} for k in range(len(
-            d_indexes[1]))}
+        k: {
+            'sumx': 0, 'sumy': 0, 'sumxx': 0, 'sumxy': 0, 'sumyy': 0, 'n': 0,
+            'nonref_conc1': 0, 'nonref_disc1': 0, 'nonref_conc2': 0, 'nonref_disc2': 0,
+            } for k in range(len(d_indexes[1]))}
 
+    ii = 0
     while True:
+
+        ii += 1
+        if not ii % 1000:
+            print(pos1, pos2)
 
         if chrom1 < chrom2:
             print('a', kwargs1['format'], kwargs2['format'], chrom1, chrom2, pos1, pos2,)
@@ -345,10 +356,16 @@ def loop_sub(
                 break
             continue
 
-        n, sum_x, sum_y, sum_xx, sum_yy, sum_xy = calc_sums_and_sum_of_squares(
-            d_indexes,
-            func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
-            f_discordant, d_stats)
+        ##
+        ##
+        ##
+        (
+            n, sum_x, sum_y, sum_xx, sum_yy, sum_xy,
+#            cnt_concordance,
+            ) = calc_sums_and_sum_of_squares(
+                d_indexes,
+                func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
+                f_discordant, d_stats)
 
         ## calculate MAF
         try:
@@ -384,7 +401,8 @@ def loop_sub(
                 r1 = 1
             else:
                 r2 = None
-                if round(nom, 13) == 0:
+                ## monomorphic
+                if round(nom, 6) == 0:
                     pass
                 ## monomorphic
 #                elif l_x == len(l_x)*[x] or l_y == len(l_y)*[y]:
@@ -394,6 +412,10 @@ def loop_sub(
                 elif (sum_x == 0 or sum_y == 0):
                     stop
                 else:
+                    print(genotypes1)
+                    print(genotypes2)
+                    print(sum_x, sum_y, sum_xx, sum_xy, sum_yy)
+                    print(nom, den_sq)
                     print('x', l_x)
                     print('y', l_y)
                     print(pos1, A1, A2, B1, B2)
@@ -454,7 +476,7 @@ def calc_sums_and_sum_of_squares(
     sum_yy = 0
 ##    l_x = [] ## tmp!!!
 ##    l_y = [] ## tmp!!!
-##    cnt_concordance = 0
+#    cnt_concordance = 0
     for i, (index1, index2) in enumerate(zip(d_indexes[1], d_indexes[2])):
 ##        for i_byte in range(n_bytes):
 ##                byte = bed.read(1)
@@ -482,18 +504,32 @@ def calc_sums_and_sum_of_squares(
         sum_xy += xy
         sum_yy += yy
         n += 1
+        ## per sample stats
         d_stats[i]['sumx'] += x
         d_stats[i]['sumy'] += y
         d_stats[i]['sumxx'] += xx
         d_stats[i]['sumxy'] += xy
         d_stats[i]['sumyy'] += yy
         d_stats[i]['n'] += 1
+        ## For the time being assume that the truth set if file set 2... Temporary!!!
+        ## Actually do both ways!
+        if y != 0:
+            if x == y:
+                d_stats[i]['nonref_conc1'] += 1
+            else:
+                d_stats[i]['nonref_disc1'] += 1
+        if x != 0:
+            if x == y:
+                d_stats[i]['nonref_conc2'] += 1
+            else:
+                d_stats[i]['nonref_disc2'] += 1
 
-##        if x == y:
-##            cnt_concordance += 1
+#        if x == y:
+#            cnt_concordance += 1
         ## continue loop over samples
         continue
 
+#    return n, sum_x, sum_y, sum_xx, sum_yy, sum_xy, cnt_concordance
     return n, sum_x, sum_y, sum_xx, sum_yy, sum_xy
 
 
@@ -747,6 +783,9 @@ def index_samples(d_args):
         '\n', d_samples[2][d_indexes[2][0]], d_samples[2][d_indexes[2][-1]],
         )
 
+    print(d_samples)
+    print(d_indexes)
+
     return d_samples, d_indexes
 
 
@@ -755,7 +794,7 @@ def vcf2samples(file):
     if file[-3:] == '.gz':
         f = gzip.open(file, 'rt')
     else:
-        f = open(files[0])
+        f = open(file)
     for line in f:
         if line[0] != '#':
             break
@@ -772,7 +811,8 @@ def fam2samples(fam):
     keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(.+\d\d\d\d\d\d\d)')
     with open(fam, 'r') as lines:
         for line in lines:
-            sampleID = line.split()[0]
+            ## Use IID rather than FID.
+            sampleID = line.split()[1]
             match = result = keyword.search(sampleID)
             if match:
                 l_samples += [match.group(2)]
@@ -791,7 +831,12 @@ def parse_vcf(**kwargs):
     while line[0] == '#':
         line = vcf.readline()
     l = line.rstrip().split('\t')
-    chrom = int(l[0])
+    if l[0].startswith('chr'):
+        l[0] = l[0][3:]
+    try:
+        chrom = int(l[0])
+    except:
+        chrom = l[0]
     pos = int(l[1])
     alleleA = l[3]
     alleleB = l[4]
@@ -812,6 +857,8 @@ def parse_bed(**kwargs):
         return
     l_bim = line_bim.rstrip().split()
     chrom = int(l_bim[0])
+    if chrom == 23:
+        chrom = 'X'
 ##        StopIteration
     pos = int(l_bim[3])
     alleleA = l_bim[4]
@@ -943,7 +990,7 @@ def argparser():
     parser.add_argument('--fam2', help='PLINK format')
     parser.add_argument(
         '--affix', '--out', '--prefix', '--suffix', required=True)
-    parser.add_argument('--sampledic',)
+    parser.add_argument('--sampledic', help='convert chip APP IDs to sequence EGAN IDs')
     parser.add_argument('--markers1', nargs='+', default=[])
     parser.add_argument('--markers2', nargs='+', default=[])
     ## hap, legend, sample
