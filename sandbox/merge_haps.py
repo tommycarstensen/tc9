@@ -17,6 +17,12 @@ def main():
     d_fai = read_fai(args.ref + '.fai')
 
     l_paths = list(sorted(args.i))
+
+    for path in l_paths:
+        if not os.path.isfile('.'.join(path.split('.')[:-2])+'.sample'):
+            print('.'.join(path.split('.')[:-2])+'.sample', 'does not exist')
+            exit()
+
     with contextlib.ExitStack() as stack:
         d_files = {}
         for path in l_paths:
@@ -88,6 +94,14 @@ def main():
                     print(REF, A1, A2, ID, d_lines[path][:-1], path, len(d_lines[path][-1])+1, 2*d_lines[path][-1].count('0'))
                     stop
             fd_out.write(line_out+'\n')
+
+    with open('.'.join(args.out.split('.')[:-2])+'.sample', 'w') as fout:
+        for i, path in enumerate(l_paths):
+            with open('.'.join(path.split('.')[:-2])+'.sample') as f:
+                lines = f.readlines()
+                if i > 0:
+                    lines = lines[2:]
+                fout.writelines(lines)
 
     return
 
