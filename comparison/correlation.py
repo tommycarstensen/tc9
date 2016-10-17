@@ -185,7 +185,9 @@ def loop_main(
         d_correl, d_stats = loop_sub(
             kwargs1, kwargs2, fd_out, func1, func2, f_extract,
             d_indexes,
-            func_dosage1, func_dosage2, f_discordant, d_correl)
+            func_dosage1, func_dosage2, f_discordant, d_correl,
+            d_samples,
+            )
 
     with open('{}.r2.txt'.format(affix), 'w') as fd_out:
         for MAF in range(0, 51):
@@ -209,8 +211,8 @@ def loop_main(
             nom = (d['sumxy'] - d['sumx'] * d['sumy'] / d['n'])
             den_sq = (d['sumxx'] - d['sumx']**2 / d['n']) * (d['sumyy'] - d['sumy']**2 / d['n'])
             r2 = nom**2 / abs(den_sq)
-            nonref_conc1 = d['nonref_conc1']/(d['nonref_conc1']+d['nonref_disc1'])
-            nonref_conc2 = d['nonref_conc2']/(d['nonref_conc2']+d['nonref_disc2'])
+            nonref_conc1 = d['nonref_disc1']/(d['nonref_conc1']+d['nonref_disc1'])
+            nonref_conc2 = d['nonref_disc2']/(d['nonref_conc2']+d['nonref_disc2'])
             fd_out.write('{} {} {} {} {}\n'.format(
                 d_samples[1][d_indexes[1][i]], d_samples[2][d_indexes[2][i]], r2,
                 nonref_conc1, nonref_conc2,
@@ -222,7 +224,9 @@ def loop_main(
 def loop_sub(
     kwargs1, kwargs2, fd_out, func1, func2, f_extract,
     d_indexes,
-    func_dosage1, func_dosage2, f_discordant, d_correl):
+    func_dosage1, func_dosage2, f_discordant, d_correl,
+    d_samples,
+    ):
 
     ## parse first line to be extracted
     if f_extract:
@@ -243,7 +247,12 @@ def loop_sub(
 
         ii += 1
         if not ii % 1000:
-            print(pos1, pos2)
+            print(chrom1, pos1, chrom2, pos2)
+
+        if type(chrom1) == str and type(chrom2) == int:
+            break
+        if type(chrom2) == str and type(chrom1) == int:
+            break
 
         if chrom1 < chrom2:
             print('a', kwargs1['format'], kwargs2['format'], chrom1, chrom2, pos1, pos2,)
@@ -262,6 +271,7 @@ def loop_sub(
         elif pos1 < pos2:
             try:
                 chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
+#            except: break  # tmp!!!
             except StopIteration:
                 break
             continue
@@ -364,8 +374,24 @@ def loop_sub(
 #            cnt_concordance,
             ) = calc_sums_and_sum_of_squares(
                 d_indexes,
-                func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
-                f_discordant, d_stats)
+                func_dosage1, func_dosage2, genotypes1, genotypes2,
+                bool_reverse,
+                f_discordant, d_stats,
+                chrom1, pos1, A1, B1,
+                chrom2, pos2, A2, B2,
+                d_samples,
+                )
+
+        ## All genotypes are missing, because no QC was carried out.
+        if n == 0:
+            try:
+                chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
+                chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
+                if f_extract:
+                    extract_chrom, extract_pos = next(parse_extract(f_extract))
+                continue
+            except StopIteration:
+                break
 
         ## calculate MAF
         try:
@@ -464,7 +490,12 @@ def loop_sub(
 def calc_sums_and_sum_of_squares(
     d_indexes,
     func_dosage1, func_dosage2, genotypes1, genotypes2, bool_reverse,
-    f_discordant, d_stats):
+    f_discordant, d_stats,
+    ## variables passed for writing to discordance file only
+    chrom1, pos1, A1, B1,
+    chrom2, pos2, A2, B2,
+    d_samples,
+    ):
 
     ## This is the slowest function followed by functions for parsing GTs.
 
@@ -513,13 +544,13 @@ def calc_sums_and_sum_of_squares(
         d_stats[i]['n'] += 1
         ## For the time being assume that the truth set if file set 2... Temporary!!!
         ## Actually do both ways!
-        if y != 0:
-            if x == y:
+        if round(y,0) != 0:
+            if round(x,0) == round(y,0):
                 d_stats[i]['nonref_conc1'] += 1
             else:
                 d_stats[i]['nonref_disc1'] += 1
-        if x != 0:
-            if x == y:
+        if round(x,0) != 0:
+            if round(x,0) == round(y,0):
                 d_stats[i]['nonref_conc2'] += 1
             else:
                 d_stats[i]['nonref_disc2'] += 1
@@ -603,12 +634,16 @@ def parse_dosage_vcf(l_vcf, i_sample):
 ##    dosage = sum(i*float(GP) for i,GP in enumerate(
 ##        l_vcf[i_sample+9].split(':')[2].split(',')))
 
-    try:
-        k = 'PL'
-        index = l_vcf[8].split(':').index(k)
-    except ValueError:
-        k = 'DS'
-        index = l_vcf[8].split(':').index(k)
+    for k in ('PL', 'DS', 'GL'):
+        try:
+            index = l_vcf[8].split(':').index(k)
+            break
+        except ValueError:
+            continue
+    else:
+        print(l_vcf[8].split(':'))
+        stop
+
     l_vcf = l_vcf[i_sample+9].split(':')
     if l_vcf[0] == './.':
         dosage = 1
@@ -616,7 +651,11 @@ def parse_dosage_vcf(l_vcf, i_sample):
         if k == 'PL':
             PL = l_vcf[index].split(',')
             ## assume biallelic variant
-            assert len(PL) == 3
+            try:
+                assert len(PL) == 3
+            except:
+                print(l_vcf)
+                stop
     ##        dosage = sum(
     ##            i*prob for i, prob in enumerate(
     ##                pow(10,-int(log10likelihood)/10)
@@ -627,8 +666,22 @@ def parse_dosage_vcf(l_vcf, i_sample):
             ## evaluate sum once
             sum_prob = sum(l_probs)
             dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
-        else:
+        elif k == 'DS':
             dosage = float(l_vcf[index])
+        elif k == 'GL':
+            GL = l_vcf[index].split(',')
+            ## assume biallelic variant
+            try:
+                assert len(GL) == 3
+            except:
+                print(l_vcf)
+                stop
+            ## calculate probabilities once
+            l_probs = [
+                pow(10, float(log10likelihood)) for log10likelihood in GL]
+            ## evaluate sum once
+            sum_prob = sum(l_probs)
+            dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
 
     return dosage
 
@@ -680,7 +733,7 @@ def index_samples(d_args):
         fileformat = d_args['format{}'.format(i)]
         files = d_args['files%i' %(i)]
         if fileformat == 'bed':
-            l_samples = fam2samples('%s.fam' %(files[0]))
+            l_samples = fam2samples('%s.fam' %(files[0]), d_args)
         elif fileformat == 'gen':
             if os.path.getsize(files[-1]) == 0:
                 print('size 0', files[0])
@@ -692,7 +745,7 @@ def index_samples(d_args):
                 with open(files[-1]) as f:
                     n_fam = int((len(f.readline().rstrip().split())-5)/3)
             if d_args['fam%i' %(i)]:
-                l_samples = fam2samples(d_args['fam%i' %(i)])
+                l_samples = fam2samples(d_args['fam%i' %(i)], d_args)
                 if len(l_samples) != n_fam:
                     print(l_samples)
                     print(len(l_samples))
@@ -751,14 +804,23 @@ def index_samples(d_args):
         d_sampledic = {sample: sample for sample in d_samples[1]}
 
     bool_error = True
+    samples1 = set(d_samples[1])
+    samples2 = set(d_samples[2])
+    intersect1 = set()
+    intersect2 = set()
     for index1 in range(len(d_samples[1])):
         sample1 = d_samples[1][index1]
         try:
             index2 = d_samples[2].index(d_sampledic[sample1])
-        except ValueError:
-            continue
+            intersect1.add(sample1)
+            intersect2.add(d_sampledic[sample1])
         ## sample not at intersection
+        except ValueError:
+            print('not found in sample dic', sample1)
+            continue
+        ## not in sample dic
         except KeyError:
+            print('not intersect', sample1)
             continue
         d_indexes[1] += [index1]
         d_indexes[2] += [index2]
@@ -783,6 +845,10 @@ def index_samples(d_args):
         '\n', d_samples[2][d_indexes[2][0]], d_samples[2][d_indexes[2][-1]],
         )
 
+    print('not found')
+    print(samples1-intersect1)
+    print(samples2-intersect2)
+
     print(d_samples)
     print(d_indexes)
 
@@ -805,8 +871,14 @@ def vcf2samples(file):
     return l_samples
 
 
-def fam2samples(fam):
+def fam2samples(fam, d_args):
 
+    set_samples = set()
+    if d_args['sampledic']:
+        with open(d_args['sampledic']) as f:
+            for line in f:
+                set_samples.add(line.split()[0])
+                set_samples.add(line.split()[1])
     l_samples = []
     keyword = re.compile(r'(\d\d\d\d\d\d_[A-H]\d\d_)(.+\d\d\d\d\d\d\d)')
     with open(fam, 'r') as lines:
@@ -814,7 +886,7 @@ def fam2samples(fam):
             ## Use IID rather than FID.
             sampleID = line.split()[1]
             match = result = keyword.search(sampleID)
-            if match:
+            if match and sampleID not in set_samples:
                 l_samples += [match.group(2)]
             else:
                 l_samples += [sampleID]
