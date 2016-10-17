@@ -634,6 +634,7 @@ def parse_dosage_vcf(l_vcf, i_sample):
 ##    dosage = sum(i*float(GP) for i,GP in enumerate(
 ##        l_vcf[i_sample+9].split(':')[2].split(',')))
 
+    ## It's pretty fucking stupid doing this for each SNP and for each sample!
     for k in ('PL', 'DS', 'GL'):
         try:
             index = l_vcf[8].split(':').index(k)
@@ -641,8 +642,9 @@ def parse_dosage_vcf(l_vcf, i_sample):
         except ValueError:
             continue
     else:
-        print(l_vcf[8].split(':'))
-        stop
+        assert l_vcf[8] == 'GT'
+        k = 'GT'
+        index = 0
 
     l_vcf = l_vcf[i_sample+9].split(':')
     if l_vcf[0] == './.':
@@ -682,6 +684,9 @@ def parse_dosage_vcf(l_vcf, i_sample):
             ## evaluate sum once
             sum_prob = sum(l_probs)
             dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
+        ## Only GTs provided.
+        else:
+            dosage = sum((int(_) for _ in re.split(r'\|', l_vcf[index])))
 
     return dosage
 
