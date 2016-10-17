@@ -1095,6 +1095,11 @@ def argparser():
     for key in 'files1', 'files2', 'markers1', 'markers2':
         d_args[key] = sort_nicely(d_args[key])
 
+    try:
+        d_args['chrom'] = int(d_args['chrom'])
+    except:
+        pass
+
     return d_args
 
 
