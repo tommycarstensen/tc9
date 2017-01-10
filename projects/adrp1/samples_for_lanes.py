@@ -1,7 +1,7 @@
 import xlrd
 import random
 import math
-##from collections import Counter
+from collections import Counter
 
 path = 'RNA_samples_randomisation_plan_and_plate_layout_050116.xlsx'
 xl_workbook = xlrd.open_workbook(path)
@@ -28,6 +28,7 @@ print()
 
 d = {hb: {cb: [] for cb in range(1, n_cb+1)} for hb in range(1, n_hb+1)}
 d_ID2pop = {}
+d_plate = {plate: {'init': Counter(), 'curr': Counter()} for plate in range(1, n_plates+1)}
 
 for row_idx in range(1, xl_sheet.nrows):
     ID = Coriell_ID = xl_sheet.cell(row_idx, 0).value
@@ -37,6 +38,9 @@ for row_idx in range(1, xl_sheet.nrows):
     d[hb][cb].append(ID)
     d[hb][cb].append(ID)
     d_ID2pop[ID] = pop
+    plate = ((hb-1)//2)+1
+    d_plate[plate]['init'][pop] += 2
+    d_plate[plate]['curr'][pop] += 2
 
 for plate in range(1, n_plates+1):
     if plate == n_plates:
@@ -44,8 +48,31 @@ for plate in range(1, n_plates+1):
     else:
         n_lanes = int(n_wells / n_average_samples_per_lane)
     for lane in range(1, n_lanes+1):
+        selected = []
         for hb in range(plate*2-1, min(plate*2, n_hb)+1):
             for cb in range(1, n_cb+1):
-                ID = random.choice(d[hb][cb])
+                c = Counter([d_ID2pop[ID] for ID in d[hb][cb]])
+                i = 0
+                while True:
+                    ID = random.choice(d[hb][cb])
+                    pop = d_ID2pop[ID]
+                    frac = d_plate[plate]['curr'][pop]/d_plate[plate]['init'][pop]
+                    frac_max = max([d_plate[plate]['curr'][_]/d_plate[plate]['init'][_] for _ in pops if d_plate[plate]['init'][_] != 0])
+                    if frac == frac_max:
+                        break
+                    if pop == max(c) and i > 100:
+                        break
+                    i += 1
+                d_plate[plate]['curr'][pop] -= 1
                 d[hb][cb].remove(ID)
+                ## Print lane for each ID.
                 print(ID, d_ID2pop[ID], cb, hb, lane, sep='\t')
+                selected.append(d_ID2pop[ID])
+        ## Print a summary for the lane.
+##        print(
+##            lane+(plate-1)*int(n_wells/n_average_samples_per_lane),
+##            selected.count('ESN'), selected.count('GWD'),
+##            selected.count('LWK'), selected.count('MKK'),
+##            selected.count('MSL'), selected.count('YRI'),
+##            sep='\t',
+##            )
