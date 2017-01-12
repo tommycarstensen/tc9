@@ -21,6 +21,7 @@ n_cb = n_Coriell_batches = math.ceil(n_samples / 100)
 n_wells = 96
 n_plates = n_Sanger_plates = math.ceil(n_samples / n_wells)
 n_average_samples_per_lane = 6  # 12 samples per 2 lanes
+n_samples_per_lane = 12
 print('#n_Hologic_batches', n_Hologic_batches)
 print('#n_Coriell_batches', n_Coriell_batches)
 print('#n_Sanger_plates', n_Sanger_plates)
@@ -28,7 +29,10 @@ print()
 
 d = {hb: {cb: [] for cb in range(1, n_cb+1)} for hb in range(1, n_hb+1)}
 d_ID2pop = {}
-d_plate = {plate: {'init': Counter(), 'curr': Counter()} for plate in range(1, n_plates+1)}
+d_plate = {
+    plate: {
+        'init': Counter(), 'curr': Counter()} for plate in range(
+            1, n_plates+1)}
 
 for row_idx in range(1, xl_sheet.nrows):
     ID = Coriell_ID = xl_sheet.cell(row_idx, 0).value
@@ -48,31 +52,42 @@ for plate in range(1, n_plates+1):
     else:
         n_lanes = int(n_wells / n_average_samples_per_lane)
     for lane in range(1, n_lanes+1):
-        selected = []
+        selected_pops = []
         for hb in range(plate*2-1, min(plate*2, n_hb)+1):
             for cb in range(1, n_cb+1):
+                ## Count the populations in the remaining set of samples.
                 c = Counter([d_ID2pop[ID] for ID in d[hb][cb]])
+                ## (Re)set counter.
                 i = 0
+                ## Calculate the current maximal proportion of each population on the plate.
+                frac_max = max([d_plate[plate]['curr'][_]/d_plate[plate]['init'][_] for _ in pops if d_plate[plate]['init'][_] != 0])
                 while True:
+                    ## Randomly choose an ID.
                     ID = random.choice(d[hb][cb])
+                    ## Get the pop the ID belongs to.
                     pop = d_ID2pop[ID]
+                    ## Calculate the proportion of the population on the plate
+                    ## to which the randomly selected sample belongs to.
                     frac = d_plate[plate]['curr'][pop]/d_plate[plate]['init'][pop]
-                    frac_max = max([d_plate[plate]['curr'][_]/d_plate[plate]['init'][_] for _ in pops if d_plate[plate]['init'][_] != 0])
                     if frac == frac_max:
                         break
-                    if pop == max(c) and i > 100:
+                    ## Break if we tried a thousand random choices
+                    ## and this sample belongs to the most abundant
+                    ## of the remaining populations
+                    ## for the particular combination of hb and cb.
+                    if pop == max(c) and i > 1000:
                         break
                     i += 1
                 d_plate[plate]['curr'][pop] -= 1
                 d[hb][cb].remove(ID)
                 ## Print lane for each ID.
                 print(ID, d_ID2pop[ID], cb, hb, lane, sep='\t')
-                selected.append(d_ID2pop[ID])
-        ## Print a summary for the lane.
+                selected_pops.append(d_ID2pop[ID])
+##        ## Print a summary for the lane.
 ##        print(
 ##            lane+(plate-1)*int(n_wells/n_average_samples_per_lane),
-##            selected.count('ESN'), selected.count('GWD'),
-##            selected.count('LWK'), selected.count('MKK'),
-##            selected.count('MSL'), selected.count('YRI'),
+##            selected_pops.count('ESN'), selected_pops.count('GWD'),
+##            selected_pops.count('LWK'), selected_pops.count('MKK'),
+##            selected_pops.count('MSL'), selected_pops.count('YRI'),
 ##            sep='\t',
 ##            )
