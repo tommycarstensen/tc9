@@ -46,8 +46,10 @@ for row_idx in range(1, xl_sheet.nrows):
     plate = ((hb-1)//2)+1
     if plate == 6 and int(well[1:]) >= 10:
         plate = 7
-    d_plate[plate]['init'][pop] += 2
-    d_plate[plate]['curr'][pop] += 2
+##    d_plate[plate]['init'][pop] += 2
+##    d_plate[plate]['curr'][pop] += 2
+    d_plate[plate]['init'][pop] += 1
+    d_plate[plate]['curr'][pop] += 1
 
 for plate in range(1, n_plates+1):
     n_samples = int(sum(d_plate[plate]['init'].values()) / 2)
