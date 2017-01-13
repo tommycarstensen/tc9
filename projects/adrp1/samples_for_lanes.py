@@ -39,7 +39,7 @@ for row_idx in range(1, xl_sheet.nrows):
     pop = Population = xl_sheet.cell(row_idx, 1).value
     cb = Coriell_Batch = xl_sheet.cell(row_idx, 2).value
     hb = Hologic_Batch = xl_sheet.cell(row_idx, 3).value
-    well = Hologic_Batch = xl_sheet.cell(row_idx, 5).value
+    well = xl_sheet.cell(row_idx, 5).value
     d[hb][cb].append(ID)
     d[hb][cb].append(ID)
     d_ID2pop[ID] = pop
