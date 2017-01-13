@@ -69,13 +69,10 @@ for plate in range(1, n_plates+1):
                 ## Half of Hologic batch 12 went to plate 7 (i.e. wells A10-H12).
                 range_cb = list(list(range(1, int(n_cb/2)+1))*int((n_wells/2)/n_cb))[(lane-1)*int(((n_wells/2)/n_cb)/2):lane*int(((n_wells/2)/n_cb)/2)]
             elif plate == 6 and hb == 11:
-##                ## Random sampling.
-##                range_cb = range_cb_6_11[(lane-1)*6:lane*6]
                 ## Systematic sampling.
                 range_cb = list(list(range(1, n_cb+1))*int((n_wells/2)/n_cb))[(lane-1)*int((n_wells/2)/n_cb):lane*int((n_wells/2)/n_cb)]
             elif plate == 7 and hb == 12:
                 ## Half of Hologic batch 12 went to plate 7 (i.e. wells A10-H12).
-##                range_cb = list(list(range(int(n_cb/2)+1, n_cb+1))*int((n_wells/2)/n_cb))[(lane-1)*int(((n_wells/2)/n_cb)/2):lane*int(((n_wells/2)/n_cb)/2)]
                 range_cb = list(range(int(n_cb/2)+1, n_cb+1))*2
             else:
                 range_cb = range(1, n_cb+1)
