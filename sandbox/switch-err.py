@@ -31,14 +31,46 @@ def main():
     generator1 = func1(args.paths1)
     generator2 = func2(args.paths2)
 
+    assert len(l_indexes1) > 0, 'No samples in common'
+    assert len(l_indexes2) > 0, 'No samples in common'
+    assert len(l_indexes1) == 1, 'I need to check that the script still works for multiple samples'
+
+    with open(args.out, 'w') as f_out:
+        (
+            cnt_het, cnt_noswitch, cnt_switch, cnt_sites_intersection,
+            cnt_samples_gt_diff, cnt_flip_errors, d_switch,
+            ) = loop(
+                args, generator1, generator2, l_indexes1, l_indexes2, f_out)
+
+    print()
+    print('cnt_het', cnt_het)
+    print('cnt_noswitch', cnt_noswitch)
+    print('cnt_switch', cnt_switch)
+    print('cnt_sites_intersection', cnt_sites_intersection)
+    print('cnt_samples_gt_diff', cnt_samples_gt_diff)
+    print('cnt_flip_errors', cnt_flip_errors)
+
+    for k in d_switch.keys():
+        print(k, d_switch[k], l_sampleIds1[k])
+
+    return
+
+
+def loop(args, generator1, generator2, l_indexes1, l_indexes2, f_out):
+
     ## Parse chromosome, positions, ref/alt allele and genotypes.
     chrom1, pos1, a11, a12, gts1 = next(generator1)
     chrom2, pos2, a21, a22, gts2 = next(generator2)
+    ## Previous GTs.
     gts_prev1 = [None]*len(gts1)
     gts_prev2 = [None]*len(gts2)
+    ## Were the previous GTs flipped. Used to determine whether switch or not.
     flip_prev = [None]*len(l_indexes1)
+    ## Position of previous heterozygous GT.
     pos_prev = [None]*len(l_indexes1)
-    error_prev = [None]*len(l_indexes1)
+    ## Was the previous position a switch error? Use to determine whether "flip error" of single.
+    flip_error_prev = [None]*len(l_indexes1)
+    ## Keep count of heterozygous GTs, etc.
     cnt_het = 0
     cnt_noswitch = 0
     cnt_switch = 0
@@ -46,6 +78,7 @@ def main():
     cnt_samples_gt_diff = 0
     cnt_flip_errors = 0
     d_switch = {i: 0 for i in l_indexes1}
+
     while True:
         if chrom1 == chrom2:
             if pos1 == pos2:
@@ -62,18 +95,28 @@ def main():
                 except StopIteration:
                     break
                 continue
-        elif args.chroms[chrom1] > args.chroms[chrom2]:
-            stop4
+        elif args.chroms.index(chrom1) > args.chroms.index(chrom2):
+            try:
+                chrom2, pos2, a21, a22, gts2 = next(generator2)
+            except StopIteration:
+                break
+            continue
         else:
-            stop5
-        print(chrom1, chrom2, pos1, pos2, a11, a12, a21, a22)
+            try:
+                chrom1, pos1, a11, a12, gts1 = next(generator1)
+            except StopIteration:
+                break
+            continue
+        if args.verbose:
+            print(chrom1, chrom2, pos1, pos2, a11, a12, a21, a22)
         cnt_sites_intersection += 1
         if all([a11 == a21, a12 == a22]):
             flip = False
         elif all([a11 == a22, a12 == a21]):
             flip = True
         else:
-            print(chrom1, chrom2, pos1, pos2, a11, a12, a21, a22)
+            if args.verbose:
+                print('diff', chrom1, chrom2, pos1, pos2, a11, a12, a21, a22)
             try:
                 chrom1, pos1, a11, a12, gts1 = next(generator1)
             except StopIteration:
@@ -86,6 +129,12 @@ def main():
         for i, (i1, i2) in enumerate(zip(l_indexes1, l_indexes2)):
             gt1 = gts1[i1]
             gt2 = gts2[i2]
+            assert gt1 in (
+                ('0', '0'), ('0', '1'), ('1', '0'), ('1', '1'),
+                ('./.'), ('.', '1'), ('1', '.')), 'Unexpected genotype'
+            assert gt2 in (
+                ('0', '0'), ('0', '1'), ('1', '0'), ('1', '1'),
+                ('./.'), ('.', '1'), ('1', '.')), 'Unexpected genotype'
             ## Genotype concordance, but not heterozygous.
             if flip == False and gt1 == ('1', '1',) and gt2 == ('1', '1'):
                 continue
@@ -103,10 +152,10 @@ def main():
                 continue
             elif gt2 == ('./.',):
                 continue
-            ## Not phased.
-            elif gt1 == ('0/1',):
+            ## Not phased. Separator is / instead of |.
+            elif len(gt1) == 1:
                 continue
-            elif gt2 == ('0/1',):
+            elif len(gt2) == 1:
                 continue
             ## WTF???
             elif gt1 == ('1', '.',):
@@ -129,7 +178,8 @@ def main():
                 if flip_prev[i] == None:
                     pass
                 elif flip:
-                    print('curr', pos1, gt1, gt2, flip)
+                    if args.verbose:
+                        print('curr', pos1, gt1, gt2, flip)
                     if any([
                         all([
                             flip_prev[i] == True,
@@ -162,12 +212,15 @@ def main():
 #                        print('curr', pos1, gt1, gt2, flip)
 #                        print('prev', pos_prev[i], gts_prev1[i1], gts_prev2[i2], flip_prev[i])
                         cnt_switch += 1
+                        f_out.write('{}\t{}\n'.format(pos_prev[i], pos1))
                         if flip_error_prev[i]:
-                            cnt_flip_error += 2
+                            cnt_flip_errors += 2
+                            print('flip', pos1, pos2, gt1, gt2)
                         flip_error_prev[i] = True
                         d_switch[i1] += 1
                         if flip_prev == False:
                             stop11b
+                ## flip == False
                 else:
                     if any([
                         ## Neither switching.
@@ -176,12 +229,14 @@ def main():
                             gt1 == gts_prev1[i1],
                             gt2 == gts_prev2[i2],
                             ]),
+                        ## Switch.
                         all([
                             flip_prev[i] == True,
                             gt1[0] == gts_prev1[i1][1],
                             gt1[1] == gts_prev1[i1][0],
                             gt2 == gts_prev2[i2],
                             ]),
+                        ## Switch.
                         all([
                             flip_prev[i] == True,
                             gt1 == gts_prev1[i1],
@@ -205,16 +260,18 @@ def main():
                         if flip_prev == True:
                             stop22
                         cnt_switch += 1
+                        f_out.write('{}\t{}\n'.format(pos_prev[i], pos1))
                         d_switch[i1] += 1
                         if flip_error_prev[i]:
-                            cnt_flip_error += 2
+                            cnt_flip_errors += 2
+                        print('flip', pos1, pos2, gt1, gt2)
                         flip_error_prev[i] = True
                 ## Make current heterozygous genotype the previous one.
                 gts_prev1[i1] = gt1
                 gts_prev2[i2] = gt2
                 flip_prev[i] = flip
                 pos_prev[i] = pos1
-                break  # tmp!!!
+#                break  # tmp!!!
         
         try:
             chrom1, pos1, a11, a12, gts1 = next(generator1)
@@ -224,19 +281,11 @@ def main():
             chrom2, pos2, a21, a22, gts2 = next(generator2)
         except StopIteration:
             break
-        print()
 
-    print('cnt_het', cnt_het)
-    print('cnt_noswitch', cnt_noswitch)
-    print('cnt_switch', cnt_switch)
-    print('cnt_sites_intersection', cnt_sites_intersection)
-    print('cnt_samples_gt_diff', cnt_samples_gt_diff)
-    print('cnt_flip_error', cnt_flip_error)
-
-    for k in d_switch.keys():
-        print(k, d_switch[k], l_sampleIds1[k])
-
-    return
+    return (
+        cnt_het, cnt_noswitch, cnt_switch, cnt_sites_intersection,
+        cnt_samples_gt_diff, cnt_flip_errors, d_switch,
+        )
 
 
 def parse_sampleIds(args):
@@ -262,7 +311,6 @@ def parse_sampleIds(args):
 
     l_indexes1 = []
     l_indexes2 = []
-    print(d.keys(), i)
     for index1, sampleID1 in enumerate(d[0]['sampleIds']):
         try:
             index2 = d[1]['sampleIds'].index(sampleID1)
@@ -289,7 +337,7 @@ def parse_vcf(paths):
                 if line.startswith('#'):
                     continue
                 l = line.rstrip().split(sep='\t')
-                chrom = l[0]
+                chrom = l[0].replace('chr','')
                 pos = int(l[1])
                 a1 = l[3]
                 a2 = l[4]
@@ -321,9 +369,11 @@ def argparser():
 
     parser.add_argument('--paths1', required=True, nargs='+')
     parser.add_argument('--paths2', required=True, nargs='+')
+    parser.add_argument('--out', required=True)
     parser.add_argument(
-        '--chromosomes', nargs='+',
+        '--chroms', nargs='+',
         default=list(map(str, range(1,23)))+['X'])
+    parser.add_argument('--verbose', action='store_true')
 
     return parser.parse_args()
 
