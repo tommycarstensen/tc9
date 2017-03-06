@@ -11,24 +11,33 @@ def main():
 
     d_intersect = intersect_affy6_omni25()
 
-    with open('preselected.txt') as fr, open('preselected_annotated.txt', 'w') as fw:
+    path_out = 'preselected_annotated.txt'
+    with open('preselected.txt') as fr, open(path_out, 'w') as fw:
         ## Write single line header to output file.
         print(
             '#affyID', 'chrom', 'pos', 'ref', 'alt', '71mer',
             'rep_cnt', 'feature_cnt', 'rsID', 'gene_name(s)',
-            'AF_supAFR', 'CSQ', 'module(s)', 'intersectionAffy6Omni25', sep='\t', file=fw,
+            'AF_supAFR', 'CSQ', 'module(s)', 'intersectionAffy6Omni25',
+            sep='\t', file=fw,
             )
         ## Skip single line header in input file.
         for line in fr:
             break
         for i, line in enumerate(fr):
-#            if i < 60000: continue  # tmp!!!
+            if i < 70750: continue  # tmp!!!
+#            if i < 19005: continue  # tmp!!!
             print('\n{}'.format(i), line.rstrip())
             l = line.rstrip().split('\t')
             (
                 modules, affyID, chrom, pos, ref, alt, kmer,
                 rep_cnt, feature_cnt,) = l[:9]
             pos = int(pos)
+
+            ## Do chromosome Y from scratch with Yali.
+            if chrom in ('Y', 'MT'):
+                continue
+
+            ## Parse ref and alt if missing.
             if ref == '' and alt == '':
                 ref, alt = get_ref_alt_from_dbSNP(
                     chrom, pos,
@@ -53,6 +62,8 @@ def main():
             ## Replace separator / with word "and".
             modules = modules.replace('Jade/Rasmus', 'Jade and Rasmus')
             modules = set(modules.split('/'))
+            modules -= set(['ADME', 'Pharmacogenetics'])
+            modules -= set(['Autoimmune', 'Inflammatory'])
             try:
                 modules |= d_variant2module[':'.join([
                     chrom, str(pos), ref, alt])]
@@ -68,10 +79,6 @@ def main():
                 print(modules)
             else:
                 rsID = None
-
-            ## Do chromosome Y from scratch with Yali.
-            if chrom in ('Y', 'MT'):
-                continue
 
             Continue = parse_VR(chrom, pos, ref, alt, modules)
             if Continue:
@@ -163,11 +170,28 @@ def get_kmer(
             bytes_per_line_incl_line_break = int(l[4])
             d_fai[chrom] = {'length': byte_length, 'start': byte_start}
 
+    size_original = size
+
+    ## Parse from beginning of 71mer, so subtract half the size.
+    POS -= (size // 2)
+
+    ## Insertion.
     if REF == '-':
         POS += 1
         size -= 1
 
-    POS -= (size // 2)
+    ## Deletion.
+    elif ALT == '-' and len(REF) > 1:
+        size += len(REF) - 1
+
+    ## MNP
+    elif len(REF) == len(ALT) and len(REF) > 1:
+        size += len(REF) - 1
+
+    ## Deletion or MNP.
+    elif len(REF) > 1:
+        size += len(REF) - 1
+
     with open(path) as fd_ref:
         row1 = (POS - 1) // cnt
         row2 = (POS - 1 + size) // cnt
@@ -180,8 +204,18 @@ def get_kmer(
 
     assert len(read) == size
 
-    kmer1 = read[:size//2]+'['+REF+'/'+ALT.replace(',','/')+']'+read[-(size//2):]
-    kmer2 = read[:size//2]+'['+ALT.replace(',','/')+'/'+REF+']'+read[-(size//2):]
+    half1 = read[:size_original//2]
+    half2 = read[-(size_original//2):]
+#    ## Fudge solution...
+#    if len(REF) > 1 and ALT == '-':
+#        half1 = half1[:35]
+#        half2 = half2[-35:]
+
+#    ## Fudge assertion...
+#    assert len(half1) == 35 and len(half2) == 35, (len(half1), len(half2))
+
+    kmer1 = half1+'['+REF+'/'+ALT.replace(',','/')+']'+half2
+    kmer2 = half1+'['+ALT.replace(',','/')+'/'+REF+']'+half2
 
     return kmer1, kmer2
 
@@ -310,7 +344,7 @@ def parse_VR(chrom, pos, ref, alt, modules):
             tbx = pysam.TabixFile(path_vcf)
             for row in tbx.fetch(chrom, pos - 1, pos, parser=pysam.asTuple()):
                 with open('colocated_indel.txt', 'a') as f:
-                    f.write('\t'.join(row))
+                    f.write('\t'.join(row)+'\n')
                 return False
         ## Indel
         else:
@@ -327,7 +361,7 @@ def parse_VR(chrom, pos, ref, alt, modules):
             tbx = pysam.TabixFile(path_vcf)
             for row in tbx.fetch(chrom, pos - 1, pos, parser=pysam.asTuple()):
                 with open('colocated_SNP.txt', 'a') as f:
-                    f.write('\t'.join(row))
+                    f.write('\t'.join(row)+'\n')
                 return False
         ## Continue loop over preselected variants,
         ## if not found in the AGR prior to filtering.
@@ -338,9 +372,14 @@ def parse_VR(chrom, pos, ref, alt, modules):
 
 def parse_dbSNP(chrom, pos, ref, alt, line, modules):
 
-    path_vcf = '/lustre/scratch115/teams/sandhu/resources/ftp.ncbi.nih.gov/snp/organisms/human_9606_b149_GRCh37p13/VCF/All_20161121.norm.vcf.gz'
 #    path_vcf = '/lustre/scratch114/teams/sandhu/resources/ftp.ncbi.nih.gov/snp/organisms/human_9606_b147_GRCh37p13/VCF/All_20160601.vcf.gz'
-#    path_vcf = '/lustre/scratch115/resources/variation/Homo_sapiens/grch37/dbsnp_142.vcf.gz'
+    ## HLA and KIR were not on the alternate contigs in dbSNP142,
+    ## which makes life easier.
+    if 'HLA' in modules or 'KIR' in modules:
+        path_vcf = '/lustre/scratch115/resources/variation/Homo_sapiens/grch37/dbsnp_142.vcf.gz'
+    else:
+        path_vcf = '/lustre/scratch115/teams/sandhu/resources/ftp.ncbi.nih.gov/snp/organisms/human_9606_b149_GRCh37p13/VCF/All_20161121.norm.vcf.gz'
+
     tbx = pysam.TabixFile(path_vcf)
     row = None
     for row in tbx.fetch(chrom, pos - 1 - 1, pos, parser=pysam.asTuple()):
@@ -376,7 +415,7 @@ def parse_dbSNP(chrom, pos, ref, alt, line, modules):
             all([
                 int(row[1]) + 1 == pos,
                 len(row[3]) == len(ref) + 1,
-                len(row[4]) == 1,
+                set(map(len, row[4].split(','))) == set([1]),
                 alt == '-',
                 row[3][1:] == ref,
                 ]),
@@ -393,6 +432,11 @@ def parse_dbSNP(chrom, pos, ref, alt, line, modules):
     else:
         rsID = None
         triallelic_or_indel = False
+#        ## This SNP is on an alternate contig in dbSNP149.
+#        ## Fixed in preselected.txt by adding the rsID.
+#        if modules == 'HLA' and chrom == '6' and pos == 29783064:
+#            rsID = 'rs1077433'
+#            return rsID, triallelic_or_indel
         print('\n\n')
         print(line)
         print(chrom, pos)
@@ -400,19 +444,21 @@ def parse_dbSNP(chrom, pos, ref, alt, line, modules):
             fa.write(line)
         print('row', row[3], row[4])
         print('ref, alt', ref, alt)
-        ## A lot of the neurological disorder SNPs seem to be erroneous.
-        if all([
-            modules == 'Neurological disorders',
-            len(ref) == 1,
-            len(alt) == 1,
-            len(row[3]) == 1,
-            len(row[4]) == 1,
+        ## A lot of the neurological disorder markers seem to be erroneous.
+        if modules == 'Neurological disorders':
+            return rsID, triallelic_or_indel
+        elif all([
+            'Other rare coding variants' in modules,
+            ref == '-' or alt == '-' or set(map(len, alt.split(','))) != set([1]),
             ]):
+            return rsID, triallelic_or_indel
+        elif'Rare, possibly disease causing, mutations' in modules:
             return rsID, triallelic_or_indel
         print(modules)
 #        if line.split('\t')[1] in ('89016437'):
 #            return rsID, triallelic_or_indel
-        stop_not_in_dbSNP
+        print('stop_not_in_dbSNP')
+        exit()
 
     return rsID, triallelic_or_indel
 
