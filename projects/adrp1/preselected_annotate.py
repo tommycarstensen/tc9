@@ -24,8 +24,6 @@ def main():
         for line in fr:
             break
         for i, line in enumerate(fr):
-            if i < 70750: continue  # tmp!!!
-#            if i < 19005: continue  # tmp!!!
             print('\n{}'.format(i), line.rstrip())
             l = line.rstrip().split('\t')
             (
