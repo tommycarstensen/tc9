@@ -1,6 +1,7 @@
 import pyensembl
 import pysam
 from natsort import natsorted
+import os
 
 ensembl = pyensembl.EnsemblRelease(release=75)
 
@@ -12,6 +13,10 @@ def main():
     d_intersect = intersect_affy6_omni25()
 
     path_out = 'preselected_annotated.txt'
+    i = 0
+    while os.path.isfile(path_out):
+        i += 1
+        path_out = f'preselected_annotated_{i}.txt'
     with open('preselected.txt') as fr, open(path_out, 'w') as fw:
         ## Write single line header to output file.
         print(
@@ -84,24 +89,14 @@ def main():
 
             ## Parse the rsID from dbSNP if not on the line.
             if not rsID:
-                rsID, triallelic_or_indel = parse_dbSNP(
+                rsID = parse_dbSNP(
                     chrom, pos, ref, alt, line, modules)
+                ## Skip if not in dbSNP.
                 if rsID == None:
                     continue
-            else:
-                if len(ref) == 1 and len(alt) == 1:
-                    triallelic_or_indel = False
-                else:
-                    triallelic_or_indel = True
-
-            triallelic_or_indel = parse_AR(
-                chrom, pos, triallelic_or_indel=triallelic_or_indel)
 
             ## MVNcall output with triallelics not quite ready yet...
-            if not triallelic_or_indel:
-                AF_supAFR, CSQ = parse_annotations(chrom, pos)
-            else:
-                AF_supAFR = CSQ = 'NA'
+            AF_supAFR, CSQ = parse_annotations(chrom, pos)
 
             if pos in d_intersect[chrom]:
                 intersect = True
@@ -110,8 +105,11 @@ def main():
 
             print(
                 affyID, chrom, pos, ref, alt, kmer, rep_cnt, feature_cnt,
-                rsID, gene_names, AF_supAFR, CSQ, modules, intersect, file=fw, sep='\t',
+                rsID, gene_names, AF_supAFR, CSQ, modules, intersect,
+                file=fw, sep='\t',
                 )
+
+            print(i, line)
 
             continue
 
@@ -216,20 +214,6 @@ def get_kmer(
     kmer2 = half1+'['+ALT.replace(',','/')+'/'+REF+']'+half2
 
     return kmer1, kmer2
-
-
-def parse_AR(chrom, pos, triallelic_or_indel=False):
-
-    path_vcf = '../../../pipeline_UG3.4_recall_union/out_ApplyRecalibration/{}.vcf.gz'.format(chrom)
-    tbx = pysam.TabixFile(path_vcf)
-    ## Break if found.
-    for row in tbx.fetch(chrom, pos - 1, pos, parser=pysam.asTuple()):
-        if len(row[4].split(',')) > 1:
-            triallelic = triallelic_or_indel = True
-        elif len(row[3]) > 1 or len(row[4]) > 1:
-            indel = triallelic_or_indel = True
-
-    return triallelic_or_indel
 
 
 def parse_annotations(chrom, pos):
@@ -419,22 +403,9 @@ def parse_dbSNP(chrom, pos, ref, alt, line, modules):
                 ]),
             ]):
             rsID = row[2]
-            if len(row[4].split(',')) > 1:
-                triallelic = triallelic_or_indel = True
-            elif len(row[3]) > 1 or len(row[4]) > 1:
-                indel = triallelic_or_indel = True
-            else:
-                triallelic_or_indel = False
             break
     ## Not found in dbSNP.
     else:
-        rsID = None
-        triallelic_or_indel = False
-#        ## This SNP is on an alternate contig in dbSNP149.
-#        ## Fixed in preselected.txt by adding the rsID.
-#        if modules == 'HLA' and chrom == '6' and pos == 29783064:
-#            rsID = 'rs1077433'
-#            return rsID, triallelic_or_indel
         print('\n\n')
         print(line)
         print(chrom, pos)
@@ -444,21 +415,20 @@ def parse_dbSNP(chrom, pos, ref, alt, line, modules):
         print('ref, alt', ref, alt)
         ## A lot of the neurological disorder markers seem to be erroneous.
         if modules == 'Neurological disorders':
-            return rsID, triallelic_or_indel
+            rsID = None
         elif all([
             'Other rare coding variants' in modules,
             ref == '-' or alt == '-' or set(map(len, alt.split(','))) != set([1]),
             ]):
-            return rsID, triallelic_or_indel
+            rsID = None
         elif'Rare, possibly disease causing, mutations' in modules:
-            return rsID, triallelic_or_indel
-        print(modules)
-#        if line.split('\t')[1] in ('89016437'):
-#            return rsID, triallelic_or_indel
-        print('stop_not_in_dbSNP')
-        exit()
+            rsID = None
+        else:
+            print(modules)
+            print('stop_not_in_dbSNP')
+            exit()
 
-    return rsID, triallelic_or_indel
+    return rsID
 
 if __name__ == '__main__':
     main()
