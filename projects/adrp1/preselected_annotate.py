@@ -18,6 +18,8 @@ def main():
         i += 1
         path_out = f'preselected_annotated_{i}.txt'
 
+    path_ref = '/lustre/scratch115/resources/ref/Homo_sapiens/1000Genomes_hs37d5/hs37d5.fa'
+
     with open('preselected.txt') as fr, open(path_out, 'w') as fw:
         ## Write single line header to output file.
         print(
@@ -31,7 +33,6 @@ def main():
             break
         ## Loop over data lines of input file.
         for i, line in enumerate(fr):
-#            if i < 66568:  continue  # tmp!!!
             print('\n{}'.format(i), line.rstrip())
             l = line.rstrip().split('\t')
             (
@@ -39,9 +40,6 @@ def main():
                 rep_cnt, feature_cnt,) = l[:9]
             ## Convert position from string to integer.
             pos = int(pos)
-#            if pos not in (53011955, 91122288): continue  # tmp!!!
-
-            assert ref == read_reference(path, POS, size), (ref, affyID, chrom, pos, ref, alt, read_reference(path, POS, size))
 
             ## Do chromosome Y from scratch with Yali.
             if chrom in ('Y', 'MT'):
@@ -54,6 +52,8 @@ def main():
                     '/lustre/scratch115/teams/sandhu/resources/ftp.ncbi.nih.gov/snp/organisms/human_9606_b149_GRCh37p13/VCF/All_20161121.norm.vcf.gz',
                     )
             assert alt[0] != '"'
+
+            assert ref[0] in ('-', read_reference(chrom, pos, path_ref)), (ref, affyID, chrom, pos, ref, alt, read_reference(chrom, pos, path_ref))
 
             if rep_cnt == '':
                 rep_cnt = 'NA'
@@ -181,7 +181,7 @@ def get_kmer(
     elif len(REF) > 1:
         size += len(REF) - 1
 
-    read = read_reference(path, POS, size)
+    read = read_reference(CHROM, POS, path, size=size)
 
     half1 = read[:size_original//2]
     half2 = read[-(size_original//2):]
@@ -199,7 +199,7 @@ def get_kmer(
     return kmer1, kmer2
 
 
-def read_reference(path, POS, size, d_fai):
+def read_reference(CHROM, POS, path, size=1):
 
     ## This should be read from the fai file instead, but I'm lazy...
     cnt = cnt_chars_per_line_excluding_newline = 60
