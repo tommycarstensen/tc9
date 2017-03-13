@@ -17,6 +17,7 @@ def main():
     while os.path.isfile(path_out):
         i += 1
         path_out = f'preselected_annotated_{i}.txt'
+
     with open('preselected.txt') as fr, open(path_out, 'w') as fw:
         ## Write single line header to output file.
         print(
@@ -28,13 +29,19 @@ def main():
         ## Skip single line header in input file.
         for line in fr:
             break
+        ## Loop over data lines of input file.
         for i, line in enumerate(fr):
+#            if i < 66568:  continue  # tmp!!!
             print('\n{}'.format(i), line.rstrip())
             l = line.rstrip().split('\t')
             (
                 modules, affyID, chrom, pos, ref, alt, kmer,
                 rep_cnt, feature_cnt,) = l[:9]
+            ## Convert position from string to integer.
             pos = int(pos)
+#            if pos not in (53011955, 91122288): continue  # tmp!!!
+
+            assert ref == read_reference(path, POS, size), (ref, affyID, chrom, pos, ref, alt, read_reference(path, POS, size))
 
             ## Do chromosome Y from scratch with Yali.
             if chrom in ('Y', 'MT'):
@@ -152,20 +159,6 @@ def get_kmer(
     path='/lustre/scratch115/resources/ref/Homo_sapiens/1000Genomes_hs37d5/hs37d5.fa',
     ):
 
-    ## This should be read from the fai file instead, but I'm lazy...
-    cnt = cnt_chars_per_line_excluding_newline = 60
-
-    d_fai = {}
-    with open(path+'.fai') as file_fai:
-        for line_fai in file_fai:
-            l = line_fai.rstrip().split()
-            chrom = l[0]
-            byte_length = int(l[1])
-            byte_start = int(l[2])
-            bytes_per_line_excl_line_break = int(l[3])
-            bytes_per_line_incl_line_break = int(l[4])
-            d_fai[chrom] = {'length': byte_length, 'start': byte_start}
-
     size_original = size
 
     ## Parse from beginning of 71mer, so subtract half the size.
@@ -188,17 +181,7 @@ def get_kmer(
     elif len(REF) > 1:
         size += len(REF) - 1
 
-    with open(path) as fd_ref:
-        row1 = (POS - 1) // cnt
-        row2 = (POS - 1 + size) // cnt
-        bytesize = size + row2 - row1
-        col = (POS - 1) % cnt
-        byte_init = d_fai[CHROM]['start']
-        offset = byte_init + (cnt + 1) * row1 + col
-        fd_ref.seek(offset)
-        read = fd_ref.read(bytesize).replace('\n', '')
-
-    assert len(read) == size
+    read = read_reference(path, POS, size)
 
     half1 = read[:size_original//2]
     half2 = read[-(size_original//2):]
@@ -214,6 +197,38 @@ def get_kmer(
     kmer2 = half1+'['+ALT.replace(',','/')+'/'+REF+']'+half2
 
     return kmer1, kmer2
+
+
+def read_reference(path, POS, size, d_fai):
+
+    ## This should be read from the fai file instead, but I'm lazy...
+    cnt = cnt_chars_per_line_excluding_newline = 60
+
+    ## It's a bit stupid opening the .fai each time, but I'm lazy...
+    d_fai = {}
+    with open(path+'.fai') as file_fai:
+        for line_fai in file_fai:
+            l = line_fai.rstrip().split()
+            chrom = l[0]
+            byte_length = int(l[1])
+            byte_start = int(l[2])
+            bytes_per_line_excl_line_break = int(l[3])
+            bytes_per_line_incl_line_break = int(l[4])
+            d_fai[chrom] = {'length': byte_length, 'start': byte_start}
+
+    with open(path) as fd_ref:
+        row1 = (POS - 1) // cnt
+        row2 = (POS - 1 + size) // cnt
+        bytesize = size + row2 - row1
+        col = (POS - 1) % cnt
+        byte_init = d_fai[CHROM]['start']
+        offset = byte_init + (cnt + 1) * row1 + col
+        fd_ref.seek(offset)
+        read = fd_ref.read(bytesize).replace('\n', '')
+
+    assert len(read) == size
+
+    return read
 
 
 def parse_annotations(chrom, pos):
@@ -265,6 +280,9 @@ def parse_gene_names(chrom, pos):
     ## https://en.wikipedia.org/wiki/Overlapping_gene
 #    assert len(gene_names) <= 2, gene_names
     gene_names = '; '.join(natsorted(gene_names))
+
+    if gene_names == '':
+        gene_names = 'NA'
 
     return gene_names
 
