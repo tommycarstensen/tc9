@@ -77,13 +77,14 @@ def read_vcf(ACminor_min=2):
         for rec in vcf.fetch('Y'):
             ## Count genotype occurences in record.
             x = collections.Counter(
-                (s.split(':', 1)[0] for s in str(rec).split()[9:]))
+                (s['GT'] for s in rec.samples.values()))
             ## Check that minor allele count is greater than minimum.
-            if n_samples - x['.'] - x['0'] < ACminor_min:
+            if n_samples - x[(None,)] - x[(0,)] < ACminor_min:
                 continue
-            if x['0'] < ACminor_min:
+            if x[(0,)] < ACminor_min:
                 continue
             set_AGR.add(rec.pos)
+            stop5
         df_AGR = pd.DataFrame(list(set_AGR), columns=('pos',))
         df_AGR.to_csv('df_AGR.csv', index=False)
         print('Fetched {} records.'.format(len(set_AGR)))
