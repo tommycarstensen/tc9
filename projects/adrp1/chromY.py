@@ -84,7 +84,6 @@ def read_vcf(ACminor_min=2):
             if x[(0,)] < ACminor_min:
                 continue
             set_AGR.add(rec.pos)
-            stop5
         df_AGR = pd.DataFrame(list(set_AGR), columns=('pos',))
         df_AGR.to_csv('df_AGR.csv', index=False)
         print('Fetched {} records.'.format(len(set_AGR)))
@@ -305,7 +304,7 @@ def pick_from_haplogroups(
     print(
         cnt00, cnt0, cnt1, cnt2, cnt3, cnt4,
         sum((cnt00, cnt0, cnt1, cnt2, cnt3, cnt4)),
-        sum((cnt00, cnt0, cnt1, cnt2, cnt3, cnt4))-cnt00,
+        sum((cnt00, cnt0, cnt1, cnt2, cnt3, cnt4)) - cnt00,
         )
     print('All selected haplogroups', len(df_selected['haplogroup'].unique()))
     print(
