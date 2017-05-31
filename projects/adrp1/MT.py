@@ -8,6 +8,19 @@ def main():
         f.seek(3147273397)
         refseq = f.read(16805).replace('\n', '')
 
+    d_affy = {}
+    with open('Candidate_Y_Mito.txt') as f:
+        for l in map(str.split, f):
+            if not l[1] == 'MT':
+                continue
+            affy_snp_id = l[0]
+            pos = l[2]
+            ref = l[3]
+            alt = l[4]
+            d_affy[ref + pos + alt] = affy_snp_id
+
+    positions = set()
+    print('#line, ref, pos, alt, haplogroup, ID_affy')
     for path in glob.glob('phylotree/*.txt'):
         haplogroup = os.path.splitext(os.path.basename(path))[0]
         with open(path) as f:
@@ -33,12 +46,20 @@ def main():
                     else:
                         alt = line[0].upper()
                         assert ref == line[-1].upper()
-                print(line, ref, pos, alt, sep='\t')
+                if not pos in positions:
+                    try:
+                        ID_affy = d_affy[ref + str(pos) + alt]
+                    except KeyError:
+                        ID_affy = 'NA'
+                    print(line, ref, pos, alt, haplogroup, ID_affy, sep='\t')
+                    positions.add(pos)
 
     with open('MT-RNR1.txt') as f:
         for line in map(str.strip, f):
             ID, pos, ref, alt = line.split()
-            print(ref + pos + alt, ref, pos, alt, sep='\t')
+            assert pos not in positions
+            ID_affy = d_affy[ref + str(pos) + alt]
+            print(ref + pos + alt, ref, pos, alt, 'NA', ID_affy, sep='\t')
 
     return
 
