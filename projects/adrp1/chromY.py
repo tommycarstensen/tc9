@@ -127,8 +127,8 @@ def concatenate_and_print(df_step1, df_step2, df_step3, df_step4):
             continue
         assert row.alt == ref, row
         ## Switch ref and alt.
-        df_concat.set_value(i, 'ref', row.alt)
-        df_concat.set_value(i, 'alt', row.ref)
+        df_concat.loc[df_concat['SNP'] == row.SNP, 'ref'] = row.alt
+        df_concat.loc[df_concat['SNP'] == row.SNP, 'alt'] = row.ref
 
     df_concat.to_csv(
         'chromY_{}.tsv'.format(time.strftime("%Y%m%d-%H%M%S")),
