@@ -3,10 +3,6 @@ bin=/software/gapi/pkg/star/2.5.2b/bin/STAR
 samtools=/software/hgi/pkglocal/samtools-1.3/bin/samtools
 tabix=/software/hgi/pkglocal/htslib-1.3/bin/tabix
 
-# --genomeDir genome_index_37.75 \
-# --genomeFastaFiles Homo_sapiens.GRCh37.75.dna.primary_assembly.fa \
-# --sjdbGTFfile Homo_sapiens.GRCh37.75.gtf \
-
 build=$1
 if [ $build -eq 37 ]; then
 affix=37.75
@@ -26,35 +22,32 @@ chmod 777 $outFileNamePrefix
 
 files1=$4
 files2=$5
+runThreadN=$6
 
 cmd="$bin \
  --runMode alignReads \
- --runThreadN 12 \
+ --runThreadN $runThreadN \
  --genomeDir genome_index_$affix \
  --readFilesIn $files1 $file2 \
  --readFilesCommand zcat \
  --outFileNamePrefix $outFileNamePrefix \
- --outSAMtype BAM Unsorted SortedByCoordinate \
+ --outSAMtype BAM SortedByCoordinate \
  --quantMode GeneCounts \
 "
 
+echo $cmd
+
 if [ $pass -eq 2 ]; then
-cmd=$cmd&" --sjdbFileChrStartEnd out_STAR/$affix/pass1/*/SJ.out.tab \ "
+## limitSjdbInsertNsj
+## maximum number of junction to be inserted to the genome on the fly
+## at the mapping stage, including those from annotations and those detected in
+## the 1st step of the 2-pass run
+cmd=$cmd" --limitSjdbInsertNsj 3000000 "
+echo $cmd
+cmd=$cmd" --sjdbFileChrStartEnd out_STAR/$affix/pass1/*/SJ.out.tab "
 fi
 
-echo $cmd
 eval $cmd
 
-# --outSAMtype BAM Unsorted SortedByCoordinate \
-
-# --readFilesIn fasta/*.fasta.gz \
-
-# --readFilesIn \
-#  $(ls split_fasta/*/1.fasta.gz | sort -V | tr "\n" ",") \
-#  $(ls split_fasta/*/2.fasta.gz | sort -V | tr "\n" ",") \
-
-# --readFilesIn bam/*#[1-9]*.bam \
-
-#$samtools sort $outFileNamePrefix/Aligned.out.sorted.bam
 $samtools index $outFileNamePrefix/Aligned.sortedByCoord.out.bam
 
