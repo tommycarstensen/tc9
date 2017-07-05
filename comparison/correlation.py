@@ -22,6 +22,7 @@ import fileinput
 import re
 import sys
 import gzip
+import itertools
 
 
 def main():
@@ -29,6 +30,8 @@ def main():
     d_args = argparser()
 
     d_samples, d_indexes = index_samples(d_args)
+
+    os.makedirs(os.path.dirname(d_args['affix']), exist_ok=True)
 
     with contextlib.ExitStack() as stack:
 
@@ -181,7 +184,8 @@ def loop_main(
         for k in d_correl.keys():
             d_correl[k][MAF] = 0
 
-    with open('%s.tmp' %(affix), 'w') as fd_out:
+    with open('%s.per_SNP.r2.txt' %(affix), 'w') as fd_out:
+        fd_out.write('#CHROM POS MAF R2 AC\n')
         d_correl, d_stats = loop_sub(
             kwargs1, kwargs2, fd_out, func1, func2, f_extract,
             d_indexes,
@@ -189,7 +193,7 @@ def loop_main(
             d_samples,
             )
 
-    with open('{}.r2.txt'.format(affix), 'w') as fd_out:
+    with open('{}.per_MAF.r2.txt'.format(affix), 'w') as fd_out:
         for MAF in range(0, 51):
 ##            nom = (
 ##                d_correl['xy'][MAF] - (
@@ -394,24 +398,19 @@ def loop_sub(
                 break
 
         ## calculate MAF
-        try:
-            MAF = 50*sum_x/n
-        except:
-            print(genotypes1)
-            print(genotypes2)
-            MAF = 50*sum_x/n
-        if MAF > 50:
-            MAF = 100-MAF
-        MAF = int(MAF)
+        MAF_x = sum2maf(sum_x, n)
+        MAF_y = sum2maf(sum_y, n)
+        AC_x = sum_x
+        AC_y = sum_y
 ##        MAF = math.ceil(MAF)
 
         ## append
-        d_correl['x'][MAF] += sum_x
-        d_correl['y'][MAF] += sum_y
-        d_correl['xx'][MAF] += sum_xx
-        d_correl['xy'][MAF] += sum_xy
-        d_correl['yy'][MAF] += sum_yy
-        d_correl['n'][MAF] += n
+        d_correl['x'][MAF_x] += sum_x
+        d_correl['y'][MAF_x] += sum_y
+        d_correl['xx'][MAF_x] += sum_xx
+        d_correl['xy'][MAF_x] += sum_xy
+        d_correl['yy'][MAF_x] += sum_yy
+        d_correl['n'][MAF_x] += n
 
         ## calculate r2
         nom = (sum_xy-sum_x*sum_y/n)
@@ -424,16 +423,34 @@ def loop_sub(
 ##                nom == 0 and sum_x ==0 and sum_y == 0
 ##                and sum_xx == 0 and sum_yy == 0 and sum_xy == 0:
             if False:
-                r1 = 1
+                r2 = 1
             else:
                 r2 = None
-                ## monomorphic
-                if round(nom, 6) == 0:
+                ## One monomorphic, but the other not, so we can't calculate correlation.
+                if (sum_x == 0 and sum_y > 0) or (sum_x > 0 and sum_y == 0):
+                    pass
+                ## Both monomorphic, so correlation can't be calculated.
+                elif sum_x == 0 and sum_y == 0:
+                    pass
+                ## Both monomorphic.
+                elif sum_x == 2*n and sum_y == 2*n:
+                    pass
+                ## One monomorphic.
+                elif sum_x == 2*n or sum_y == 2*n:
+                    pass
+                elif round(nom, 6) == 0:
+                    print(nom)
+                    print(sum_x, sum_y, sum_xy, sum_xx, sum_yy)
+                    print(n, 2*n)
+                    print(genotypes1)
+                    print(genotypes2)
+                    stoptmp
                     pass
                 ## monomorphic
 #                elif l_x == len(l_x)*[x] or l_y == len(l_y)*[y]:
 #                    pass
                 elif sum_x == 2*n or sum_y == 2*n:
+                    stoptmp
                     pass
                 elif (sum_x == 0 or sum_y == 0):
                     stop
@@ -461,12 +478,15 @@ def loop_sub(
 ##            print(l_x)
 ##            print(l_y)
 ##            stop2
+            pass
+
         else:
             r2 = nom**2/abs(den_sq)
-            fd_out.write('%s %s %s %s\n' %(chrom1, pos1, MAF, r2))
-            d_correl['r2'][MAF] += r2
-            d_correl['cnt'][MAF] += 1
 
+        if r2 is not None:
+            fd_out.write('%s %s %s %s %s %s %s\n' %(chrom1, pos1, MAF_x, r2, AC_x, MAF_y, AC_y))
+            d_correl['r2'][MAF_x] += r2
+            d_correl['cnt'][MAF_x] += 1
             pass
 
         try:
@@ -477,14 +497,25 @@ def loop_sub(
         except StopIteration:
             break
 
-        ## How far have we come?
-        if pos1 % 10000 == 0:
-            print(chrom1, pos1)  # tmp!!!
-
         ## continue loop over SNPs
         continue
 
     return d_correl, d_stats
+
+
+def sum2maf(sum_x, n):
+
+    try:
+        MAF = 50*sum_x/n
+    except:
+        print(genotypes1)
+        print(genotypes2)
+        MAF = 50*sum_x/n
+    if MAF > 50:
+        MAF = 100-MAF
+    MAF = int(MAF)
+        
+    return MAF
 
 
 def calc_sums_and_sum_of_squares(
@@ -635,7 +666,7 @@ def parse_dosage_vcf(l_vcf, i_sample):
 ##        l_vcf[i_sample+9].split(':')[2].split(',')))
 
     ## It's pretty fucking stupid doing this for each SNP and for each sample!
-    for k in ('PL', 'DS', 'GL'):
+    for k in ('DS', 'PL', 'GL'):
         try:
             index = l_vcf[8].split(':').index(k)
             break
@@ -652,22 +683,26 @@ def parse_dosage_vcf(l_vcf, i_sample):
     else:
         if k == 'PL':
             PL = l_vcf[index].split(',')
-            ## assume biallelic variant
-            try:
-                assert len(PL) == 3
-            except:
-                print(l_vcf)
-                stop
+            if PL == ['.']:
+                ## set dosage to zero if PL missing
+                dosage = 0
+            else:
+                ## assume biallelic variant
+                try:
+                    assert len(PL) == 3
+                except:
+                    print(l_vcf, PL)
+                    stop
     ##        dosage = sum(
     ##            i*prob for i, prob in enumerate(
     ##                pow(10,-int(log10likelihood)/10)
     ##                for log10likelihood in PL))
-            ## calculate probabilities once
-            l_probs = [
-                pow(10, -int(log10likelihood)/10) for log10likelihood in PL]
-            ## evaluate sum once
-            sum_prob = sum(l_probs)
-            dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
+                ## calculate probabilities once
+                l_probs = [
+                    pow(10, -int(log10likelihood)/10) for log10likelihood in PL]
+                ## evaluate sum once
+                sum_prob = sum(l_probs)
+                dosage = sum(i*prob/sum_prob for i, prob in enumerate(l_probs))
         elif k == 'DS':
             dosage = float(l_vcf[index])
         elif k == 'GL':
@@ -775,7 +810,7 @@ def index_samples(d_args):
             if d_args['sample%i' %(i)]:
                 with open(d_args['sample{}'.format(i)]) as f:
                     l_samples = [
-                        line.split()[0] for line in f.readlines()[2:]]
+                        line.split()[1] for line in f.readlines()[2:]]
             else:
                 l_samples = None
         else:
@@ -800,6 +835,9 @@ def index_samples(d_args):
             if not d_samples[1]:
                 d_samples[1] = d_samples[2]
             else:
+                print(d_samples[1])
+                print(d_samples[2])
+                print(d_cnt)
                 stoptmp
         else:
             print(d_cnt)
@@ -821,11 +859,11 @@ def index_samples(d_args):
             intersect2.add(d_sampledic[sample1])
         ## sample not at intersection
         except ValueError:
-            print('not found in sample dic', sample1)
+            print('#not found in sample dic', sample1)
             continue
         ## not in sample dic
         except KeyError:
-            print('not intersect', sample1)
+            print('#not intersect', sample1)
             continue
         d_indexes[1] += [index1]
         d_indexes[2] += [index2]
@@ -846,16 +884,17 @@ def index_samples(d_args):
     print(
         'indexes', len(d_indexes[1]), len(d_indexes[2]),
         'samples', len(d_samples[1]), len(d_samples[2]),
-        '\n', d_samples[1][d_indexes[1][0]], d_samples[1][d_indexes[1][-1]],
-        '\n', d_samples[2][d_indexes[2][0]], d_samples[2][d_indexes[2][-1]],
+        '\ncorresponding samples',
+        '\n', d_samples[1][d_indexes[1][0]], d_samples[2][d_indexes[2][0]],
+        '\n', d_samples[1][d_indexes[1][-1]], d_samples[2][d_indexes[2][-1]],
         )
 
-    print('not found')
-    print(samples1-intersect1)
-    print(samples2-intersect2)
+    print('not found', len(samples1-intersect1), len(samples2-intersect2))
+    print(list(samples1-intersect1)[:10])
+    print(list(samples2-intersect2)[:10])
 
-    print(d_samples)
-    print(d_indexes)
+    print('\ncorresponding indeces')
+    print(d_indexes[1][:10], d_indexes[2][:10])
 
     return d_samples, d_indexes
 
