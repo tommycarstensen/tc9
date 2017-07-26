@@ -20,6 +20,7 @@ import statsmodels.api as sm
 import numpy as np
 ##from scipy.stats import chi2
 import scipy
+from pyliftover import LiftOver
 
 
 def main():
@@ -51,10 +52,12 @@ def main():
     ## Gene annotations a local maxima.
     annotations = []
     y_max = 0
+    d_pos_init_chrom = {}
     for chrom, split_lines in itertools.groupby(
         split_line(fi), operator.itemgetter(args.chrom)):
         print('Looping over chromosome', chrom, file=sys.stderr)
-        pos_init_chrom += pos_prev + 1000000  # todo: make argument
+        pos_init_chrom += pos_prev + 1500000  # todo: make argument
+        d_pos_init_chrom[chrom] = pos_init_chrom
         colors = next(cycle_colors)
         x_ticks.append((None, None))
         pos = 0
@@ -80,6 +83,7 @@ def main():
             l_x.append(x)
             l_y.append(y)
             l_prob.append(prob)
+            ## Place a chromosome tick halfway through the chromosome basepair range.
             x_ticks[-1] = (pos_init_chrom + pos / 2, chrom)
             if prob > args.threshold_p:
                 l_c.append(colors[0])
@@ -143,7 +147,8 @@ def main():
 
     plot_qq(args, l_y, l_prob)
     plt.clf()
-    plot_manhattan(args, annotations, l_x, l_y, l_c, x_ticks, y_max)
+    plot_manhattan(
+        args, annotations, l_x, l_y, l_c, x_ticks, y_max, d_pos_init_chrom)
 
     return
 
@@ -159,7 +164,7 @@ def plot_qq(args, l_y, l_prob):
     with open('{}.qq.txt'.format(args.out), 'w') as f:
         f.write(str(inflation)+'\n')
     plt.text(
-        0.80, 0.05, '$\lambda={:.2f}$\n$n={:,}$'.format(inflation, len(l_y)), transform=plt.gca().transAxes, fontsize=7,
+        0.76, 0.02, '$\lambda$ = {:.2f}\nn = {:,}'.format(inflation, len(l_y)), transform=plt.gca().transAxes, fontsize=7,
         verticalalignment='bottom',
         bbox=dict(boxstyle='round', facecolor='blue', alpha=0.5),
         )
@@ -203,17 +208,71 @@ def ppoints(n, a=0.5):
     return (np.arange(n) + 1 - a)/(n + 1 - 2*a)
 
 
-def plot_manhattan(args, annotations, l_x, l_y, l_c, x_ticks, y_max):
+def plot_manhattan(
+    args, annotations, l_x, l_y, l_c, x_ticks, y_max, d_pos_init_chrom):
+
+    y_max = max(int(y_max + 3), args.min_y)
+
+    if args.EFO:
+        ## Just make some assumptions about builds here for now.
+        ## https://en.wikipedia.org/wiki/Reference_genome
+        lo = LiftOver('hg38', 'hg19')
+        with open(args.EFO) as f:
+            cnt = collections.Counter()
+            for line in f:
+                cnt[line.split('\t')[7]] += 1
+            trait_most_common = cnt.most_common(1)[0][0]
+        with open(args.EFO) as f:
+            ## Skip header.
+            for line in f:
+                break
+            for line in f:
+                l = line.split('\t')
+#                ## Try to weed out all the garbage present in the GWAS catalog.
+#                if not l[7] == trait_most_common:
+#                    continue
+                CHR_ID = l[11]
+                ## Skip if missing data.
+                if CHR_ID == '':
+                    continue
+                try:
+                    CHR_POS = int(l[12])
+                ## Continue if CHR_POS is not an integer.
+                except ValueError:
+                    continue
+                rsID = l[21]
+                y = PVALUE_MLOG = min(y_max, float(l[28]))
+#                if y < -math.log10(args.threshold_p):
+#                    continue
+                try:
+                    x = d_pos_init_chrom[CHR_ID] + lo.convert_coordinate(
+                        'chr{}'.format(CHR_ID), CHR_POS)[0][1]
+                except KeyError:
+                    assert CHR_ID == 'X'
+                    continue
+                except IndexError:
+                    print('IndexError', CHR_ID, CHR_POS, lo.convert_coordinate('chr{}'.format(CHR_ID), CHR_POS), file=sys.stderr)
+                    continue
+#                l_x.append(x)
+#                l_y.append(y)
+#                l_c.append('#FF0000')
+                ## Colour most frequently occuring trait red.
+                if l[7] == trait_most_common:
+                    plt.vlines(x, 0, y, colors='#FF0000', linewidth=0.5, linestyle='--')
+                ## Colour less frequently occuring traits orange,
+                ## because these might be junk in the GWAS catalog.
+                else:
+                    plt.vlines(x, 0, y, colors='#FF8000', linewidth=0.5, linestyle='--')
 
     n = len(l_y)
 
     plt.ylabel(r'-log$_{10}$($p$)')
 
-    plt.axhline(-math.log10(0.05 / n), color='0.8', linewidth=0.5)
-    plt.axhline(-math.log10(5 * 10 ** -8), color='0.5', linewidth=0.5)
-    plt.axhline(-math.log10(args.threshold_p), color='0.2', linewidth=0.5)
+#    plt.axhline(-math.log10(0.05 / n), color='0.8', linewidth=0.5)
+#    plt.axhline(-math.log10(5 * 10 ** -8), color='0.5', linewidth=0.5)
+    plt.axhline(-math.log10(args.threshold_p), color='0.2', linewidth=0.5, linestyle='--')
     try:
-        plt.ylim((0, max(int(y_max + 3), args.min_y)))  # todo: make argument
+        plt.ylim((0, y_max))  # todo: make argument
     except:
         pass
 
@@ -223,7 +282,8 @@ def plot_manhattan(args, annotations, l_x, l_y, l_c, x_ticks, y_max):
     plt.title(args.title, fontsize='small')
 
     for annotation in annotations:
-        if annotation['prob'] > 0.05 / n:
+#        if annotation['prob'] > 0.05 / n:
+        if annotation['prob'] > args.threshold_p:
             continue
         print('\t'.join(
             [str(annotation[k]) for k in sorted(annotation.keys())]))
@@ -330,9 +390,9 @@ def argparser():
 
     parser.add_argument('--title', required=True)
     parser.add_argument('--input', required=True, nargs='+')
-    parser.add_argument('--threshold_p', default=5 * 10 ** -8, type=float)
+    parser.add_argument('--threshold_p', default=1 * 10 ** -9, type=float)
     parser.add_argument('--threshold_maf', default=0, type=float)
-    parser.add_argument('--min_y', default=12, type=int)
+    parser.add_argument('--min_y', default=50, type=int)
     parser.add_argument(
         '--dbSNP', '--rsID', required=True,
         help='Path to dbSNP VCF or column of rsIDs')
@@ -346,8 +406,10 @@ def argparser():
     parser.add_argument('--ref', type=int)
     parser.add_argument('--alt', type=int)
     parser.add_argument('--af', type=int)
+    parser.add_argument('--EFO')
 
     args = parser.parse_args()
+
     if not args.out:
         args.out = args.title
     if args.threshold_maf:
