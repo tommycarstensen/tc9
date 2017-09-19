@@ -248,6 +248,8 @@ class main():
                     d_args['nt'] = nt
                     d_args['sample_ploidy'] = sample_ploidy
                     d_args['memMB'] = memMB
+                    if chrom == 'MT':
+                        d_args['memMB'] = 191900
                     arguments = self.args_dict2str(d_args)
 
                     LSB_JOBNAME = '{}.{}.{} {}'.format('UG', chrom, i, sex)
@@ -264,6 +266,8 @@ class main():
                             LSF_queue = 'long'
                     ## chr6	58700000	61000000	p11.1	acen
                     if chrom == '6' and pos1 <= 58700001 and pos2 >= 58800000:
+                        LSF_memMB = 191900
+                    if chrom == 'MT':
                         LSF_memMB = 191900
 ##                    url = 'http://hgdownload.cse.ucsc.edu/goldenPath/hg19/database/cytoBand.txt.gz'
 ##                    with urllib.request.urlopen(url) as response, \
@@ -484,6 +488,9 @@ class main():
             lines += [' --alleles {} \\'.format(self.alleles)]
             lines += [' --interval_set_rule INTERSECTION \\']
 
+        ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--pcr_indel_model
+        lines += [' --pcr_indel_model {} \\'.format(self.pcr_indel_model)]
+
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         if self.dbsnp:
             lines += [' --dbsnp {} \\'.format(self.dbsnp)]
@@ -503,18 +510,14 @@ class main():
         lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
         if self.coverage > 10:
             lines += [' -stand_call_conf 30 \\']
-            lines += [' -stand_emit_conf 30 \\']
         elif len(self.bams) > 100:
             lines += [' -stand_call_conf 10 \\']
-            lines += [' -stand_emit_conf 10 \\']
         else:
             print(self.project)
             stop
             lines += [' -stand_call_conf 4 \\']
-            lines += [' -stand_emit_conf 4 \\']
 
         ##
         ## Advanced Parameters
@@ -540,6 +543,8 @@ class main():
         lines += [' --sample_ploidy $sample_ploidy \\']
 
         lines += [' --emitRefConfidence GVCF \\']
+        ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--useNewAFCalculator
+        lines += [' --useNewAFCalculator \\']
 
         ## http://gatkforums.broadinstitute.org/discussion/5581/unifiedgenotyper-genotype-calling-oddity
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minPruning
@@ -578,18 +583,23 @@ class main():
 ##            if chrom == 'Y':
 ##                break
 
+        ## Parse psudoautosomal ranges.
+        url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/refseq/'
+        url += 'vertebrate_mammalian/Homo_sapiens/all_assembly_versions/'
         if self.build == 37:
-            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All'
-            url += '/GCF_000001405.25.regions.txt'
+            url += 'GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_regions.txt'
         elif self.build == 38:
-            url = 'ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/All'
-            url += '/GCF_000001405.28.regions.txt'
+            url += 'GCF_000001405.36_GRCh38.p10/GCF_000001405.36_GRCh38.p10_assembly_regions.txt'
         else:
             print('url not provided for build', self.build)
             sys.exit()
+        print(url)
         with urllib.request.urlopen(url) as f:
+#        with open(os.path.basename(url)) as f:
             for line in f:
                 line = line.decode('utf-8')
+#                if type(line) != str:
+#                    line = line.decode('utf-8')
                 if line[0] == '#':
                     continue
                 l = line.split()
@@ -839,11 +849,16 @@ class main():
         num_threads = 24
         num_threads = 16  # then SNPs and indels can run simultaneously on 32 cores...
         num_threads = 31  # 1 core occupied and some memory...
+
         num_threads = 24  # it does not seem to scale well beyond 24
         queue = 'hugemem'
 #        num_threads = 7
 #        queue = 'yesterday'
         d_memMB = {'SNP': 450000, 'INDEL': 250000}
+
+        num_threads = 24
+        queue = 'long'
+        d_memMB = {'SNP': 250000, 'INDEL': 250000}
 
         if os.path.isfile('touch/{}.touch'.format(T)):
             return
@@ -859,7 +874,7 @@ class main():
                 l_vcfs_in = f.read().rstrip().split('\n')
         elif self.caller == 'UG':
             T_prev = 'UnifiedGenotyper'
-            T_prev = 'bt_concat_UG'  # tmp!!!
+#            T_prev = 'bt_concat_UG'  # tmp!!! make a symlink instead and move out_UnifiedGenotyper
             with open('lists/{}.list'.format(T_prev)) as f:
                 l_vcfs_in = f.read().rstrip().split('\n')
         if self.check_in(
@@ -1130,7 +1145,15 @@ class main():
                 d_chrom2sources[chrom] = [source_SNP]
             ## Assert that VR output is newer than source files.
             print(source_SNP)
-            assert min_mtime > os.path.getmtime(source_SNP)
+            try:
+                assert min_mtime > os.path.getmtime(source_SNP)
+            except AssertionError:
+                for suffix in ('recal.gz', 'tranches'):
+                    for mode in ('SNP', 'INDEL'):
+                        print('out_VariantRecalibrator/{}.{}'.format(
+                            mode, suffix))
+                print(source_SNP)
+                exit()
         for chrom in set(self.chroms) & set(self.sort_nicely(list(d_chrom2sources.keys()))):
             print('AR', chrom)
             assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
@@ -1244,6 +1267,19 @@ and requires less than 100MB of memory'''
                 except StopIteration:
                     chrom_INDEL = pos_INDEL = VQSLod_INDEL = None
                     break
+
+            ## Parse INFO lines from all input files
+            ## to avoid a metadata annotation missing and bcftools complaining
+            ## and exiting early.
+            lines_INFO_unique = set()
+            ## Loop over input files.
+            for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
+                ## Open input file.
+                with gzip.open(source, 'rt') as fd_source:
+                    for line_VCF in fd_source:
+                        if line_VCF[:2] == '##':
+                            if re.match('^##INFO=', line_VCF):
+                                lines_INFO_unique.add(line_VCF)
             ## Loop over input files.
             for i, source in enumerate(self.sort_nicely(self.args.AR_input)):
                 ## Open input file.
@@ -1266,6 +1302,9 @@ and requires less than 100MB of memory'''
                                     print(line_VCF, end='', file=fd_out)
                                 if re.match('^##reference=', line_VCF):
                                     print(line_VCF, end='', file=fd_out)
+                                    ## Append INFO lines after reference line.
+                                    for line_VCF in lines_INFO_unique:
+                                        print(line_VCF, end='', file=fd_out)
         ##                    elif not chrom_VCF and re.match('^##contig', line_VCF):
         ##                        assert chrom_VCF = re.match('^##contig=<ID=(\w+),', line_VCF).group(1)
                             ## Print INFO lines, so bcftools does not throw warnings.
@@ -1374,42 +1413,42 @@ and requires less than 100MB of memory'''
             ## Without memory incremental increases.
             queue = 'normal'  # todo: move to argparse
             nthreads = 16
-            memMB = 63900
+            memMB = 127900
+
+            queue = 'normal'
+            nthreads = self.args.beagle_nthreads
+            memMB = self.args.beagle_memMB
 
 #            ## With memory incremental increases.
 #            queue = 'normal'  # todo: move to argparse
 #            nthreads = 16
 #            memMB = 31900
 
-            ## Full speed ahead for the last fragments
-            if 'farm3' in socket.gethostname():
-                queue = 'normal'
-                nthreads = 32
-                memMB = 250000
+#            ## Full speed ahead for the last fragments. 32 cores probably not optimal though...
+#            if 'farm3' in socket.gethostname():
+#                queue = 'normal'
+#                nthreads = 32
+#                memMB = 250000
 
         else:
-            queue = 'basement'
-            nthreads = 1
-            queue = 'long'
             # Beagle4 does not seem to scale well beyond 10.
             ## And didn't Martin once show me a graph showing that
             ## jobs requesting more than 12 cores pend longer than average?
-            nthreads = 8
-            ## need things done quickly
-            nthreads = 16
             queue = 'basement'
-##    Max Memory :             49814 MB (nthreads=8)
-            memMB = 63900
-#            memMB = 127900
+            nthreads = self.args.beagle_nthreads
+            memMB = self.args.beagle_memMB
 
         T_prev = 'ApplyRecalibration'
 
         ## write shell script if doesnt exist
-        if not os.path.isfile('shell/beagle.sh'):
+        if not os.path.isfile(
+            'shell/beagle.{}.sh'.format(socket.gethostname())):
             self.write_beagle_wrapper_script(memMB, nthreads, window)
         ## write shell script if older than an hour
-        if time.time() - os.path.getmtime('shell/beagle.sh') > 60*60:
+        if time.time() - os.path.getmtime(
+            'shell/beagle.{}.sh'.format(socket.gethostname())) > 60*60:
             self.write_beagle_wrapper_script(memMB, nthreads, window)
+
         if self.checkpoint == 'blcrkill':
             self.write_brestart()
 
@@ -1556,6 +1595,7 @@ and requires less than 100MB of memory'''
         lines += ['mkdir -p $(dirname $out)']
         ## exit if output already exists
         lines += ['if [ -f $out.vcf.gz ]; then exit; fi']
+        lines += ['if [ -f $out.log ]; then exit; fi']
 #        ## Initiate java with max heap size of 128GB.
 #        lines += ['memMB=127900\n']
         ## initiate beagle
@@ -1591,7 +1631,7 @@ and requires less than 100MB of memory'''
             'beagle', ['$out.vcf.gz'],
             extra='{} -p vcf $out.vcf.gz'.format(self.path_tabix))
 
-        self.write_shell('shell/beagle.sh', lines,)
+        self.write_shell('shell/beagle.{}.sh'.format(socket.gethostname()), lines,)
 
         return
 
@@ -1743,7 +1783,7 @@ and requires less than 100MB of memory'''
             exist_ok=True)
 
         cmd = 'bsub -J"{}"'.format(LSB_JOBNAME)
-        ## Do not add -G if run on hgs4.
+        # Project / Group
         if 'hgs4' not in socket.gethostname():
             if 'vr' in socket.gethostname():
                 cmd += ' -P {}'.format(self.project)
@@ -1758,9 +1798,9 @@ and requires less than 100MB of memory'''
         if not 'vr' in socket.gethostname():
             cmd += " -M{:d} -R'select[mem>{:d}] rusage[mem={:d}]'".format(
                 LSF_memMB, LSF_memMB, LSF_memMB)
-        else:
+        else:  # redundant else if... after talking to kw10
             cmd += " -M{:d} -R'select[mem>{:d}] rusage[mem={:d}]'".format(
-                int(LSF_memMB*1000), LSF_memMB, LSF_memMB)
+                int(LSF_memMB), LSF_memMB, LSF_memMB)
         cmd += ' -o {}/LSF/{}.out'.format(os.getcwd(), LSF_affix)
         cmd += ' -e {}/LSF/{}.err'.format(os.getcwd(), LSF_affix)
         if LSF_n > 1:
@@ -1845,7 +1885,6 @@ and requires less than 100MB of memory'''
         lines += [' -A StrandBiasBySample \\']
         lines += [' -A VariantType \\']
         lines += [' --standard_min_confidence_threshold_for_calling 30 \\']
-        lines += [' --standard_min_confidence_threshold_for_emitting 30 \\']
 
         if self.dbsnp:
             lines += [' --dbsnp {} \\'.format(self.dbsnp)]
@@ -1908,8 +1947,9 @@ and requires less than 100MB of memory'''
         s = '{} -Djava.io.tmpdir={}'.format(self.path_java, 'tmp')
         # Perhaps not necessary to set -Xmx with Beagle, but necessary with GATK?
         ## set maximum heap size
-        if not 'vr' in socket.gethostname():
-            s += ' -Xmx${memMB}m'
+#        if not 'vr' in socket.gethostname():
+#            s += ' -Xmx${memMB}m'
+        s += ' -Xmx${memMB}m'
         ## When do I get this error message and where? vr with -Xmx?
         ## Error: Could not create the Java Virtual Machine.
         ## Error: A fatal exception has occurred. Program will exit.
@@ -1959,6 +1999,7 @@ and requires less than 100MB of memory'''
 
         bool_exit = False
         for dirname, l_fp_out in d_l_fp_out.items():
+            print()
             print(
                 'xxxxxxxx', '\ndirname', dirname,
                 '\nin', l_fp_in[0],
@@ -1971,7 +2012,9 @@ and requires less than 100MB of memory'''
                 print('{} and possibly {} other files not generated.'.format(
                     list(set(l_fp_in) - set(l_fp_out))[0],
                     len(set(l_fp_in) - set(l_fp_out)) - 1,))
+                print('fp_touch', fp_touch)
                 print('dirname', dirname)
+                print('analysis_type', analysis_type)
                 print(
                     '{} has not run to completion. Goodbye.'.format(
                         analysis_type))
@@ -2059,13 +2102,13 @@ and requires less than 100MB of memory'''
             ## restart job and capture jobID
             if 'vr' in socket.gethostname():
                 f.write(
-                    '''s=$(brestart -P $project -M${memMB}000 -R 'select[mem>'$memMB'] rusage[mem='$memMB']' $pwd/{})\n'''.format(path))
+                    '''s=$(brestart -P $project -M${{memMB}}000 -R 'select[mem>'$memMB'] rusage[mem='$memMB']' $pwd/{})\n'''.format(path))
             elif 'cgp' in socket.gethostname():
                 f.write(
                     '''s=$(brestart -M$memMB $pwd/{})\n'''.format(path))
             else:
                 f.write(
-                    '''s=$(brestart -G $project -M$memMB -R 'select[mem>'$memMB'] rusage[mem='$memMB']' $pwd/{}\n'''.format(path))
+                    '''s=$(brestart -G $project -M$memMB -R 'select[mem>'$memMB'] rusage[mem='$memMB']' $pwd/{})\n'''.format(path))
             f.write('''jobID=$(echo $s | awk -F "[<>]" '{print $2}')\n''')
             ## report if checkpoint failed
             f.write('if [ $cpfail -ne 0 ]; then echo $s')
@@ -2221,22 +2264,14 @@ and requires less than 100MB of memory'''
         lines += [' --sample_ploidy $sample_ploidy \\']
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_emitting
         if self.genotyping_mode == 'GENOTYPE_GIVEN_ALLELES':
             lines += [' -stand_call_conf 0 \\']
-            lines += [' -stand_emit_conf 0 \\']
         elif self.coverage > 10:
             lines += [' -stand_call_conf 30 \\']
-            lines += [' -stand_emit_conf 30 \\']
         elif len(self.bams) > 100:
             lines += [' -stand_call_conf 10 \\']
-            lines += [' -stand_emit_conf 10 \\']
         else:
-            print(self.bams)
-            print(self.project)
-            stop
             lines += [' -stand_call_conf 4 \\']
-            lines += [' -stand_emit_conf 4 \\']
 
         lines += ['"\n\neval $cmd']
 
@@ -2529,6 +2564,13 @@ and requires less than 100MB of memory'''
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--alleles
         parser.add_argument('--alleles')
 
+        ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--pcr_indel_model
+        parser.add_argument(
+            '--pcr_indel_model',
+            choices=('NONE', 'HOSTILE', 'AGGRESSIVE', 'CONSERVATIVE',),
+            default='CONSERVATIVE',
+            )
+
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         parser.add_argument('--dbsnp', '-D')
 
@@ -2588,10 +2630,10 @@ and requires less than 100MB of memory'''
 
         ## https://www.broadinstitute.org/gatk/guide/article?id=1259
         parser.add_argument(
-            '--ts_SNP', type=float, required=True,)
+            '--ts_SNP', type=float, required=False,)
 
         parser.add_argument(
-            '--ts_INDEL', type=float, required=True,)
+            '--ts_INDEL', type=float, required=False,)
 
         parser.add_argument('--AR_input', nargs='+')
 
@@ -2601,12 +2643,15 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--jar_beagle', '--beagle',
             help='File path to beagle.jar file (e.g. beagle_3.3.2.jar)',
-            required=True,
+            required=False,
             )
 
         parser.add_argument(
             '--beagle4_excludesamples', '--excludesamples',
             required=False, type=self.is_file)
+
+        parser.add_argument('--beagle_memMB', type=int, default=63900)
+        parser.add_argument('--beagle_nthreads', type=int, default=8)
 
         ##
         ## optional arguments
@@ -2669,6 +2714,8 @@ and requires less than 100MB of memory'''
 
         ## setatrr
         for k, v in vars(namespace_args).items():
+            if v == 'None':
+                v = None
             setattr(self, k, v)
 
         if self.jar_GATK is None and self.options is None:
