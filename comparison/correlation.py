@@ -23,6 +23,7 @@ import re
 import sys
 import gzip
 import itertools
+import pysam
 
 
 def main():
@@ -103,7 +104,29 @@ def open_files(stack, d_args):
         elif d_args['format%i' %(i)] == 'vcf':
             d['fileinput%i' %(i)] = fileinput.FileInput(
                 files=files, openhook=hook_compressed_text)
-            d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
+            d['fileinput%i' %(i)] = itertools.chain.from_iterable(
+#            d['fileinput%i' %(i)] = fileinput.input(
+                [
+                    ## fetch records in a region using 0-based indexing
+                    pysam.TabixFile(path).fetch(
+                        d_args['chrom'],
+                        d_args['start']-1,
+                        d_args['end']-1,
+                        parser=pysam.asTuple(),
+                        ) for path in files]
+#                openhook=hook_compressed_text,
+                )
+#            d['file%i' %(i)] = stack.enter_context(d['fileinput%i' %(i)])
+            d['file%i' %(i)] = d['fileinput%i' %(i)]
+#            d['paths%i' %(i)] = files
+
+#            d['file%i' %(i)] = pysam.TabixFile(files).fetch(
+#                d_args['chrom'],
+#                d_args['start'],
+#                d_args['end'],
+#                parser=pysam.asTuple(),
+#                )
+
 ##            ## skip header
 ##            for line in d['file%i' %(i)]:
 ##                if line[:6] == '#CHROM':
@@ -170,11 +193,15 @@ def loop_main(
     kwargs1 = {
         'file': file1, 'fileinput': fileinput1,
         'bim': bim1, 'n_bytes': n_bytes1, 'markers': markers1,
-        'legend': legend1, 'chrom': chrom, 'format': format1}
+        'legend': legend1, 'chrom': chrom, 'format': format1,
+        'start': d_args['start'], 'end': d_args['end'],
+        }
     kwargs2 = {
         'file': file2, 'fileinput': fileinput2,
         'bim': bim2, 'n_bytes': n_bytes2, 'markers': markers2,
-        'legend': legend2, 'chrom': chrom, 'format': format2}
+        'legend': legend2, 'chrom': chrom, 'format': format2,
+        'start': d_args['start'], 'end': d_args['end'],
+        }
 
 ##    d = {'00':'1 0 0','01':'0 1 0','11':'0 0 1','10':'0.3333 0.3333 0.3333'}
     d_correl = {
@@ -214,7 +241,10 @@ def loop_main(
         for i, d in d_stats.items():
             nom = (d['sumxy'] - d['sumx'] * d['sumy'] / d['n'])
             den_sq = (d['sumxx'] - d['sumx']**2 / d['n']) * (d['sumyy'] - d['sumy']**2 / d['n'])
-            r2 = nom**2 / abs(den_sq)
+            try:
+                r2 = nom**2 / abs(den_sq)
+            except ZeroDivisionError:
+                r2 = 0
             nonref_conc1 = d['nonref_disc1']/(d['nonref_conc1']+d['nonref_disc1'])
             nonref_conc2 = d['nonref_disc2']/(d['nonref_conc2']+d['nonref_disc2'])
             fd_out.write('{} {} {} {} {}\n'.format(
@@ -387,7 +417,8 @@ def loop_sub(
                 )
 
         ## All genotypes are missing, because no QC was carried out.
-        if n == 0:
+        ## Or monomorphic in both sets.
+        if n == 0 or (sum_x == 0 and sum_y == 0):
             try:
                 chrom1, pos1, A1, B1, genotypes1 = next(func1(**kwargs1))
                 chrom2, pos2, A2, B2, genotypes2 = next(func2(**kwargs2))
@@ -418,7 +449,9 @@ def loop_sub(
         ## ask Deepti whether to include or exclude these SNPs
         ## if calculating overall r2 with new method
         ## instead of simple average
-        if den_sq == 0:
+        if den_sq != 0:
+            r2 = nom**2/abs(den_sq)
+        else:
 ##            if (
 ##                nom == 0 and sum_x ==0 and sum_y == 0
 ##                and sum_xx == 0 and sum_yy == 0 and sum_xy == 0:
@@ -437,6 +470,9 @@ def loop_sub(
                     pass
                 ## One monomorphic.
                 elif sum_x == 2*n or sum_y == 2*n:
+                    pass
+                ## One completely heterozygous.
+                elif (sum_x == n and sum_xx == n) or (sum_y == n and sum_yy == n):
                     pass
                 elif round(nom, 6) == 0:
                     print(nom)
@@ -480,8 +516,6 @@ def loop_sub(
 ##            stop2
             pass
 
-        else:
-            r2 = nom**2/abs(den_sq)
 
         if r2 is not None:
             fd_out.write('%s %s %s %s %s %s %s\n' %(chrom1, pos1, MAF_x, r2, AC_x, MAF_y, AC_y))
@@ -893,7 +927,7 @@ def index_samples(d_args):
     print(list(samples1-intersect1)[:10])
     print(list(samples2-intersect2)[:10])
 
-    print('\ncorresponding indeces')
+    print('\ncorresponding indeces (first ten in each file)')
     print(d_indexes[1][:10], d_indexes[2][:10])
 
     return d_samples, d_indexes
@@ -940,24 +974,28 @@ def fam2samples(fam, d_args):
 
 def parse_vcf(**kwargs):
 
-    vcf = kwargs['file']
-    line = vcf.readline()
-    if line == '':
-        return
-    while line[0] == '#':
-        line = vcf.readline()
-    l = line.rstrip().split('\t')
-    if l[0].startswith('chr'):
-        l[0] = l[0][3:]
-    try:
-        chrom = int(l[0])
-    except:
-        chrom = l[0]
-    pos = int(l[1])
-    alleleA = l[3]
-    alleleB = l[4]
+#    vcf = kwargs['file']
+    for l in kwargs['file']:
+#    line = vcf.readline()
+#        if line == '':
+#            return
+#    while line[0] == '#':
+#        line = vcf.readline()
+#        l = line.rstrip().split('\t')
+#        if line[0] == '#':
+#            continue
+#        l = line.rstrip().split('\t')
+        if l[0].startswith('chr'):
+            l[0] = l[0][3:]
+        try:
+            chrom = int(l[0])
+        except:
+            chrom = l[0]
+        pos = int(l[1])
+        alleleA = l[3]
+        alleleB = l[4]
 
-    yield chrom, pos, alleleA, alleleB, l
+        yield chrom, pos, alleleA, alleleB, l
 
 
 def parse_bed(**kwargs):
@@ -1118,6 +1156,8 @@ def argparser():
     parser.add_argument('--file2chrom')
     ## chrom
     parser.add_argument('--chrom')
+    parser.add_argument('--start', type=int)
+    parser.add_argument('--end', type=int)
     ## optional
     parser.add_argument('--extract', help='extract only selected SNPs')
     parser.add_argument(
