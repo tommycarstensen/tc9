@@ -20,51 +20,24 @@ def main():
     for path, color, linestyle, linewidth, label, path_extract in zip(
         args.info, args.colors, args.linestyles, args.linewidths, args.labels,
         args.extract):
+        print(path)
+        if len(color) == 6:
+            color = '#' + color
         if path_extract:
             with open(path_extract) as f:
                 set_extract = set(f.read().rstrip().split())
         d_r2 = {'cnt': {}, 'sum': {}, 'sumsq': {}}
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=True):
             for filename in filenames:
-                if not filename.endswith('info'):
+                if not filename.endswith(args.suffix):
                     continue
                 filepath = os.path.join(dirpath, filename)
                 print(filepath)
-                ## Get sample count.
-                with open(filepath[:-5]+'_samples') as f_samples:
-                    for n_samples, line in enumerate(f_samples):
-                        pass
-                n_samples -= 2
-                n_samples_max = max(n_samples_max, n_samples)
-                with open(filepath) as f:
-                    line = f.readline()
-                    l = line.rstrip().split()
-                    i_freq = l.index('exp_freq_a1')
-                    i_r2 = l.index('r2_type0')
-                    for line in f:
-                        l = line.split()
-
-                        r2 = float(l[i_r2])
-                        if r2 == -1:
-                            continue
-
-                        if path_extract:
-                            if not ':'.join((l[2],l[3],l[4])) in set_extract:
-#                                if l[8] != '3':
-#                                    print('skipping', l[0], l[1], ':'.join((l[2],l[3],l[4])), list(set_extract)[:2])
-                                continue
-
-                        freq = float(l[i_freq])
-                        freq = round(round(freq * n_samples * 2, 0) / (n_samples * 2), 3)
-#                        print(r2, freq)
-                        try:
-                            d_r2['sum'][freq] += r2
-                            d_r2['cnt'][freq] += 1
-                            d_r2['sumsq'][freq] += (r2 * r2)
-                        except KeyError:
-                            d_r2['sum'][freq] = r2
-                            d_r2['cnt'][freq] = 1
-                            d_r2['sumsq'][freq] = r2 * r2
+                if args.suffix == 'info':
+                    n_samples_max = parse_info(filepath, n_samples_max, d_r2)
+#                elif args.suffix == 'r2':
+                else:
+                    n_samples_max = parse_corr(filepath, n_samples_max, d_r2)
 
         x = []
         y = []
@@ -99,8 +72,10 @@ def main():
     ax1.set_xticks(xticks)
 
     ax1.set_xscale('log')
+#    ax1.set_xscale('linear')  # tmp!!! for concordance...
 #    ax1.set_xticks([0, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.50, 1.00])
-    ax1.set_xlim(0, 1)
+    ax1.set_xlim(0.001, 1)
+    ax1.set_ylim(0, 1)
 #    ax1.legend(loc='lower right')
 #    ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 #    ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
@@ -108,18 +83,101 @@ def main():
 #    ax1.set_ylabel('r2_type0')
     ax1.set_xlabel('Allele frequency')
     ax1.set_ylabel('Squared correlation between input and masked/imputed genotypes')
-    ax1.get_xaxis().set_major_formatter(ScalarFormatter())
+    ax1.set_ylabel('Concordance between input and masked/imputed genotypes')  # tmp!!!
+#    ax1.get_xaxis().set_major_formatter(ScalarFormatter())
     ax1.grid('on')
+    if args.title:
+        ax1.set_title(args.title)
 
     handles, labels = ax1.get_legend_handles_labels()
     lgd = ax1.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5,-0.1))
     lgd = ax1.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5))
+    lgd = ax1.legend(handles, labels, loc=4)
     plt.savefig(
         '{}.png'.format(args.affix),
         bbox_extra_artists=(lgd,), bbox_inches='tight')
 
     print('xtics', xticks)
     return
+
+
+def parse_corr(filepath, n_samples_max, d_r2):
+
+    path = os.path.join(
+        os.path.dirname(filepath),
+        os.path.basename(filepath).replace('per_SNP', 'per_sample'),
+        )
+    if not os.path.isfile(path):
+        return n_samples_max
+#    if os.path.islink(path):
+#        path = os.path.join(os.path.dirname(path), os.readlink(path))
+
+    with open(path) as f:
+        n_samples = len(f.readlines())
+        n_samples_max = max(n_samples_max, n_samples)
+
+    with open(filepath) as f:
+        for line in f:
+            break
+        for line in f:
+            l = line.rstrip().split()
+            AC_x = float(l[4])
+            AC_y = float(l[6])
+            r2 = float(l[3])
+            freq = round(AC_x / n_samples, 3)
+
+            try:
+                d_r2['sum'][freq] += r2
+                d_r2['cnt'][freq] += 1
+                d_r2['sumsq'][freq] += (r2 * r2)
+            except KeyError:
+                d_r2['sum'][freq] = r2
+                d_r2['cnt'][freq] = 1
+                d_r2['sumsq'][freq] = r2 * r2
+
+    return n_samples_max
+
+
+def parse_info(filepath, n_samples_max, d_r2):
+
+    ## Get sample count.
+    with open(filepath[:-5]+'_samples') as f_samples:
+        for n_samples, line in enumerate(f_samples):
+            pass
+    n_samples -= 2
+    n_samples_max = max(n_samples_max, n_samples)
+    with open(filepath) as f:
+        line = f.readline()
+        l = line.rstrip().split()
+        i_freq = l.index('exp_freq_a1')
+        i_r2 = l.index('r2_type0')
+#                    i_r2 = l.index('concord_type0')  # tmp!!!
+        for line in f:
+            l = line.split()
+
+            r2 = float(l[i_r2])
+            if r2 == -1:
+                continue
+
+            if path_extract:
+                if not ':'.join((l[2],l[3],l[4])) in set_extract:
+#                                if l[8] != '3':
+#                                    print('skipping', l[0], l[1], ':'.join((l[2],l[3],l[4])), list(set_extract)[:2])
+                    continue
+
+            freq = float(l[i_freq])
+            freq = round(round(freq * n_samples * 2, 0) / (n_samples * 2), 3)
+#                        print(r2, freq)
+            try:
+                d_r2['sum'][freq] += r2
+                d_r2['cnt'][freq] += 1
+                d_r2['sumsq'][freq] += (r2 * r2)
+            except KeyError:
+                d_r2['sum'][freq] = r2
+                d_r2['cnt'][freq] = 1
+                d_r2['sumsq'][freq] = r2 * r2
+
+    return n_samples_max
 
 
 def parse_args():
@@ -136,6 +194,7 @@ def parse_args():
     parser.add_argument('--linewidths', nargs='*', type=float)
     parser.add_argument('--labels', nargs='*', type=str)
     parser.add_argument('--extract', nargs='*')
+    parser.add_argument('--suffix', default='info', choices=('info', 'per_SNP.r2.txt'))
 
     args = parser.parse_args()
 
