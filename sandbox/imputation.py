@@ -38,25 +38,24 @@ def IMPUTE(args, n_samples):
         pos_max = pos_max_legend
         d_index2variants_g = d_index2variants
     else:
-        if args.gen:
+        if args.sites:
+            path_in = args.sites
+        elif args.gen:
             path_in = args.gen
         else:
             path_in = args.known_haps_g
         print('finding largest position in', path_in, 'in order to determine interval range')
-        if args.pos_max:
-            ps_max_gen = args.pos_max
-        else:
-            with gzip.open(path_in) as f:
-                d_index2variants_g = {}
-                for line in f:
-                    pos = int(line.split()[2])
-                    index = 1+(pos-1)//args.int_size
-                    try:
-                        d_index2variants_g[index] += 1
-                    except KeyError:
-                        d_index2variants_g[index] = 1
-                    continue
-                pos_max_gen = int(line.split()[2])
+        with gzip.open(path_in) as f:
+            d_index2variants_g = {}
+            for line in f:
+                pos = int(line.split()[2])
+                index = 1+(pos-1)//args.int_size
+                try:
+                    d_index2variants_g[index] += 1
+                except KeyError:
+                    d_index2variants_g[index] = 1
+                continue
+            pos_max_gen = int(line.split()[2])
 ##        path_strand = '{}.strand' %(args.out)
 ##        pos_max_haps = write_strand(path_strand)
         pos_max = max(pos_max_legend, pos_max_gen)
@@ -399,6 +398,7 @@ def argparser():
     group_out.add_argument(
         '--out', help='Output directory (relative path)')
     parser.add_argument('--queue', help='LSF queue', default='normal')
+    parser.add_argument('--sites')
 
 ##    ## REQUIRED ARGUMENTS
 
