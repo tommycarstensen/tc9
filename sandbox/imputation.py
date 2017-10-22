@@ -25,9 +25,11 @@ def main():
 
 def IMPUTE(args, n_samples):
 
-    queue = 'normal'
-
     d_index2variants, pos_max_legend = count_variants(args)
+    n_haplotypes_ref = 0
+    for path in args.hap:
+        with gzip.open(path) as f:
+            n_haplotypes_ref += len(f.readline().rstrip().split())
 
     if args.blcr:
         write_brestart()
@@ -41,17 +43,20 @@ def IMPUTE(args, n_samples):
         else:
             path_in = args.known_haps_g
         print('finding largest position in', path_in, 'in order to determine interval range')
-        with gzip.open(path_in) as f:
-            d_index2variants_g = {}
-            for line in f:
-                pos = int(line.split()[2])
-                index = 1+(pos-1)//args.int_size
-                try:
-                    d_index2variants_g[index] += 1
-                except KeyError:
-                    d_index2variants_g[index] = 1
-                continue
-            pos_max_gen = int(line.split()[2])
+        if args.pos_max:
+            ps_max_gen = args.pos_max
+        else:
+            with gzip.open(path_in) as f:
+                d_index2variants_g = {}
+                for line in f:
+                    pos = int(line.split()[2])
+                    index = 1+(pos-1)//args.int_size
+                    try:
+                        d_index2variants_g[index] += 1
+                    except KeyError:
+                        d_index2variants_g[index] = 1
+                    continue
+                pos_max_gen = int(line.split()[2])
 ##        path_strand = '{}.strand' %(args.out)
 ##        pos_max_haps = write_strand(path_strand)
         pos_max = max(pos_max_legend, pos_max_gen)
@@ -67,6 +72,7 @@ def IMPUTE(args, n_samples):
             continue
         ## Skip if less than 1 type 2/3 SNP per 50kbp
         if d_index2variants_g[index] < args.int_size/50000:
+            print('skipping', index, d_index2variants_g[index])
             continue
         ## Skip if only 1 type 2/3 SNP
         if d_index2variants_g[index] == 1:
@@ -74,23 +80,27 @@ def IMPUTE(args, n_samples):
 
         path_out = os.path.join(args.out, str(index))
         os.makedirs(os.path.dirname(path_out), exist_ok=True)
-        if args.merge_ref_panels_output_ref:
-            ext = 'hap'
-        else:
-            ext = 'gen'
+#        if args.merge_ref_panels_output_ref:
+#            ext = 'hap'
+#        else:
+#            ext = 'gen'
         ## output exists?
-        if os.path.isfile('{}.{}.gz'.format(path_out, ext)):
-            if os.path.getsize('{}.{}.gz'.format(path_out, ext)):
+#        gz = '{}.{}.gz'.format(path_out, ext)
+        gz = '{}.gz'.format(path_out)
+        if os.path.isfile(gz):
+            if os.path.getsize(gz):
                 bool_continue = True
-                ## check that associated summary and warnings file was created
-                for suffix in ['summary', 'warnings']:
-                    path = '{}.{}'.format(path_out, suffix)
-                    if not os.path.isfile(path):
-                        print(path)
-                        bool_continue = False
-                        stop1
-                        break
+##                ## check that associated summary and warnings file was created
+##                ## zero size warnings files might have been manually deleted
+###                for suffix in ['summary', 'warnings']:
+##                for suffix in ['summary']:
+##                    path = '{}.{}'.format(path_out, suffix)
+##                    if not os.path.isfile(path):
+##                        print(path)
+##                        bool_continue = False
+##                        break
                 if bool_continue:
+                    print('exists', gz)
                     continue
 
         ## memory requirements
@@ -101,23 +111,47 @@ def IMPUTE(args, n_samples):
                     slope = 17500
                 else:
                     slope = 15500
-                if not args.blcr:
-                    queue = 'basement'
-                else:
-                    queue = 'long'
             else:
                 intersect = 1750
                 ## slope is dependent on the number of panel 2 samples
                 slope = 4248 # 2184/1092 panel 0 haplotypes/samples and ~100 panel 2 samples
                 slope = 11000 # 6,780 panel 0 haplotypes and ~100 panel 2 samples
+            factor_slope = 0.8 # chrom 5 - fails
+            factor_slope = 1.6 # chrom 6
+            factor_slope = 1.5 # chrom 7
+            factor_slope = 1.4 # chrom 8
+            factor_slope = 1.3 # chrom 9
+            factor_slope = 1.2 # chrom 10
+            factor_slope = 1.1 # chrom 11
+            factor_slope = 1.0 # chrom 12
+            factor_slope = 0.9 # chrom 13
+            factor_slope = 1.0 # chrom 14
+            factor_slope = 1.2 # crhom 15
+            factor_slope = 1.3 # 16
+            factor_slope = 1.2 # 17
+            factor_slope = 1.1 # 18
+            factor_slope = 1.0 # 19
+            factor_slope = 1.1 # 21
+            factor_slope = 1.0 # 22
+            factor_slope = 1.2 # known_haps_g; k_hap=500; 1000Gp1+agv+ug2g (1092+320+1978) into uganda_gwas (4778)
+            factor_slope = 1.0 # known_haps_g; k_hap=500; k=80; half 1000Gp3+agv+ug2g (2504+320+1978) into half (4802/2)
+            factor_slope = 1.2
+            intersect = 750
+            intersect = 1000
+        ## elif args.merge_ref_panels_output_ref:
         else:
             slope = 9250 # 2184/1092 and 4596/2298 panel 0 and 1 haplotypes/samples and no panel 2 samples
             slope = 15000 # 2504/5008 (1000G phase 3) and 2298/4596 (ug2g+agv) samples/haplotypes
             intersect = 2250
+            slope = 27500
+            intersect = 3750
 ##        if n_samples > 1092:
 ##            slope *= ((n_samples/1092)**2)/8
 ##            intersect += 300
-        memMB = intersect+int(slope*int(variants)/100000.)
+            factor_slope = 2
+        n = n_haplotypes_ref + 2*n_samples
+        slope = int(factor_slope * n * max(1,args.k_hap/500) * max(1,args.k/80))
+        memMB = intersect + int(slope * int(variants)/100000)
 
         nsamples1 = int(len(gzip.open(args.hap[0]).readline().split())/2)
         nsamples2 = int(len(gzip.open(args.hap[-1]).readline().split())/2)
@@ -136,19 +170,19 @@ def IMPUTE(args, n_samples):
         cmd = 'bsub'
         cmd += ' -G {}'.format(args.project)
         if args.blcr:
-            if queue == 'normal':
-                blcrkill = 600
-            elif queue == 'long':
-                blcrkill = 2760
+            if args.queue == 'normal':
+                blcrkill = 12*60-30
+            elif args.queue == 'long':
+                blcrkill = 48*60-30
             cmd += ' -k "{} method=blcrkill {}"'.format(
                 os.path.join(os.getcwd(), 'checkpoint'), blcrkill)
         cmd += " -R 'select[mem>%i] rusage[mem=%i]' -M%i" %(memMB, memMB, memMB)
-        cmd += ' -q %s' %(queue)
+        cmd += ' -q %s' %(args.queue)
         cmd += ' -e {}/{}.err'.format(pathLSF, index)
         cmd += ' -o {}/{}.out'.format(pathLSF, index)
 ##        cmd += ' -J "IMPUTE.{}.{}"'.format(args.chrom, index)
         if args.merge_ref_panels_output_ref:
-            cmd += ' -J "IMPUTE.merge.{}.{}.{}.{}"'.format(intersect, slope, args.chrom, index)  ## tmp!!!
+            cmd += ' -J "IMPUTE.merge.{}.{}.{}.{}"'.format(intersect, int(slope), args.chrom, index)  ## tmp!!!
         else:
             cmd += ' -J "IMPUTE.{}.{}.{}.{}"'.format(intersect, slope, args.chrom, index)  ## tmp!!!
         if args.blcr:
@@ -213,7 +247,17 @@ def IMPUTE(args, n_samples):
         if args.sample_g:
             cmd += ' -sample_g {}'.format(args.sample_g)
         if args.sample_g_ref:
-            cmd += ' -sample_g_ref {}'.format(args.sample_g_ref)
+            cmd += ' -sample_g_ref {}'.format(' '.join(args.sample_g_ref))
+        if args.exclude_snps_g:
+            cmd += ' -exclude_snps_g {}'.format(args.exclude_snps_g)
+        if args.exclude_snps_g_ref:
+            cmd += ' -exclude_snps_g_ref {}'.format(args.exclude_snps_g_ref)
+        if args.exclude_samples_g_ref:
+            cmd += ' -exclude_samples_g_ref {}'.format(args.exclude_samples_g_ref)
+        if args.exclude_samples_g:
+            cmd += ' -exclude_samples_g {}'.format(args.exclude_samples_g)
+        if args.impute_excluded is True:
+            cmd += ' -impute_excluded'
 
         ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-o
         cmd += ' -o %s' %(path_out)
@@ -221,6 +265,9 @@ def IMPUTE(args, n_samples):
             if not bool_chrX and not bool_prephased:
                 ## https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-pgs
                 cmd += ' -pgs' ## r2_type2 will not be calculated without it
+        ## https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-pgs
+        if args.pgs:
+            cmd += ' -pgs'
         ## https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-o_gz
         cmd += ' -o_gz'
 #            ## http://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-os
@@ -241,6 +288,8 @@ def IMPUTE(args, n_samples):
             cmd += ' -no_sample_qc_info'
 
         if not args.blcr:
+##            print(cmd)
+##            print(os.path.isfile('{}/{}.out'.format(pathLSF, index)))
             subprocess.call(cmd, shell=True)
         else:
             s = subprocess.check_output(cmd, shell=True).decode()
@@ -287,13 +336,18 @@ def write_brestart():
             '''exit140=$(echo $bhist | grep TERM_RUNLIMIT | wc -l)\n''')
         ## exit code 16, pid taken
         f.write('''exit16=$(echo $bhist | sed 's/ *//g'| grep Exitedwithexitcode16 | wc -l)\n''')
+        ##  exit code 127, possibly done succesfully
+        f.write('''exit127=$(echo $bhist | sed 's/ *//g' | grep "Exitedwithexitcode127" | wc -l)\n''')
         ## Checkpoint failed
         f.write('''cpfail=$(echo $bhist | sed 's/ *//g'|''')
         f.write(''' grep "Checkpointfailed" | wc -l)\n''')
         ## Done successfully
         f.write('''donesuc=$(echo $bhist | sed 's/ *//g'| grep "Donesuccessfully" | wc -l)\n''')
+
+
         ## exit if done succesfully
-        f.write('if [ $donesuc -eq 1 ]; then echo $bhist >> bhist_success.txt; exit; fi\n')
+        f.write('if [ $donesuc -eq 1 ]; then echo $bhist >> bhist_success.txt; rm -rf checkpoint/$jobID; exit; fi\n')
+        f.write('if [ $exit127 -eq 1 ]; then echo $bhist >> bhist_exit127.txt; rm -rf checkpoint/$jobID; exit; fi\n')
         ## exit if not checkpoint succeeded and not PID taken
         f.write('if [ $exit143 -eq 0 -a $cpsucc -eq 0 -a $exit13 -eq 0')
         f.write(' -a $exit16 -eq 0 ]; then echo $bhist')
@@ -326,28 +380,48 @@ def write_brestart():
 def argparser():
 
     parser = argparse.ArgumentParser()
-    group_in = parser.add_mutually_exclusive_group(required=True)
+    group_in = parser.add_mutually_exclusive_group(required=False)
     group_out = parser.add_mutually_exclusive_group(required=True)
 
     ## Other arguments.
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--chrom', required=True, type=str)
-    parser.add_argument('--blcr', action='store_true', default=False)
-    parser.add_argument('--impute2', required=True)
-    parser.add_argument('--int_size', default=2000000, type=int)
+    parser.add_argument(
+        '--project', required=True, help='Existing project on farm3')
+    parser.add_argument('--chrom', required=True, type=str, help='Chromosome')
+    parser.add_argument(
+        '--blcr', action='store_true', default=False,
+        help='Checkpointing option for large sample sizes.')
+    parser.add_argument(
+        '--impute2', required=True,
+        help='Path to the dynamic IMPUTE2 executable.')
+    parser.add_argument(
+        '--int_size', default=2000000, type=int,
+        help='Size of each chunk in bp.')
+    group_out.add_argument(
+        '--out', help='Output directory (relative path)')
+    parser.add_argument('--queue', help='LSF queue', default='normal')
 
 ##    ## REQUIRED ARGUMENTS
 
     ## INPUT FILE OPTIONS
-    group_in.add_argument('--gen')
-    parser.add_argument('--map', required=True)
-    parser.add_argument('--hap', nargs='+')
-    parser.add_argument('--legend', nargs='+')
+    group_in.add_argument(
+        '--gen', '--g',
+        help='https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-g')
+    parser.add_argument(
+        '--map', '--m', required=True,
+        help='https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-m')
+    parser.add_argument(
+        '--hap', '--h', nargs='+',
+        help='https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-h')
+    parser.add_argument(
+        '--legend', '--l', nargs='+',
+        help='https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-l')
+    group_in.add_argument(
+        '--known_haps_g', help='https://mathgen.stats.ox.ac.uk/impute/impute_v2.html#-known_haps_g')
 
     ## OUTPUT FILE OPTIONS
-    group_out.add_argument('--out')
     parser.add_argument(
         '--no_sample_qc_info', action='store_true', default=False)
+    parser.add_argument('--pgs', action='store_true', default=False)
 
     ## BASIC OPTIONS
     parser.add_argument('--buffer', default=250, type=int)
@@ -358,8 +432,12 @@ def argparser():
 
     ## FILTERING OPTIONS
     parser.add_argument('--sample_g')
-    parser.add_argument('--sample_g_ref')
-##    parser.add_argument('--exclude_samples_g_ref')
+    parser.add_argument('--sample_g_ref', nargs='*')
+    parser.add_argument('--exclude_samples_g_ref')
+    parser.add_argument('--exclude_samples_g')
+    parser.add_argument('--exclude_snps_g')
+    parser.add_argument('--exclude_snps_g_ref')
+    parser.add_argument('--impute_excluded', action='store_true', default=False)
 
     ## MCMC OPTIONS
     parser.add_argument('--iter', default=30, type=int)
@@ -392,14 +470,20 @@ def argparser():
         else:
             assert os.path.exists(args.known_haps_g)
 
-    assert os.path.exists(args.impute2)
-    assert os.path.exists(args.map)
-    for file in args.hap+args.legend:
-        assert os.path.exists(file)
+    for file in args.hap+args.legend+[args.map,args.impute2]:
+        if not os.path.exists(file):
+            print('file missing', file)
+            exit()
 
     if args.chrX:
         if not args.merge_ref_panels_output_ref:
             assert os.path.exists(args.sample_g)
+
+    # ERROR: The -pgs flag does not currently work with the -use_prephased_g flag.
+    # Please see our online documentation on -pgs for suggested alternatives.
+    if args.pgs and args.known_haps_g:
+        print('The -pgs flag does not work with the -use_prephased_g / -known_haps_g flag.')
+        exit()
 
     return args
 
