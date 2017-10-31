@@ -311,12 +311,15 @@ class main():
 
 
     def define_jobname(self, bam1, bam2):
+
         for i, (s1, s2) in enumerate(zip(bam1, bam2)):
             if s1 != s2:
                 break
+
         for j, (s1, s2) in enumerate(zip(reversed(bam1), reversed(bam2))):
             if s1 != s2:
                 break
+
         return bam1[i:-j+1]
 
 
@@ -353,7 +356,7 @@ class main():
         ## write shell script
         self.shell_HC(analysis_type)
 
-        jobname = self.define_jobname(self.bams[0], self.bams[1])
+        jobname = self.define_jobname(list(sorted(self.bams))[0], list(sorted(self.bams))[-1])
 
         ## execute shell script
         for chrom in self.chroms:
