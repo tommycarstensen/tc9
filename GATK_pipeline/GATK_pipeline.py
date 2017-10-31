@@ -309,6 +309,17 @@ class main():
 
         return
 
+
+    def define_jobname(self, bam1, bam2):
+        for i, (s1, s2) in enumerate(zip(bam1, bam2)):
+            if s1 != s2:
+                break
+        for j, (s1, s2) in enumerate(zip(reversed(bam1), reversed(bam2))):
+            if s1 != s2:
+                break
+        return bam1[i:-j+1]
+
+
     def HaplotypeCaller(self):
 
         T = analysis_type = 'HaplotypeCaller'
@@ -341,6 +352,8 @@ class main():
 
         ## write shell script
         self.shell_HC(analysis_type)
+
+        jobname = self.define_jobname(self.bams[0], self.bams[1])
 
         ## execute shell script
         for chrom in self.chroms:
@@ -406,7 +419,7 @@ class main():
                     d_args['memMB'] = memMB
                     arguments = self.args_dict2str(d_args)
 
-                    LSB_JOBNAME = '{} {}'.format('HC', basename)
+                    LSB_JOBNAME = '{} {}'.format('HC', jobname)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
                         LSF_memMB = memMB, LSF_queue = queue, LSF_n=nt * nct,
@@ -463,7 +476,7 @@ class main():
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom \\']
         ## Exclude (non-)PAR intervals.
-        s = '"\nif [ $XL != "" ]; then cmd=$cmd"'
+        s = '"\nif [ "$XL" != "" ]; then cmd=$cmd"'
         s += ' --excludeIntervals $XL"; fi\ncmd=$cmd" \\'
         lines += [s]
         if self.intervals:
@@ -544,7 +557,7 @@ class main():
 
         lines += [' --emitRefConfidence GVCF \\']
         ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--useNewAFCalculator
-        lines += [' --useNewAFCalculator \\']
+#        lines += [' --useNewAFCalculator \\']
 
         ## http://gatkforums.broadinstitute.org/discussion/5581/unifiedgenotyper-genotype-calling-oddity
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minPruning
@@ -783,7 +796,7 @@ class main():
                     T, 'GgVCFs.{}'.format(chrom),
                     LSF_memMB = memMB, LSF_queue=queue,
                     LSF_affix='{}/{}'.format(T, chrom),
-                    LSF_n = 8,
+                    LSF_n = max(1, int(nt/2), nt-6),
                     arguments='--out {} --chrom {} --nt {} --memMB {}'.format(
                         out, chrom, nt, memMB),
                     chrom=chrom,
@@ -1955,6 +1968,11 @@ and requires less than 100MB of memory'''
         ## Error: A fatal exception has occurred. Program will exit.
         if self.checkpoint:
             s += ' -XX:-UsePerfData -Xrs '
+        ## https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gctuning/collectors.html
+        ## Threading errors without this. Thanks Martin!
+        ## But GenotypeGVCFs fails when using it:
+        ## https://gatkforums.broadinstitute.org/gatk/discussion/10472/genotypegvcfs-3-8-fails/
+##        s += ' -XX:+UseSerialGC '
         s += ' \\\n -jar {}'.format(jar)
 
         return s
@@ -2662,8 +2680,10 @@ and requires less than 100MB of memory'''
         parser.add_argument(
             '--chroms', type=str, nargs='+',
             default=[
-                str(i + 1) for i in range(22)] + [
-                    'X', 'Y', 'MT', 'PAR1', 'PAR2'])
+                'chr'+str(i + 1) for i in range(22)] + [
+                    'chrX', 'chrY', 'chrM',
+#                    'chrPAR1', 'chrPAR2',
+                    ])
 
         parser.add_argument(
             '--ped', type=self.is_file)
