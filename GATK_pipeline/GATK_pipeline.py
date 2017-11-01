@@ -24,6 +24,7 @@ import urllib.parse
 import operator
 import socket
 import difflib
+import random
 
 
 ## README
@@ -356,11 +357,6 @@ class main():
         ## write shell script
         self.shell_HC(analysis_type)
 
-        jobname = self.define_jobname(
-            list(sorted((os.path.basename(bam) for bam in self.bams)))[0],
-            list(sorted((os.path.basename(bam) for bam in self.bams)))[-1],
-            )
-
         ## execute shell script
         for chrom in self.chroms:
 
@@ -379,6 +375,7 @@ class main():
 
                 for bam in self.bams:
                     basename = os.path.splitext(os.path.basename(bam))[0]
+                    jobname = self.define_jobname(basename, os.path.basename(random.choice(self.bams)))
 
                     if not bam in list_bams:
                         continue
