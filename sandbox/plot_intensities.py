@@ -59,7 +59,7 @@ def flat(args):
             l = line.rstrip().split()
             rsID = l[1]
             if rsID in args.rsID:
-                d_alleles[rsID] = (l[4], l[5])
+                d_alleles[rsID] = (l[5], l[4])
 
     prob = None
     for rsID in args.rsID:
