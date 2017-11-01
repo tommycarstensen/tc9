@@ -23,6 +23,7 @@ import pysam
 import urllib.parse
 import operator
 import socket
+import difflib
 
 
 ## README
@@ -312,15 +313,13 @@ class main():
 
     def define_jobname(self, bam1, bam2):
 
-        for i, (s1, s2) in enumerate(zip(bam1, bam2)):
-            if s1 != s2:
-                break
+        i = 0
+        jobname = ''
+        for m in difflib.SequenceMatcher(None, bam1, bam2).get_matching_blocks():
+            jobname += bam1[i:m.a]
+            i = m.a+m.size
 
-        for j, (s1, s2) in enumerate(zip(reversed(bam1), reversed(bam2))):
-            if s1 != s2:
-                break
-
-        return bam1[i:-j+1]
+        return jobname
 
 
     def HaplotypeCaller(self):
