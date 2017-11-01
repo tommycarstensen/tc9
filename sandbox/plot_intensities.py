@@ -11,12 +11,69 @@ import gzip
 import argparse
 import math
 import os
+import operator
 
 
 def main():
 
     args = parse_arguments()
+
     print('looping intensities')
+    if args.fileformat == 'flat':
+        flat(args)
+    else:
+        matrix(args)
+
+    return
+
+
+def flat(args):
+
+    l = []
+#    with open(args.bfile+'.bim') as f:
+#        for i, line in enumerate(f):
+#            l.append((operator.itemgetter(1, 3)(line.rstrip().split()), i))
+#    for j
+#            stop
+#    assert len(args.rsID) == 1, args.rsID
+    d_xy = {rsID: [[], []] for rsID in args.rsID}
+    l_samples_int = []
+    with open_file(args.intensities) as f:
+        for line in f:
+            l = line.rstrip().split()
+            rsID = l[0]
+            if rsID in args.rsID:
+#                ## Append alleles.
+#                d_alleles[rsID] = (l[2], l[3])
+                ## Append intensities.
+                d_xy[rsID][0].append(float(l[7]))
+                d_xy[rsID][1].append(float(l[8]))
+                ## Append sample ID.
+                if len(d_xy[rsID][0]) > len(l_samples_int):
+                    l_samples_int.append(l[1])
+
+    ## Append alleles.
+    d_alleles = {}
+    with open(args.bfile+'.bim') as f:
+        for line in f:
+            l = line.rstrip().split()
+            rsID = l[1]
+            if rsID in args.rsID:
+                d_alleles[rsID] = (l[4], l[5])
+
+    prob = None
+    for rsID in args.rsID:
+        assert d_xy[rsID] != [[],[]]
+        alleles = d_alleles[rsID]
+        x = d_xy[rsID][0]
+        y = d_xy[rsID][1]
+        plot_rsID(args, rsID, x, y, alleles, l_samples_int, prob)
+
+    return
+
+
+def matrix(args):
+
     with open_file(args.intensities) as f:
         for line in f:
             # uganda_gwas
@@ -41,7 +98,10 @@ def main():
                         del args.prob[args.rsID.index(rsID)]
                     else:
                         prob = None
-                    plot_rsID(args, l, l_samples_int, prob)
+                    rsID = l[0]
+                    x, y = zip(*[[float(l[i]), float(l[i + 1])] for i in range(3, len(l), 2)])
+                    alleles = l[2]
+                    plot_rsID(args, rsID, x, y, alleles, l_samples_int, prob)
                 args.rsID.remove(rsID)
                 if len(args.rsID) == 0:
                     break
@@ -59,11 +119,12 @@ def open_file(path):
     return f
 
 
-def plot_rsID(args, l, l_samples_int, prob):
+def plot_rsID(args, rsID, x, y, alleles, l_samples_int, prob):
 
-    rsID = l[0]
-    x, y = zip(*[[float(l[i]), float(l[i + 1])] for i in range(3, len(l), 2)])
-    alleles = l[2]
+#    l_colors = len(x)*['#000000']
+#    chrom = 4
+#    pos = 145023404
+#    MAF = 'xx'
     l_colors, chrom, pos, MAF = parse_bfiles(
         args, l_samples_int, alleles, rsID)
     if not l_colors:
@@ -78,6 +139,8 @@ def plot_rsID(args, l, l_samples_int, prob):
 #        '#ffffff': 'Failed QC',
         }
     n = 0
+    print(x, y, l_colors)
+    assert len(x) == len(l_colors)
     for color in args.colors:
         xj = []
         yj = []
@@ -124,17 +187,15 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
 
     d_flip = {'A':'T', 'C':'G', 'G':'C', 'T':'A'}
 
-    i, rsID_bim, chrom, pos, A1, A2 = parse_bim_line(args, rsID)
+    i_SNP, rsID_bim, chrom, pos, A1, A2 = parse_bim_line(args, rsID)
     if rsID_bim != rsID:
+        print(rsID_bim, rsID)
         return None, None, None
 
     with open('{}.fam'.format(args.bfile)) as fam:
-        if False:
-            set_samples_fam = set([line.split()[0] for line in fam.readlines()])
-        else:
-            set_samples_fam = set([line.split()[0][9:] for line in fam.readlines()])
+        set_samples_fam = set([line.split()[0] for line in fam.readlines()])
     with open('{}.fam'.format(args.bfile)) as fam:
-        l_samples_fam = [line.split()[0][9:] for line in fam.readlines()]
+        l_samples_fam = [line.split()[0] for line in fam.readlines()]
     n_samples = len(set_samples_fam)
     if args.keep:
         with open('{}'.format(args.keep)) as fam:
@@ -145,9 +206,9 @@ def parse_bfiles(args, l_samples_int, alleles, rsID):
     magic_number = bytearray([108, 27])
     mode = bytearray([1])
     with open('{}.bed'.format(args.bfile), 'rb') as bed:
-        bed.seek(len(magic_number) + len(mode) + i * n_bytes_per_SNP)
+        bed.seek(len(magic_number) + len(mode) + i_SNP * n_bytes_per_SNP)
         bytesSNP = bed.read(n_bytes_per_SNP)
-    int_bytesSNP2 = int.from_bytes(bytesSNP, 'little')
+    int_bytesSNP2 = int.from_bytes(bytesSNP, byteorder='little', signed=False)
     if any([
         A1 == alleles[0] and A2 == alleles[1],
         A1 == d_flip[alleles[0]] and A2 == d_flip[alleles[1]], 
@@ -172,6 +233,7 @@ def parse_genotypes(
     ## Number of allele observations
     cnt1 = 0
     cnt2 = 0
+    assert len(set_samples_fam & set(l_samples_int)) > 0
     for sample in l_samples_int:
         if not sample in set_samples_fam:
 ##            l_colors += ['#ffffff']
@@ -203,9 +265,11 @@ def parse_genotypes(
         ## miss
         elif bits == 1:
             l_colors += [args.colors[3]]
+            print('missing', sample)
         else:
             stop
 
+    print(cnt1, cnt2)
     MAF = min(cnt2/cnt1, 1-cnt2/cnt1)
 
     return l_colors, MAF
@@ -234,14 +298,16 @@ def parse_arguments():
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--position', type=int)
     group.add_argument('--rsID', nargs='+')
-    parser.add_argument('--prob', nargs='*', required=False)
+    parser.add_argument('--prob', nargs='*', required=False, help='String to be printed on figure')
     parser.add_argument('--bfile')
     parser.add_argument('--keep')
 #    parser.add_argument('--out', required=True)
     parser.add_argument(
         '--colors', nargs='+',
         default=['#ff0000', '#00ff00', '#0000ff', '#000000'])
-    parser.add_argument('--text', required=False)
+    parser.add_argument('--text', '--title', required=False)
+    parser.add_argument('--fileformat', choices=('flat', 'matrix'), default='flat')
+
     args = parser.parse_args()
 
     if args.prob:
