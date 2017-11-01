@@ -61,6 +61,7 @@ class main():
 
         return
 
+
     def UnifiedGenotyper(self):
 
         T = analysis_type = 'UnifiedGenotyper'
@@ -355,7 +356,10 @@ class main():
         ## write shell script
         self.shell_HC(analysis_type)
 
-        jobname = self.define_jobname(list(sorted(self.bams))[0], list(sorted(self.bams))[-1])
+        jobname = self.define_jobname(
+            list(sorted((os.path.basename(bam) for bam in self.bams)))[0],
+            list(sorted((os.path.basename(bam) for bam in self.bams)))[-1],
+            )
 
         ## execute shell script
         for chrom in self.chroms:
@@ -424,7 +428,8 @@ class main():
                     LSB_JOBNAME = '{} {}'.format('HC', jobname)
                     cmd = self.bsub_cmd(
                         T, LSB_JOBNAME, LSF_affix=affix,
-                        LSF_memMB = memMB, LSF_queue = queue, LSF_n=nt * nct,
+                        LSF_memMB = memMB, LSF_queue = queue,
+                        LSF_n=max(2, nt * nct),  # lately getting threaded job errors, when requesting 1 core, so request 2 as a minimum
                         arguments=arguments)
                     self.execmd(cmd)
 
