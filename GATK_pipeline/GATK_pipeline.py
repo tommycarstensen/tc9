@@ -1,6 +1,6 @@
 #!/bin/python3
 
-## Tommy Carstensen, Wellcome Trust Sanger Institute, 2012-2015
+## Tommy Carstensen, 2019
 
 import math
 import os
@@ -246,7 +246,7 @@ class main():
                     if XL:
                         d_args['XL'] = XL
                     d_args['out'] = out
-                    d_args['input_file'] = d_sex2bamlist[sex]
+                    d_args['input'] = d_sex2bamlist[sex]
                     d_args['nct'] = nct
                     d_args['nt'] = nt
                     d_args['sample_ploidy'] = sample_ploidy
@@ -329,7 +329,7 @@ class main():
         T = analysis_type = 'HaplotypeCaller'
         queue = 'long'  # 4x split per sample
 #        queue = 'basement'  # >4x split per sample
-        queue = 'normal'  # 4x split per chromosome
+#        queue = 'normal'  # 4x split per chromosome
         nct = 4
         nct = 1
         nt = 1
@@ -364,6 +364,8 @@ class main():
                 memMB = d_memMB[chrom]
             except KeyError:
                 memMB = 2900
+                ## Does -jdk_deflater -jdk_inflater use more memory?
+                memMB = 7900
 
             d_sex2bamlist, XL = self.get_sex_and_XL(chrom)
 
@@ -412,7 +414,7 @@ class main():
                         d_args['chrom'] = 'X'
                     else:
                         d_args['chrom'] = chrom
-                    d_args['input_file'] = bam
+                    d_args['input'] = bam
                     if XL:
                         d_args['XL'] = XL
                     d_args['out'] = out
@@ -447,7 +449,7 @@ class main():
         ## initiate GATK command
         lines += self.init_GATK_cmd(
             T, (
-                'out', 'chrom', 'input_file', 'nct', 'nt', 'sample_ploidy',
+                'out', 'chrom', 'input', 'sample_ploidy',
                 'XL', 'memMB',))
 
         ## append GATK command options
@@ -475,7 +477,7 @@ class main():
         ##
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--input_file
-        lines += [' --input_file $input_file \\']
+        lines += [' --input $input \\']
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom \\']
@@ -489,13 +491,6 @@ class main():
             lines += [' --interval_set_rule INTERSECTION \\']
             pass
 
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_parameter
-        ## http://gatkforums.broadinstitute.org/discussion/3893/calling-variants-on-cohorts-of-samples-using-the-haplotypecaller-in-gvcf-mode
-        lines += [' --variant_index_parameter 128000 \\']
-
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--variant_index_type
-        lines += [' --variant_index_type LINEAR \\']
-
         ##
         ## Optional Inputs
         ##
@@ -506,7 +501,8 @@ class main():
             lines += [' --interval_set_rule INTERSECTION \\']
 
         ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--pcr_indel_model
-        lines += [' --pcr_indel_model {} \\'.format(self.pcr_indel_model)]
+        ## https://software.broadinstitute.org/gatk/documentation/tooldocs/4.1.0.0/org_broadinstitute_hellbender_tools_walkers_haplotypecaller_HaplotypeCaller.php#--pcr-indel-model
+        lines += [' --pcr-indel-model {} \\'.format(self.pcr_indel_model)]
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--dbsnp
         if self.dbsnp:
@@ -517,24 +513,24 @@ class main():
         ##
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
-        lines += [' --out $out \\']
+        lines += [' --output $out \\']
 
         ##
         ## Optional Parameters
         ##
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
+        lines += [' --genotyping-mode {} \\'.format(self.genotyping_mode)]
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
         if self.coverage > 10:
-            lines += [' -stand_call_conf 30 \\']
+            lines += [' -stand-call-conf 30 \\']
         elif len(self.bams) > 100:
-            lines += [' -stand_call_conf 10 \\']
+            lines += [' -stand-call-conf 10 \\']
         else:
             print(self.project)
             stop
-            lines += [' -stand_call_conf 4 \\']
+            lines += [' -stand-call-conf 4 \\']
 
         ##
         ## Advanced Parameters
@@ -557,19 +553,17 @@ class main():
         s_annotation += ' -A ReadPosRankSumTest'
         lines += [' {} \\'.format(s_annotation)]
 
-        lines += [' --sample_ploidy $sample_ploidy \\']
+        lines += [' --sample-ploidy $sample_ploidy \\']
 
-        lines += [' --emitRefConfidence GVCF \\']
+        lines += [' --emit-ref-confidence GVCF \\']
         ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--useNewAFCalculator
 #        lines += [' --useNewAFCalculator \\']
 
         ## http://gatkforums.broadinstitute.org/discussion/5581/unifiedgenotyper-genotype-calling-oddity
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minPruning
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--minDanglingBranchLength
-        lines += [' --minPruning {} \\'.format(self.args.minPruning)]  # default 2
-        lines += [' --minDanglingBranchLength 4 \\']  # default 4
-        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HCMappingQualityFilter.php
-        lines += [' --min_mapping_quality_score 20 \\']  # default 20
+        lines += [' --min-pruning {} \\'.format(self.args.minPruning)]  # default 2
+        lines += [' --min-dangling-branch-length 4 \\']  # default 4
 
 ##        ## http://gatkforums.broadinstitute.org/discussion/5884/haplotype-caller-calling-heterozygote-with-bad-quality-when-it-is-homozygote#latest
 ##        ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--kmerSize
@@ -707,7 +701,7 @@ class main():
                     T, 'CgVCFs.{}.{}'.format(chrom, i),
                     LSF_memMB = memMB, LSF_queue=queue,
                     LSF_affix='{}/{}/{}'.format(T, chrom, i),
-                    arguments='--out {} --chrom {} --index {} --memMB {}'.format(
+                    arguments='--output {} --chrom {} --index {} --memMB {}'.format(
                         out, chrom, i, memMB),
                     chrom=chrom,
                     )
@@ -748,11 +742,13 @@ class main():
         nt = 1
         queue = 'basement'
 
+        ## Seems not to cause an error...
         memMB = 15900
         nt = 8
 
-        memMB = 63900
-        nt = 24
+        ## Seems to cause an error...
+#        memMB = 63900
+#        nt = 24
 
         if self.checkpoint == 'blcrkill':
             queue = 'normal'
@@ -775,8 +771,10 @@ class main():
                 for i in range(len(glob.glob(
                     'lists/CombineGVCFs.{}.*.list'.format(chrom))))]
             if self.check_in(
-                'CombineGVCFs', ['{}.tbi'.format(vcf) for vcf in l_vcfs_in],
-                'touch/CombineGVCFs.touch'):
+                'CombineGVCFs',
+                ['{}.tbi'.format(vcf) for vcf in l_vcfs_in],
+                'touch/CombineGVCFs.touch',
+                ):
                 ## continue loop over chromosomes
                 bool_exit = True
                 continue
@@ -800,8 +798,8 @@ class main():
                     T, 'GgVCFs.{}'.format(chrom),
                     LSF_memMB = memMB, LSF_queue=queue,
                     LSF_affix='{}/{}'.format(T, chrom),
-                    LSF_n = max(1, int(nt/2), nt-6),
-                    arguments='--out {} --chrom {} --nt {} --memMB {}'.format(
+                    LSF_n = max(1, int(nt/2), nt-1),
+                    arguments='--output {} --chrom {} --nt {} --memMB {}'.format(
                         out, chrom, nt, memMB),
                     chrom=chrom,
                     )
@@ -910,6 +908,7 @@ class main():
         d_resources = {
             'SNP': self.resources_SNP, 'INDEL': self.resources_INDEL}
 
+        print(d_resources)
         ## Check that resources are present.
         for mode in ('SNP', 'INDEL'):
             with open(d_resources[mode]) as f:
@@ -1173,7 +1172,7 @@ class main():
                 exit()
         for chrom in set(self.chroms) & set(self.sort_nicely(list(d_chrom2sources.keys()))):
             print('AR', chrom)
-            assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
+            assert chrom in ['chr'+str(i) for i in range(1, 23)] + [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
             dirname_LSF = 'LSF/ApplyRecalibration'
             if not os.path.isdir(dirname_LSF):
                 os.makedirs(dirname_LSF)
@@ -1240,7 +1239,7 @@ and requires less than 100MB of memory'''
         if not chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']:
             chrom = chrom_VCF = os.path.basename(
                 self.args.AR_input[0]).split('.')[0]
-        assert chrom in [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT']
+        assert chrom in ['chr'+str(i) for i in range(1, 23)] + [str(i) for i in range(1, 23)] + ['X', 'Y', 'MT'] + ['chrX', 'chrY', 'chrMT']
 
 ##        index = int(os.path.basename(self.args.AR_input).split('.')[0])
 
@@ -2175,8 +2174,8 @@ and requires less than 100MB of memory'''
 
         ## initiate GATK command
         lines += self.init_GATK_cmd(T, (
-            'out', 'chrom', 'pos1', 'pos2', 'input_file',
-            'nct', 'nt', 'XL', 'sample_ploidy', 'memMB'))
+            'out', 'chrom', 'pos1', 'pos2', 'input',
+            'nct', 'nt', 'XL', 'sample-ploidy', 'memMB'))
 
         ## append GATK command options
         lines += self.body_UnifiedGenotyper()
@@ -2203,7 +2202,7 @@ and requires less than 100MB of memory'''
         ##
 
         ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_engine_CommandLineGATK.php#--input_file
-        lines += [' --input_file $input_file \\']
+        lines += [' --input $input \\']
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--intervals
         lines += [' --intervals $chrom:$pos1-$pos2 \\']
@@ -2243,7 +2242,7 @@ and requires less than 100MB of memory'''
         ##
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--out
-        lines += [' --out $out \\']
+        lines += [' --output $out \\']
 
         ##
         ## Optional Parameters
@@ -2279,7 +2278,7 @@ and requires less than 100MB of memory'''
         lines += [' --genotype_likelihoods_model BOTH \\']  # default value SNP
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--genotyping_mode
-        lines += [' -gt_mode {} \\'.format(self.genotyping_mode)]
+        lines += [' --genotyping_mode {} \\'.format(self.genotyping_mode)]
         if self.genotyping_mode == 'GENOTYPE_GIVEN_ALLELES':
             lines += [' --max_alternate_alleles 12 \\']
 
@@ -2287,13 +2286,13 @@ and requires less than 100MB of memory'''
 
         ## https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_haplotypecaller_HaplotypeCaller.html#--standard_min_confidence_threshold_for_calling
         if self.genotyping_mode == 'GENOTYPE_GIVEN_ALLELES':
-            lines += [' -stand_call_conf 0 \\']
+            lines += [' -stand-call-conf 0 \\']
         elif self.coverage > 10:
-            lines += [' -stand_call_conf 30 \\']
+            lines += [' -stand-call-conf 30 \\']
         elif len(self.bams) > 100:
-            lines += [' -stand_call_conf 10 \\']
+            lines += [' -stand-call-conf 10 \\']
         else:
-            lines += [' -stand_call_conf 4 \\']
+            lines += [' -stand-call-conf 4 \\']
 
         lines += ['"\n\neval $cmd']
 
@@ -2404,9 +2403,6 @@ and requires less than 100MB of memory'''
 
         lines += [self.args2getopts(args)]
 
-        lines += ['if [ "$nct" == "" ]; then nct=1; fi']
-        lines += ['if [ "$nt" == "" ]; then nt=1; fi']
-
         ## exit if output exists
         lines += ['if [ -f $out ]; then exit; fi']
 
@@ -2423,15 +2419,14 @@ and requires less than 100MB of memory'''
 
         ## CommandLineGATK, required, in
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--analysis_type
-        lines += [' --analysis_type {} \\'.format(analysis_type)]
+        lines += [' {} \\'.format(analysis_type)]
         ## CommandLineGATK, optional, in
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#--reference_sequence
         lines += [
-            ' --reference_sequence {} \\'.format(self.reference_sequence)]
-        ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_CommandLineGATK.html#-nct
-        lines += [' --num_cpu_threads_per_data_thread $nct \\']
-        ## https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_engine_CommandLineGATK.php#--num_threads
-        lines += [' --num_threads $nt \\']
+            ' --reference {} \\'.format(self.reference_sequence)]
+        ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_engine_CommandLineGATK.php#--use_jdk_deflater
+        ## https://gatkforums.broadinstitute.org/gatk/discussion/10472
+#        lines += [' -jdk_deflater -jdk_inflater \\']
 
         return lines
 
@@ -2531,6 +2526,7 @@ and requires less than 100MB of memory'''
             raise argparse.ArgumentTypeError(msg)
         return str_
 
+
     def add_args(self, parser):
 
         ## required arguments
@@ -2588,7 +2584,7 @@ and requires less than 100MB of memory'''
 
         ## https://software.broadinstitute.org/gatk/documentation/tooldocs/current/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php#--pcr_indel_model
         parser.add_argument(
-            '--pcr_indel_model',
+            '--pcr-indel-model',
             choices=('NONE', 'HOSTILE', 'AGGRESSIVE', 'CONSERVATIVE',),
             default='CONSERVATIVE',
             )
@@ -2608,7 +2604,7 @@ and requires less than 100MB of memory'''
 
         ## http://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_sting_gatk_walkers_genotyper_UnifiedGenotyper.html#--genotyping_mode
         parser.add_argument(
-            '--genotyping_mode', '-gt_mode', default='DISCOVERY',
+            '--genotyping_mode', default='DISCOVERY',
             choices=['DISCOVERY', 'GENOTYPE_GIVEN_ALLELES'])
 
         ##
@@ -2697,6 +2693,7 @@ and requires less than 100MB of memory'''
             required=False, type=self.is_file_or_dir, nargs='*')
 
         return parser
+
 
     def parse_bams(self, path_bams):
 
